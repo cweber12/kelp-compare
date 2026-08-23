@@ -1,0 +1,6 @@
+{
+  "python.testing.pytestEnabled": true,
+  "editor.formatOnSave": true,
+  "[python]": { "editor.defaultFormatter": "charliermarsh.ruff" },
+  "files.exclude": { "**/__pycache__": true, "**/.pytest_cache": true }
+}

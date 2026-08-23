@@ -1,0 +1,40 @@
+{
+  "_comment": "Site registry per docs/03. Deployment records are REQUIRED before project-sensor ingest (docs/06 registry gate). window_local values below are from the reviewed Tidbit deployment; verify before first real run.",
+  "sites": [
+    {
+      "site_id": "PROJ:YELLOW-BUOY",
+      "name": "Yellow buoy temperature logger",
+      "operator": "project",
+      "lat": null,
+      "lon": null,
+      "neighbor_refs": ["NDBC:LJAC1", "COOPS:9410230"],
+      "deployments": [
+        {
+          "instrument": "HOBO TidbiT MX2204",
+          "serial": "22506632",
+          "deployment_number": 3,
+          "depth_m": null,
+          "tz": "America/Los_Angeles",
+          "window_local": ["2026-07-11 08:00", "2026-08-01 07:30"],
+          "notes": "First deployment reviewed in docs/06. Fill lat/lon/depth before ingest."
+        }
+      ]
+    },
+    {
+      "site_id": "NDBC:LJAC1",
+      "name": "La Jolla shore station (NDBC)",
+      "operator": "ndbc",
+      "station_code": "LJAC1",
+      "lat": 32.867,
+      "lon": -117.257
+    },
+    {
+      "site_id": "COOPS:9410230",
+      "name": "La Jolla (Scripps Pier) tide station",
+      "operator": "coops",
+      "station_code": "9410230",
+      "lat": 32.867,
+      "lon": -117.257
+    }
+  ]
+}

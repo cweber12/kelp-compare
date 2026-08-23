@@ -1,0 +1,5 @@
+{
+  "_comment": "Kelp Watch analysis polygons per docs/03. Draw near-site + control polygons on kelpwatch.org, export their quarterly CSVs, and record the geometries here.",
+  "type": "FeatureCollection",
+  "features": []
+}

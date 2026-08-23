@@ -1,0 +1,11 @@
+{
+  "_comment": "Controlled parameter vocabulary per docs/03. valid_range feeds the QARTOD gross-range test (docs/04 s1); units are canonical SI storage units.",
+  "parameters": {
+    "sea_water_temperature": {"unit": "degC", "valid_range": [5.0, 35.0]},
+    "air_temperature":       {"unit": "degC", "valid_range": [-10.0, 50.0]},
+    "water_level":           {"unit": "m", "datum": "MLLW", "valid_range": [-3.0, 5.0]},
+    "wave_significant_height": {"unit": "m", "valid_range": [0.0, 15.0]},
+    "wave_peak_period":      {"unit": "s", "valid_range": [1.0, 30.0]},
+    "wind_speed":            {"unit": "m s-1", "valid_range": [0.0, 60.0]}
+  }
+}

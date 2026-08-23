@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*.duckdb
+*.duckdb.wal
+
+# Data zones are local; only the registry is versioned
+data/*
+!data/registry/
+!data/**/.gitkeep
+
+.DS_Store
+.env

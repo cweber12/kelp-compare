@@ -1,0 +1,38 @@
+[project]
+name = "kelpcompare"
+version = "0.0.1"
+description = "Compare Kelp Watch quarterly kelp canopy data with environmental sensor time series"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",
+    "duckdb>=1.0",
+    "pyarrow>=16",
+    "xarray>=2024.6",
+    "geopandas>=1.0",
+    "erddapy>=2.2",
+    "ioos-qc>=2.1",
+    "openpyxl>=3.1",
+    "requests>=2.32",
+    "click>=8.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5", "jupyterlab>=4"]
+dashboard = ["streamlit>=1.36", "plotly>=5.22"]
+
+[project.scripts]
+kelpcompare = "kelpcompare.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kelpcompare"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
