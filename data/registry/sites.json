@@ -16,7 +16,7 @@
           "depth_m": null,
           "tz": "America/Los_Angeles",
           "window_local": ["2026-07-11 08:00", "2026-08-01 07:30"],
-          "notes": "First deployment reviewed in docs/06. Fill lat/lon/depth before ingest."
+          "notes": "Position unverified - conflicting reports ~1-2 km apart. Leave lat/lon null until a GPS fix from the placer. Do NOT fill from memory or nearby station coords."
         }
       ]
     },
