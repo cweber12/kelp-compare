@@ -110,3 +110,21 @@ never chain them into a single step.
 Per-source and per-task depth lives in `.claude/skills/` (data-source-access,
 vendor-adapters, quarterly-features, analysis-review). Prefer consulting the
 relevant skill over guessing API syntax or feature math from memory.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues in `cweber12/kelp-compare`, managed with the `gh`
+CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles use their default label strings
+(`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`,
+`wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo. ADRs live in `docs/05-architecture-decisions.md`, not in a
+`docs/adr/` directory. See `docs/agents/domain.md`.
