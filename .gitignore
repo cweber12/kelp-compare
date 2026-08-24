@@ -13,5 +13,9 @@ data/*
 !data/registry/
 !data/**/.gitkeep
 
+# Machine- and session-specific Claude Code permissions; the portable,
+# team-useful ones live in the committed .claude/settings.json
+.claude/settings.local.json
+
 .DS_Store
 .env
