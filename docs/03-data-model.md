@@ -67,13 +67,20 @@ becomes new rows, not a schema migration.
 | `value` | DOUBLE | SI units per parameter registry |
 | `depth_m` | DOUBLE | Positive down; null for met parameters |
 | `qc_flag` | TINYINT | QARTOD roll-up: 1 pass, 2 not eval, 3 suspect, 4 fail, 9 missing |
-| `qc_tests` | VARCHAR | Compact per-test results for audit |
+| `qc_tests` | VARCHAR | Compact per-test results for audit, `name:status` joined by `;` |
 | `source` | VARCHAR | `kelpwatch, ndbc, coops, sccoos, cdip, project, oisst, ...` |
 | `fetch_run_id` | VARCHAR | FK to run manifest |
 
 Partitioned by `source` and `year(timestamp)`. Rule: rows are never
 deleted for QC reasons — analysis queries filter on `qc_flag <= 2` (or
 stricter) at read time.
+
+Ingest writes `qc_flag = 2` (not evaluated) for rows it has no verdict on,
+`9` for a row whose value is absent, and `4` for a project-sensor reading
+outside its declared deployment window — the one test ingest can decide,
+recorded as `deployment_window:fail` in `qc_tests` (doc 06 §3). The QARTOD
+tests themselves run later, in `kelpcompare qc`, and roll up into the same
+two columns.
 
 ### Parameter vocabulary (initial)
 

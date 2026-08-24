@@ -27,6 +27,7 @@ doc in the same PR. Docs and code must not drift.
 - `src/kelpcompare/qc/` — QARTOD flags via ioos_qc; flags, never deletions
 - `src/kelpcompare/features/` — quarterly aggregation and anomalies
 - `src/kelpcompare/registry.py` — `sites.json`: which instrument was where, when, in what timezone
+- `src/kelpcompare/parameters.py` — `parameters.json`: controlled names, SI units, QC ranges
 - `src/kelpcompare/storage.py` — the docs/03 zones and the only writer into `observations/`
 - `src/kelpcompare/manifest.py` — one run manifest per pipeline run (docs/03)
 - `src/kelpcompare/cli.py` — `kelpcompare ingest|qc|features|rebuild`
@@ -51,7 +52,7 @@ doc in the same PR. Docs and code must not drift.
 3. Missing kelp quarters (cloud gaps) are null, never zero. Do not fillna(0).
 4. QC produces flags, not row deletions. Filtering happens at query time.
 5. No ingest of project-sensor files without a matching serial + deployment
-   window in `data/registry/sites.json` — quarantine instead.
+   window + series map in `data/registry/sites.json` — quarantine instead.
 6. The dashboard never computes statistics of record; notebooks own the science.
 7. Every ingest/feature run writes a manifest. Don't bypass the CLI to write
    Parquet directly.

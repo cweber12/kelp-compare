@@ -80,6 +80,17 @@ minimum from 58.60 °F to 63.96 °F. The trim decision becomes reviewable
 metadata instead of an untracked edit — and remains reversible, consistent
 with the flags-not-deletions QC policy (ADR-004).
 
+**"Excluded" means flagged, not deleted.** Every parsed row reaches
+`observations`; the seven out-of-window readings carry `qc_flag = 4` and
+`qc_tests = deployment_window:fail`, and the default `qc_flag <= 2` analysis
+filter drops them. This is the same rule the rest of QC follows (doc 04 §1)
+and it is what makes the window reversible in practice: a corrected window
+is a registry edit and a `kelpcompare rebuild`, not a re-ingest, and the
+install transient stays inspectable — it is evidence about the deployment,
+not noise. In-window rows land at `qc_flag = 2` (not evaluated) until
+`kelpcompare qc` runs the QARTOD tests; a row whose value is absent lands at
+9 (missing).
+
 Edited files like `yellow_buoy_temps.xlsx` are still *accepted* when that's
 all we have (the parser tolerates extra columns, formula rows, and blank
 counter cells), but the manifest records them as `provenance: edited`, and
@@ -149,9 +160,9 @@ Run automatically; results go in the run manifest.
    observations (readouts of a running logger overlap by design).
 6. **QC and neighbor validation** then proceed per doc 04 §1 (the QARTOD
    gross-range test would independently have flagged nothing in-window
-   here; the install transient is excluded upstream by the window, and
-   also visible as a spike/rate-of-change failure if it ever leaks
-   through).
+   here; the install transient is already flagged by the window, and would
+   also show as a spike/rate-of-change failure — two independent tests
+   catching the same reading, which is the intended redundancy).
 
 ## 6. Known hazards to test explicitly
 
