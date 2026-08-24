@@ -1,7 +1,14 @@
 {
-  "_comment": "Controlled parameter vocabulary per docs/03. valid_range feeds the QARTOD gross-range test (docs/04 s1); units are canonical SI storage units.",
+  "_comment": "Controlled parameter vocabulary per docs/03. Units are canonical SI storage units. valid_range is the QARTOD gross-range fail span (docs/04 s1, ADR-004) -- the one source of truth for the hard bounds, so the qc block below never repeats it. A parameter with no qc block gets gross range only; the other tests do not run for it. Thresholds here are provisional, tuned against the single reviewed TidbiT deployment, and are meant to be revisited as the record grows.",
   "parameters": {
-    "sea_water_temperature": {"unit": "degC", "valid_range": [5.0, 35.0]},
+    "sea_water_temperature": {
+      "unit": "degC",
+      "valid_range": [5.0, 35.0],
+      "qc": {
+        "spike": {"suspect": 1.5, "fail": 3.0},
+        "rate_of_change": {"suspect_per_hour": 18.0, "fail_per_hour": 36.0}
+      }
+    },
     "air_temperature":       {"unit": "degC", "valid_range": [-10.0, 50.0]},
     "water_level":           {"unit": "m", "datum": "MLLW", "valid_range": [-3.0, 5.0]},
     "wave_significant_height": {"unit": "m", "valid_range": [0.0, 15.0]},

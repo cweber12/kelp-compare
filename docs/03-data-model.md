@@ -91,6 +91,33 @@ registry (`parameters.json`) records canonical unit, valid range for QC
 gross-range tests, and the source-column mappings. Adding a sensor type =
 adding registry entries, no schema change.
 
+**QC thresholds live here, not in code** (ADR-004). Each entry may carry a
+`qc` block holding the per-test thresholds `kelpcompare qc` needs:
+
+```json
+"sea_water_temperature": {
+  "unit": "degC",
+  "valid_range": [5.0, 35.0],
+  "qc": {
+    "spike": {"suspect": 1.5, "fail": 3.0},
+    "rate_of_change": {"suspect_per_hour": 18.0, "fail_per_hour": 36.0}
+  }
+}
+```
+
+Spike thresholds are in the parameter's own canonical unit. The rate keys
+name their unit because the QARTOD implementation takes a rate per *second*,
+and a °C/s threshold misread as °C/h is off by 3600 in the direction that
+flags nothing. The gross-range test takes its fail span from `valid_range`
+rather than repeating it under `qc`, so the hard bounds have one home; an
+optional `gross_range.suspect_span` narrows it where there is evidence to.
+
+**An absent `qc` block means those tests do not run for that parameter** —
+gross range still does, from `valid_range`. Silence is a decision, and it is
+recorded as one: a missing threshold never becomes a default guess, because a
+guessed threshold that flags real data is indistinguishable in the stored
+flags from a real QC failure.
+
 ## Site registry: `sites.json`
 
 One record per station or deployment location.
