@@ -66,6 +66,11 @@ doc in the same PR. Docs and code must not drift.
 - Network access in tests: forbidden. Fetchers are tested against fixtures.
 - When a source format surprises you (new column, changed sentinel), update
   docs/02 in the same change.
+- Claude Code permissions split by scope: portable, team-useful allows go in
+  the committed `.claude/settings.json`; anything machine- or session-specific
+  goes in `.claude/settings.local.json`, which is gitignored. At a permission
+  prompt, choose the local file unless the rule would also help a teammate on
+  a fresh clone.
 
 ## Commit format
 
@@ -73,10 +78,14 @@ Conventional Commits: `type(scope): imperative summary` — subject ≤72 chars,
 imperative mood, no trailing period. Body explains why, not what, when the
 diff alone isn't obvious.
 
-- Types: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`, and `data`
-  (reserved for `data/registry/` changes — versioned scientific metadata).
+- Types: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`, `data`
+  (reserved for `data/registry/` changes — versioned scientific metadata),
+  and `merge` — a local extension to Conventional Commits, used only on the
+  `--no-ff` commit that lands a branch.
 - Scopes match the repo map: `adapters`, `fetchers`, `normalize`, `qc`,
-  `features`, `cli`, `registry`, `dashboard`, `docs`, `skills`.
+  `features`, `cli`, `registry`, `dashboard`, `docs`, `skills`, and `agents`
+  — this file and `docs/agents/`, the instructions agents read. `docs` stays
+  reserved for the numbered specs in `docs/`.
 - When a commit implements or changes documented behavior, cite the doc
   section in the body (e.g. `per docs/06 §5`). If it changed a doc in the
   same commit (required when behavior and docs move together), say so.
@@ -89,18 +98,36 @@ Example:
     Parses Data/Events/Details sheets; tz and unit read from headers.
     Edited files tolerated and marked provenance=edited.
 
-## Finishing a task
+## Branching and finishing a task
 
-Work happens on a branch, never directly on `main`. Two confirmation gates —
-never chain them into a single step.
+Every change reaches `main` through a branch and a `--no-ff` merge — features,
+fixes, docs, and registry edits alike. Never commit on `main` itself.
 
-1. **Confirm the commit.** A task is finishable only once `pytest` and
-   `ruff check .` are green. Report that result, then propose the commit —
-   branch, subject, body, and exactly which files are staged — and wait for
-   a go-ahead. Session artifacts (e.g. `.claude/settings.json`) are never
-   swept in.
-2. **Confirm the merge.** After committing, propose the merge into `main`
-   and wait. Re-run the tests on `main` afterwards and report the result.
+**Branch.** Branch from an up-to-date `main`, named `<type>/<slug>` reusing the
+commit types above: `feat/hobo-csv-adapter`, `fix/quarter-boundary-utc`,
+`docs/data-model-zones`, `data/site-registry-buoy-coords`.
+
+**Slice.** Break an implementation into vertical slices, each its own commit on
+that branch. A slice is the smallest change that leaves the repo green —
+`pytest` and `ruff check .` pass at *every* commit, not only the last. Each
+slice keeps the one-concern rule and cites the doc section it implements.
+Slices are never squashed away at merge; they are the reviewable record of how
+the change was built.
+
+Then two confirmation gates — never chain them into a single step.
+
+1. **Confirm each slice commit.** Fires once per slice, not once per branch. A
+   slice is finishable only once `pytest` and `ruff check .` are green. Report
+   that result, then propose the commit — branch, subject, body, and exactly
+   which files are staged — and wait for a go-ahead. Untracked session
+   artifacts are never swept in.
+2. **Confirm the merge.** After the last slice is committed, propose the merge
+   and wait:
+
+       git switch main
+       git merge --no-ff <branch> -m 'merge: <what the branch delivered>'
+
+   Re-run the tests on `main` afterwards and report the result.
 3. **Clean up.** Once the merge is green, delete the merged branch — this
    step needs no separate confirmation. Pushing to `origin` is a separate
    ask, never implied by a merge.
