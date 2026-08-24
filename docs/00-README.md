@@ -8,7 +8,9 @@ CDFW/marineBIOS.
 
 The system runs entirely on a single local machine and is operated by one
 researcher. These documents exist so the design can be reviewed and understood
-by a small research team before any code is written.
+by a small research team, and they stay ahead of the code: a change to the
+observation schema, a storage zone, or a feature definition updates the matching
+document in the same commit.
 
 ## Reading order
 
@@ -37,4 +39,16 @@ Everything is reproducible from raw files with one command.
 ## Status
 
 All documents are **drafts for review**. Decisions marked *Proposed* in the
-ADRs are open for team input. Nothing has been implemented yet.
+ADRs are open for team input.
+
+Implementation has started, one vertical slice at a time. Built so far: the
+`hobo_xlsx` vendor adapter and its validation checks (doc 06), the site and
+parameter registries, the three storage zones with the observation writer and
+run manifests (doc 03), the normalizer, and `kelpcompare ingest --source
+project` joining them end to end — a HOBO export becomes queryable
+UTC/SI observations with a manifest recording every check.
+
+Not built yet: the QARTOD QC stage (doc 04 §1) — ingested rows carry
+`qc_flag = 2`, not evaluated, until it exists — every public-source fetcher
+(doc 02), quarterly features and anomalies (doc 04 §2–3), the comparison
+table, the notebooks, and the dashboard.
