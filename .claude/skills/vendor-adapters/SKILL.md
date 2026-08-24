@@ -40,7 +40,8 @@ Adapters only extract faithfully.
 
 1. Prefer original exports; mark edited files `provenance: edited`.
 2. No ingest without a registry deployment record matching the serial,
-   with timezone and in-water window. Otherwise quarantine.
+   with timezone, in-water window, and `series_map` (sensor name from the
+   header -> controlled parameter). Otherwise quarantine.
 3. Validation on originals: parsed n/min/max/mean must equal the Details
    statistics; first/last samples must match Started/End-of-File events;
    observed spacing must match the configured interval. Skip

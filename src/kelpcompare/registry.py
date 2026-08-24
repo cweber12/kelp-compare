@@ -3,8 +3,8 @@
 The registry is the project's record of which instrument was where, when, and in
 what timezone (docs/03 "Site registry"). Two callers need it and neither should
 own it: the adapters, for the docs/06 s5 check-4 registry gate, and the
-normalizer, which needs `tz` and `window_local` to convert to UTC and trim the
-deployment window.
+normalizer, which needs `tz` and `window_local` to convert to UTC and flag the
+deployment window, and `series_map` to name the parameter each series carries.
 
 Note what `Deployment` deliberately does NOT carry: `lat`/`lon`. Position lives
 on the site record and is nullable by design -- serial 22506632's position is
@@ -32,6 +32,7 @@ class Deployment:
     deployment_number: int | None = None
     tz: str | None = None
     window_local: tuple[str, str] | None = None
+    series_map: dict[str, str] | None = None
     depth_m: float | None = None
     notes: str | None = None
 
@@ -40,9 +41,20 @@ class Deployment:
         """True when this record satisfies the docs/06 s5 check-4 requirements.
 
         A serial match alone is not enough: the normalizer cannot place the data
-        in time without a timezone and an in-water window.
+        in time without a timezone and an in-water window, and it cannot name the
+        parameter a series carries without a series map.
         """
-        return bool(self.tz) and self.window_local is not None
+        return bool(self.tz) and self.window_local is not None and bool(self.series_map)
+
+    def parameter_for(self, series_name: str) -> str | None:
+        """The controlled parameter this deployment declares for a series.
+
+        None means unmapped, which the normalizer reports and skips. Guessing a
+        parameter from a unit is not possible in general -- degC is equally
+        `sea_water_temperature` and `air_temperature` -- so an unmapped series is
+        a registry gap for a human, never an inference.
+        """
+        return (self.series_map or {}).get(series_name)
 
 
 @dataclass(frozen=True)
@@ -102,6 +114,7 @@ def _normalize_serial(serial: object) -> str:
 
 def _deployment(site: dict, record: dict) -> Deployment:
     window = record.get("window_local")
+    series_map = record.get("series_map")
     return Deployment(
         site_id=site.get("site_id", ""),
         serial=_normalize_serial(record.get("serial")),
@@ -109,6 +122,7 @@ def _deployment(site: dict, record: dict) -> Deployment:
         deployment_number=record.get("deployment_number"),
         tz=record.get("tz"),
         window_local=(str(window[0]), str(window[1])) if window and len(window) == 2 else None,
+        series_map={str(k): str(v) for k, v in series_map.items()} if series_map else None,
         depth_m=record.get("depth_m"),
         notes=record.get("notes"),
     )

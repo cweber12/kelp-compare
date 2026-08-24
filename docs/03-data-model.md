@@ -68,6 +68,16 @@ One record per station or deployment location.
 | `neighbor_refs[]` | Ordered public stations used for validation of this site |
 | `erddap_dataset_id` / `station_code` | Pinned source identifiers |
 
+Each `deployments[]` record carries `tz`, `window_local` (the in-water
+window, doc 06 §3), and `series_map` — the mapping from the vendor file's
+sensor name to a controlled parameter, e.g.
+`{"Tidbit 1": "sea_water_temperature"}`. The map lives on the deployment
+rather than in `parameters.json` because vendor series names are a user
+setting on the logger, so two teammates' exports of the same instrument
+type can disagree. A series with no entry is reported and skipped, never
+inferred from its unit — `degC` is equally `sea_water_temperature` and
+`air_temperature`.
+
 Deployment metadata is mandatory before project-sensor data is accepted;
 this is enforced in the ingest CLI, not by convention.
 

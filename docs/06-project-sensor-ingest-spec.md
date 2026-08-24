@@ -66,6 +66,7 @@ by deleting rows in Excel:
     "deployment_number": 3,
     "window_local": ["2026-07-11 08:00", "2026-08-01 07:30"],
     "tz": "America/Los_Angeles",
+    "series_map": {"Tidbit 1": "sea_water_temperature"},
     "depth_m": null
   }]
 }
@@ -135,8 +136,14 @@ Run automatically; results go in the run manifest.
    timestamp spacing (10 min here, zero deviations in the reviewed file).
 3. **Cadence audit**: report any gaps or irregular spacing (clock-drift
    symptom flagged in doc 02).
-4. **Registry gate**: a matching serial + deployment record with timezone
-   and window must exist, or the file is quarantined rather than ingested.
+4. **Registry gate**: a matching serial + deployment record with timezone,
+   in-water window, and series map must exist, or the file is quarantined
+   rather than ingested. The series map (doc 03, `deployments[]`) names the
+   controlled parameter behind each vendor series — `{"Tidbit 1":
+   "sea_water_temperature"}` — because the sensor name is a user setting and
+   the unit cannot stand in for it (`°C` is equally water and air
+   temperature). The gate deliberately does *not* require a position: serial
+   22506632's is null pending a GPS fix.
 5. **Duplicate-readout detection**: same serial + overlapping time range as
    a prior ingest → keep both raw, dedupe deterministically in
    observations (readouts of a running logger overlap by design).
