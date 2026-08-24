@@ -66,6 +66,7 @@ by deleting rows in Excel:
     "deployment_number": 3,
     "window_local": ["2026-07-11 08:00", "2026-08-01 07:30"],
     "tz": "America/Los_Angeles",
+    "series_map": {"Tidbit 1": "sea_water_temperature"},
     "depth_m": null
   }]
 }
@@ -78,6 +79,17 @@ while keeping the excluded readings on record (install: 69.8, 71.0, 71.9,
 minimum from 58.60 °F to 63.96 °F. The trim decision becomes reviewable
 metadata instead of an untracked edit — and remains reversible, consistent
 with the flags-not-deletions QC policy (ADR-004).
+
+**"Excluded" means flagged, not deleted.** Every parsed row reaches
+`observations`; the seven out-of-window readings carry `qc_flag = 4` and
+`qc_tests = deployment_window:fail`, and the default `qc_flag <= 2` analysis
+filter drops them. This is the same rule the rest of QC follows (doc 04 §1)
+and it is what makes the window reversible in practice: a corrected window
+is a registry edit and a `kelpcompare rebuild`, not a re-ingest, and the
+install transient stays inspectable — it is evidence about the deployment,
+not noise. In-window rows land at `qc_flag = 2` (not evaluated) until
+`kelpcompare qc` runs the QARTOD tests; a row whose value is absent lands at
+9 (missing).
 
 Edited files like `yellow_buoy_temps.xlsx` are still *accepted* when that's
 all we have (the parser tolerates extra columns, formula rows, and blank
@@ -135,16 +147,22 @@ Run automatically; results go in the run manifest.
    timestamp spacing (10 min here, zero deviations in the reviewed file).
 3. **Cadence audit**: report any gaps or irregular spacing (clock-drift
    symptom flagged in doc 02).
-4. **Registry gate**: a matching serial + deployment record with timezone
-   and window must exist, or the file is quarantined rather than ingested.
+4. **Registry gate**: a matching serial + deployment record with timezone,
+   in-water window, and series map must exist, or the file is quarantined
+   rather than ingested. The series map (doc 03, `deployments[]`) names the
+   controlled parameter behind each vendor series — `{"Tidbit 1":
+   "sea_water_temperature"}` — because the sensor name is a user setting and
+   the unit cannot stand in for it (`°C` is equally water and air
+   temperature). The gate deliberately does *not* require a position: serial
+   22506632's is null pending a GPS fix.
 5. **Duplicate-readout detection**: same serial + overlapping time range as
    a prior ingest → keep both raw, dedupe deterministically in
    observations (readouts of a running logger overlap by design).
 6. **QC and neighbor validation** then proceed per doc 04 §1 (the QARTOD
    gross-range test would independently have flagged nothing in-window
-   here; the install transient is excluded upstream by the window, and
-   also visible as a spike/rate-of-change failure if it ever leaks
-   through).
+   here; the install transient is already flagged by the window, and would
+   also show as a spike/rate-of-change failure — two independent tests
+   catching the same reading, which is the intended redundancy).
 
 ## 6. Known hazards to test explicitly
 

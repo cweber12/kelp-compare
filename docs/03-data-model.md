@@ -15,14 +15,43 @@ data/
   raw/                      # immutable; exactly what the source sent
     kelpwatch/  ndbc/  coops/  sccoos/  cdip/  gis/  project_sensors/
     _manifests/             # one JSON manifest per ingest run
-  observations/             # partitioned: source=/year=/*.parquet
+  observations/             # partitioned: source={name}/year={yyyy}/part-{run_id}.parquet
   features/
     quarterly_env.parquet
     quarterly_kelp.parquet
     comparison.parquet
+  quarantine/               # files the registry gate turned away (doc 06 §5)
   registry/
     sites.json  parameters.json  polygons.geojson  station_map.json
 ```
+
+`quarantine/` is deliberately outside `raw/`: raw is the record of what the
+project chose to trust and keep forever, and a file with no deployment
+record has not earned that. It stays in the operator's drop directory too,
+so fixing the registry and re-running picks it up (doc 06 §5 check 4).
+
+`station_map.json` is planned, not yet created — the pinned source
+identifiers currently live on the site records in `sites.json`.
+
+### Partition files and idempotence
+
+One file per partition per run, named `part-{run_id}.parquet`. A write
+rewrites its partition wholesale — read what is there, merge, dedupe, write,
+drop the superseded file — because ADR-001 chose a store with no row-level
+updates. Duplicate rows are collapsed on
+`(site_id, parameter, timestamp, depth_m)` with the newest `fetch_run_id`
+winning; run IDs sort chronologically by construction, which is what makes
+the tie-break deterministic. That is how overlapping readouts of a running
+logger (doc 06 §5 check 5) resolve to one row per measurement.
+
+Timestamps are stored **tz-naive UTC**. The column is UTC by invariant, and
+a naive column reads back as a plain DuckDB `TIMESTAMP` that displays as UTC
+for every reader, whereas a tz-aware one becomes `TIMESTAMPTZ` and renders
+in the reader's session timezone — presentation-time local time leaking into
+storage, which the integrity rules below forbid. The conversion happens at
+the storage boundary only; everything upstream of it carries an explicit
+UTC-aware timestamp so the invariant is machine-checkable rather than
+assumed.
 
 ## Core table: `observations`
 
@@ -38,13 +67,20 @@ becomes new rows, not a schema migration.
 | `value` | DOUBLE | SI units per parameter registry |
 | `depth_m` | DOUBLE | Positive down; null for met parameters |
 | `qc_flag` | TINYINT | QARTOD roll-up: 1 pass, 2 not eval, 3 suspect, 4 fail, 9 missing |
-| `qc_tests` | VARCHAR | Compact per-test results for audit |
+| `qc_tests` | VARCHAR | Compact per-test results for audit, `name:status` joined by `;` |
 | `source` | VARCHAR | `kelpwatch, ndbc, coops, sccoos, cdip, project, oisst, ...` |
 | `fetch_run_id` | VARCHAR | FK to run manifest |
 
 Partitioned by `source` and `year(timestamp)`. Rule: rows are never
 deleted for QC reasons — analysis queries filter on `qc_flag <= 2` (or
 stricter) at read time.
+
+Ingest writes `qc_flag = 2` (not evaluated) for rows it has no verdict on,
+`9` for a row whose value is absent, and `4` for a project-sensor reading
+outside its declared deployment window — the one test ingest can decide,
+recorded as `deployment_window:fail` in `qc_tests` (doc 06 §3). The QARTOD
+tests themselves run later, in `kelpcompare qc`, and roll up into the same
+two columns.
 
 ### Parameter vocabulary (initial)
 
@@ -67,6 +103,16 @@ One record per station or deployment location.
 | `deployments[]` | For project sensors: instrument model, serial, depth_m, start/end, calibration dates, clock-sync events |
 | `neighbor_refs[]` | Ordered public stations used for validation of this site |
 | `erddap_dataset_id` / `station_code` | Pinned source identifiers |
+
+Each `deployments[]` record carries `tz`, `window_local` (the in-water
+window, doc 06 §3), and `series_map` — the mapping from the vendor file's
+sensor name to a controlled parameter, e.g.
+`{"Tidbit 1": "sea_water_temperature"}`. The map lives on the deployment
+rather than in `parameters.json` because vendor series names are a user
+setting on the logger, so two teammates' exports of the same instrument
+type can disagree. A series with no entry is reported and skipped, never
+inferred from its unit — `degC` is equally `sea_water_temperature` and
+`air_temperature`.
 
 Deployment metadata is mandatory before project-sensor data is accepted;
 this is enforced in the ingest CLI, not by convention.

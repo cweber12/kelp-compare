@@ -1,5 +1,5 @@
 {
-  "_comment": "Site registry per docs/03. Deployment records are REQUIRED before project-sensor ingest (docs/06 registry gate). window_local values below are from the reviewed Tidbit deployment; verify before first real run.",
+  "_comment": "Site registry per docs/03. Deployment records are REQUIRED before project-sensor ingest (docs/06 registry gate). window_local values below are from the reviewed Tidbit deployment; verify before first real run. series_map keys are the sensor name as it appears in the vendor file header ('Tidbit 1 , degF' -> 'Tidbit 1'), not the full column label; values are controlled parameter names from parameters.json.",
   "sites": [
     {
       "site_id": "PROJ:YELLOW-BUOY",
@@ -16,6 +16,7 @@
           "depth_m": null,
           "tz": "America/Los_Angeles",
           "window_local": ["2026-07-11 08:00", "2026-08-01 07:30"],
+          "series_map": {"Tidbit 1": "sea_water_temperature"},
           "notes": "Position unverified - conflicting reports ~1-2 km apart. Leave lat/lon null until a GPS fix from the placer. Do NOT fill from memory or nearby station coords."
         }
       ]

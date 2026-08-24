@@ -122,8 +122,9 @@ def registry_gate(serial: str | None, registry: Registry) -> Check:
     """docs/06 s5 check 4: no deployment record for this serial, no ingest.
 
     Needs only a serial string, so every vendor adapter shares it. Requires a
-    timezone and an in-water window on the record -- but deliberately not a
-    position, which may legitimately be null (see `registry.Deployment`).
+    timezone, an in-water window, and a series map on the record -- but
+    deliberately not a position, which may legitimately be null (see
+    `registry.Deployment`).
 
     Returns a verdict. Moving the file into `data/quarantine/` is the ingest
     CLI's job (docs/03): one place decides what happens to a file.
@@ -162,7 +163,11 @@ def registry_gate(serial: str | None, registry: Registry) -> Check:
 
 
 def _incomplete_reason(deployment: Deployment) -> str:
-    """Name which of the two required registry fields a record is missing."""
-    required = (("tz", deployment.tz), ("window_local", deployment.window_local))
+    """Name which of the required registry fields a record is missing."""
+    required = (
+        ("tz", deployment.tz),
+        ("window_local", deployment.window_local),
+        ("series_map", deployment.series_map),
+    )
     missing = " and ".join(name for name, value in required if not value)
     return f"{deployment.site_id} deployment {deployment.deployment_number} missing {missing}"

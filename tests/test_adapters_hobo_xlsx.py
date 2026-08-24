@@ -13,6 +13,7 @@ of record.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -354,7 +355,7 @@ def test_unregistered_serial_is_quarantined(tmp_path, registry):
 
 
 def test_incomplete_deployment_record_is_quarantined(tmp_path):
-    """A serial match is not enough: docs/06 requires a timezone and a window."""
+    """A serial match is not enough: docs/06 requires tz, window, and series map."""
     thin = tmp_path / "sites.json"
     thin.write_text(
         '{"sites": [{"site_id": "PROJ:X", "deployments": '
@@ -364,8 +365,49 @@ def test_incomplete_deployment_record_is_quarantined(tmp_path):
     report = hobo_xlsx.validate(ORIGINAL, registry=load_registry(thin))
     gate = report.check(REGISTRY_GATE)
     assert gate.status == "fail"
-    assert "tz" in gate.detail and "window_local" in gate.detail
+    assert "tz" in gate.detail
+    assert "window_local" in gate.detail
+    assert "series_map" in gate.detail
     assert report.quarantined is True
+
+
+def test_missing_series_map_is_quarantined(tmp_path):
+    """Timed and placed but unmapped: the normalizer would have to guess."""
+    thin = tmp_path / "sites.json"
+    thin.write_text(
+        json.dumps(
+            {
+                "sites": [
+                    {
+                        "site_id": "PROJ:X",
+                        "deployments": [
+                            {
+                                "serial": KNOWN_SERIAL,
+                                "deployment_number": 1,
+                                "tz": "America/Los_Angeles",
+                                "window_local": ["2026-07-11 08:00", "2026-08-01 07:30"],
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = hobo_xlsx.validate(ORIGINAL, registry=load_registry(thin))
+    gate = report.check(REGISTRY_GATE)
+    assert gate.status == "fail"
+    assert gate.detail.endswith("-- quarantine")
+    assert "missing series_map)" in gate.detail  # only the absent field is named
+    assert report.quarantined is True
+
+
+def test_series_map_resolves_the_parameter_by_series_name(registry):
+    """The key is the header's sensor name, not the full `{name} , {unit}` label."""
+    deployment = find_deployment(registry, KNOWN_SERIAL)
+    assert deployment.parameter_for("Tidbit 1") == "sea_water_temperature"
+    assert deployment.parameter_for(SERIES_COLUMN) is None
+    assert deployment.parameter_for("Light") is None
 
 
 def test_gate_passes_although_the_position_is_unverified(registry):
