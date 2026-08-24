@@ -82,6 +82,47 @@ recorded as `deployment_window:fail` in `qc_tests` (doc 06 §3). The QARTOD
 tests themselves run later, in `kelpcompare qc`, and roll up into the same
 two columns.
 
+### How the two QC columns are derived
+
+`qc_tests` is the record; `qc_flag` is its summary. A row's flag is always the
+roll-up of exactly the verdicts recorded beside it, and the two are written
+together so they cannot drift apart. Statuses are `pass`, `suspect`, `fail`,
+`missing`; a test that reached no verdict for a row is **omitted** rather than
+recorded as a non-answer, which is what a spike test does at the two ends of a
+series.
+
+Roll-up precedence, applied across every recorded verdict:
+
+| Flag | Wins when | Notes |
+|------|-----------|-------|
+| `9` missing | any test reports missing | Highest. There is nothing in an absent value to judge |
+| `4` fail | any test fails | |
+| `3` suspect | any test is suspect, none failed | Excluded by the default `qc_flag <= 2` filter |
+| `1` pass | at least one test reached a verdict, all passed | |
+| `2` not evaluated | no test reached a verdict | The state every row is ingested in |
+
+Missing ranking highest is a deliberate divergence from
+`ioos_qc.qartod_compare`, which ranks it lowest. A verdict about where the
+instrument was must not turn a missing reading into a measurement that failed.
+Every other step matches QARTOD.
+
+`kelpcompare qc` **re-derives** the flag rather than upgrading it: it reads the
+verdicts already stored, replaces only those of the tests it just ran, and rolls
+the whole set up again. Two consequences worth stating plainly. A row failed for
+being outside its deployment window stays at `4` however much a gross-range test
+likes its value — a plausible temperature measured in air is still not a
+measurement of the sea. And running `qc` twice over unchanged data is a no-op,
+which is what makes the flag a function of the data and the registry rather than
+of the order in which commands were run.
+
+`qc` rewrites the `observations/` zone in place, preserving each row's
+`fetch_run_id` so ingest provenance survives; the partition file is renamed to
+the qc run that last touched it. One consequence follows from the partition
+rules above: re-ingesting an export that overlaps already-flagged rows brings
+those rows back in at `qc_flag = 2` with a newer `fetch_run_id`, and the newest
+run wins. That is honest — they have not been evaluated since they were
+re-ingested — and re-running `qc` restores them.
+
 ### Parameter vocabulary (initial)
 
 `sea_water_temperature`, `air_temperature`, `water_level` (MLLW),

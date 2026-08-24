@@ -55,6 +55,20 @@ OBSERVATION_DTYPES = {
     "fetch_run_id": "string",
 }
 
+#: docs/03 `qc_flag`: the QARTOD roll-up stored on every row. Part of the schema,
+#: so it lives here rather than in the normalizer that first writes it or the qc
+#: stage that later re-derives it -- both need exactly the same vocabulary.
+FLAG_PASS = 1
+FLAG_NOT_EVALUATED = 2
+FLAG_SUSPECT = 3
+FLAG_FAIL = 4
+FLAG_MISSING = 9
+
+#: The one test ingest can decide, named in the docs/03 `qc_tests` description
+#: (docs/06 s3). Here for the same reason: the stage that writes it and the stage
+#: forbidden from relaxing it must agree on the spelling.
+WINDOW_TEST = "deployment_window"
+
 #: What makes an observation the same observation. Not `value`: a re-read of the
 #: same instant is the same measurement even if a later export rounds it
 #: differently, and not `qc_flag`, which is a judgement about the row.

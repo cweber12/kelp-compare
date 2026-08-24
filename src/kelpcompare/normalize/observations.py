@@ -42,15 +42,13 @@ import pandas as pd
 from kelpcompare.adapters.base import RawSeries
 from kelpcompare.parameters import Parameters
 from kelpcompare.registry import Deployment
-from kelpcompare.storage import OBSERVATION_COLUMNS
-
-#: docs/03 QARTOD roll-up: 1 pass, 2 not evaluated, 3 suspect, 4 fail, 9 missing.
-FLAG_NOT_EVALUATED = 2
-FLAG_FAIL = 4
-FLAG_MISSING = 9
-
-#: The one test this stage can decide. QARTOD proper runs in `kelpcompare qc`.
-WINDOW_TEST = "deployment_window"
+from kelpcompare.storage import (
+    FLAG_FAIL,
+    FLAG_MISSING,
+    FLAG_NOT_EVALUATED,
+    OBSERVATION_COLUMNS,
+    WINDOW_TEST,
+)
 
 #: Header units seen in the wild, canonicalized. Extended deliberately, one
 #: family at a time -- an unknown unit must raise, never fall through.
