@@ -26,6 +26,9 @@ doc in the same PR. Docs and code must not drift.
 - `src/kelpcompare/normalize/` — UTC + SI + controlled parameter names
 - `src/kelpcompare/qc/` — QARTOD flags via ioos_qc; flags, never deletions
 - `src/kelpcompare/features/` — quarterly aggregation and anomalies
+- `src/kelpcompare/registry.py` — `sites.json`: which instrument was where, when, in what timezone
+- `src/kelpcompare/storage.py` — the docs/03 zones and the only writer into `observations/`
+- `src/kelpcompare/manifest.py` — one run manifest per pipeline run (docs/03)
 - `src/kelpcompare/cli.py` — `kelpcompare ingest|qc|features|rebuild`
 - `data/` — gitignored except `data/registry/`; zones per docs/03
 - `notebooks/` — analyses of record; must run top-to-bottom from `comparison.parquet`

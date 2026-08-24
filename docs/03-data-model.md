@@ -15,14 +15,43 @@ data/
   raw/                      # immutable; exactly what the source sent
     kelpwatch/  ndbc/  coops/  sccoos/  cdip/  gis/  project_sensors/
     _manifests/             # one JSON manifest per ingest run
-  observations/             # partitioned: source=/year=/*.parquet
+  observations/             # partitioned: source={name}/year={yyyy}/part-{run_id}.parquet
   features/
     quarterly_env.parquet
     quarterly_kelp.parquet
     comparison.parquet
+  quarantine/               # files the registry gate turned away (doc 06 §5)
   registry/
     sites.json  parameters.json  polygons.geojson  station_map.json
 ```
+
+`quarantine/` is deliberately outside `raw/`: raw is the record of what the
+project chose to trust and keep forever, and a file with no deployment
+record has not earned that. It stays in the operator's drop directory too,
+so fixing the registry and re-running picks it up (doc 06 §5 check 4).
+
+`station_map.json` is planned, not yet created — the pinned source
+identifiers currently live on the site records in `sites.json`.
+
+### Partition files and idempotence
+
+One file per partition per run, named `part-{run_id}.parquet`. A write
+rewrites its partition wholesale — read what is there, merge, dedupe, write,
+drop the superseded file — because ADR-001 chose a store with no row-level
+updates. Duplicate rows are collapsed on
+`(site_id, parameter, timestamp, depth_m)` with the newest `fetch_run_id`
+winning; run IDs sort chronologically by construction, which is what makes
+the tie-break deterministic. That is how overlapping readouts of a running
+logger (doc 06 §5 check 5) resolve to one row per measurement.
+
+Timestamps are stored **tz-naive UTC**. The column is UTC by invariant, and
+a naive column reads back as a plain DuckDB `TIMESTAMP` that displays as UTC
+for every reader, whereas a tz-aware one becomes `TIMESTAMPTZ` and renders
+in the reader's session timezone — presentation-time local time leaking into
+storage, which the integrity rules below forbid. The conversion happens at
+the storage boundary only; everything upstream of it carries an explicit
+UTC-aware timestamp so the invariant is machine-checkable rather than
+assumed.
 
 ## Core table: `observations`
 
