@@ -83,6 +83,24 @@ class FileEntry:
 
 
 @dataclass
+class SeriesEntry:
+    """One evaluated series. What a `FileEntry` is to ingest, this is to qc.
+
+    A qc run has no input files -- it reads a zone, not a drop directory -- so
+    recording its work as files would be a fiction that made the manifest harder
+    to read, not easier.
+    """
+
+    source: str
+    site_id: str
+    parameter: str
+    depth_m: float | None
+    rows: int
+    tests: list[str] = field(default_factory=list)
+    qc_flags: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
 class RunManifest:
     """One run, accumulated as it goes and written once at the end."""
 
@@ -95,6 +113,8 @@ class RunManifest:
     finished_at: str | None = None
     sources: list[str] = field(default_factory=list)
     files: list[FileEntry] = field(default_factory=list)
+    series: list[SeriesEntry] = field(default_factory=list)
+    qc_flags: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     gaps: list[str] = field(default_factory=list)
 
@@ -122,6 +142,21 @@ class RunManifest:
         entry = FileEntry(path=str(path), outcome=outcome, **fields)
         self.files.append(entry)
         return entry
+
+    def add_series(self, **fields) -> SeriesEntry:
+        entry = SeriesEntry(**fields)
+        self.series.append(entry)
+        return entry
+
+    def note_flags(self, counts: dict[str, int]) -> None:
+        """Fold a flag histogram into the run-level one docs/03 requires.
+
+        Run-level rather than summed from `series` on demand, because rows a run
+        read but could not evaluate belong in the total too -- a histogram that
+        quietly counted only the rows that went well would overstate coverage.
+        """
+        for flag, count in counts.items():
+            self.qc_flags[flag] = self.qc_flags.get(flag, 0) + count
 
     def note_warning(self, message: str) -> None:
         self.warnings.append(message)

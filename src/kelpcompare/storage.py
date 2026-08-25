@@ -192,6 +192,23 @@ def read_observations(zones: Zones, source: str | None = None) -> pd.DataFrame:
     return pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
 
 
+def stored_sources(zones: Zones) -> tuple[str, ...]:
+    """Every source with rows in the zone, from the partition layout itself.
+
+    So that a whole-zone command can ask what is there rather than being told,
+    and so the `source=` naming stays a fact about this module (docs/03).
+    """
+    if not zones.observations.exists():
+        return ()
+    return tuple(
+        sorted(
+            path.name.removeprefix("source=")
+            for path in zones.observations.glob("source=*")
+            if path.is_dir()
+        )
+    )
+
+
 def _write_partition(
     part: pd.DataFrame, zones: Zones, *, source: str, year: int, run_id: str
 ) -> Path:

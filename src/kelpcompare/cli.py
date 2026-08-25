@@ -4,9 +4,11 @@ The dependency order lives here rather than in a scheduler (ADR-002), and every
 run writes a manifest (hard rule 7): a Parquet file written outside this CLI
 cannot be traced back to a fetch, and an untraceable number cannot be published.
 
-`ingest` fails soft, per the docs/02 cross-cutting rules. One unreadable file, one
-unregistered serial, one source outage is recorded and stepped over -- never
-allowed to abort a run and lose the files that were fine.
+Both commands fail soft, per the docs/02 cross-cutting rules. One unreadable
+file, one unregistered serial, one source outage is recorded and stepped over --
+never allowed to abort a run and lose the inputs that were fine. Recorded, then
+reflected in the exit code: a run that quietly skipped something is worse than
+one that says so.
 """
 
 from __future__ import annotations
@@ -22,8 +24,9 @@ from kelpcompare.adapters.base import REGISTRY_GATE, Check, ValidationReport
 from kelpcompare.manifest import RunManifest
 from kelpcompare.normalize import to_observations
 from kelpcompare.parameters import load_parameters
+from kelpcompare.qc import evaluate
 from kelpcompare.registry import Deployment, Registry, find_deployments, load_registry
-from kelpcompare.storage import Zones, write_observations
+from kelpcompare.storage import Zones, read_observations, stored_sources, write_observations
 
 #: Tried in order; the first whose `sniff()` accepts the file wins. A new logger
 #: brand is one adapter module and one entry here (docs/06 s4).
@@ -110,6 +113,115 @@ def ingest(
         )
 
     _report(run, zones, dry_run=dry_run)
+
+
+@main.command()
+@click.option(
+    "--source",
+    default=None,
+    help="Source name per docs/02. Defaults to every source with stored rows.",
+)
+@click.option(
+    "--data-root",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Root of the docs/03 data zones. Defaults to ./data.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Report what would be flagged; write no files, not even the manifest.",
+)
+def qc(source: str | None, data_root: Path | None, dry_run: bool) -> None:
+    """Run the QARTOD tests over stored observations (docs/04 s1, ADR-004).
+
+    Re-derives `qc_flag` and `qc_tests` for every row it reads and writes them
+    back in place, so analysis keeps filtering one table on `qc_flag <= 2` with
+    no join (docs/03). Rows are never added, removed, or reordered.
+
+    No `--registry` option: the site registry is ingest's business. The one
+    verdict ingest decides, the deployment window, is read back out of
+    `qc_tests` rather than recomputed, so a qc run cannot reach a different
+    conclusion about it than the run that landed the rows did.
+    """
+    zones = Zones.at(data_root)
+    parameters = load_parameters(zones.parameters_json)
+    sources = [source] if source else list(stored_sources(zones))
+
+    run = RunManifest.start("qc", argv=_argv(source), sources=sources)
+    evaluated = [
+        _qc_source(name, zones=zones, parameters=parameters, run=run, dry_run=dry_run)
+        for name in sources
+    ]
+
+    if not any(evaluated):
+        click.echo("nothing to evaluate" + (f" for {source!r}" if source else ""))
+        return
+
+    _report_qc(run, zones, dry_run=dry_run)
+
+
+def _qc_source(name: str, *, zones: Zones, parameters, run: RunManifest, dry_run: bool) -> bool:
+    """Evaluate one source's rows. Returns whether there were any to evaluate.
+
+    Never raises. One source whose stored rows cannot be read must not cost the
+    run the sources that are fine -- the same fail-soft rule ingest follows
+    (docs/02 cross-cutting rules) -- but it does set the exit code, because a
+    zone that silently went unevaluated is worse than a loud failure.
+    """
+    frame = read_observations(zones, name)
+    if frame.empty:
+        return False
+
+    try:
+        # Storage keeps timestamps tz-naive UTC (docs/03); everything upstream of
+        # that boundary carries the zone explicitly, so put it back before use.
+        frame["timestamp"] = frame["timestamp"].dt.tz_localize("UTC")
+        outcome = evaluate(frame, parameters)
+    except Exception as error:  # noqa: BLE001 -- one bad source must not end the run
+        run.note_warning(f"{name}: {type(error).__name__}: {error}")
+        return True
+
+    run.note_flags(outcome.flag_counts)
+    for warning in outcome.warnings:
+        run.note_warning(f"{name}: {warning}")
+    for series in outcome.series:
+        run.add_series(
+            source=series.source,
+            site_id=series.site_id,
+            parameter=series.parameter,
+            depth_m=series.depth_m,
+            rows=series.rows,
+            tests=list(series.tests),
+            qc_flags=series.flag_counts,
+        )
+
+    if not dry_run:
+        write_observations(outcome.frame, zones, source=name, run_id=run.run_id)
+    return True
+
+
+def _argv(source: str | None) -> list[str]:
+    return [f"--source={source}"] if source else []
+
+
+def _report_qc(run: RunManifest, zones: Zones, *, dry_run: bool) -> None:
+    for series in run.series:
+        histogram = " ".join(f"{flag}:{n}" for flag, n in sorted(series.qc_flags.items()))
+        click.echo(f"{series.site_id:>20}  {series.parameter}  {series.rows} rows  {histogram}")
+    for warning in run.warnings:
+        click.echo(f"     warning  {warning}")
+
+    total = " ".join(f"{flag}:{n}" for flag, n in sorted(run.qc_flags.items()))
+    click.echo(f"\n{len(run.series)} series evaluated" + (f" -- {total}" if total else ""))
+
+    if dry_run:
+        click.echo("dry run: nothing written, no manifest")
+    else:
+        click.echo(f"manifest: {run.write(zones)}")
+
+    if run.warnings:
+        raise SystemExit(1)
 
 
 @main.command()
