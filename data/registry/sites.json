@@ -27,7 +27,10 @@
       "operator": "ndbc",
       "station_code": "LJAC1",
       "lat": 32.867,
-      "lon": -117.257
+      "lon": -117.257,
+      "sensor_depths_m": {"sea_water_temperature": 3.4},
+      "same_platform_as": ["COOPS:9410230"],
+      "notes": "Sensor geometry from the NDBC station page, retrieved 2026-08-25: sea temp depth 3.4 m below MLLW; air temp 7.2 m and anemometer 8.2 m above a site elevation of 9.3 m above MSL. The 3.4 m intake is why depth_m is recorded per parameter - comparing it to a logger at another depth is the error docs/02 says to prevent structurally. NOT an independent station from COOPS:9410230: the NDBC station page titles this platform 'LJAC1 - 9410230 - La Jolla, CA', owned by NOAA NOS. NDBC redistributes the NOS observations, so the two site records describe one instrument package and must never both count as neighbors for the same validation."
     },
     {
       "site_id": "COOPS:9410230",
@@ -35,7 +38,9 @@
       "operator": "coops",
       "station_code": "9410230",
       "lat": 32.867,
-      "lon": -117.257
+      "lon": -117.257,
+      "same_platform_as": ["NDBC:LJAC1"],
+      "notes": "Same NOS platform as NDBC:LJAC1 - see that record. Water level here is the product CO-OPS serves with an explicit datum (MLLW, docs/03); NDBC's TIDE column for the same platform declares no datum and is deliberately not ingested."
     }
   ]
 }
