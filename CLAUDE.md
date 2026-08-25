@@ -218,6 +218,11 @@ than prose:
   translated into what changed and whether it is safe: not "each partition
   writes through a staging file with an atomic rename", but "a crashed run can
   no longer leave a half-written file behind".
+- **Bullets over block paragraphs.** Wherever a section carries more than one
+  point, list them. A paragraph joining three facts is one object that has to
+  be parsed whole; three bullets are three, and two of them can be skipped
+  without losing the third. Reserve prose for a single point that needs a
+  sentence of reasoning.
 - **No code blocks** unless asked; they cost a screen and say nothing about
   whether to merge. Tables are fine and scan faster than prose.
 - **This governs the chat report only.** PR bodies, commit messages and docs
