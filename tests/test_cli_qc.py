@@ -283,3 +283,30 @@ def test_a_source_that_cannot_be_read_does_not_cost_the_run_the_ones_that_can(da
     assert "ndbc" in result.output
     assert set(stored(data_root)["qc_flag"]) == {FLAG_PASS, FLAG_FAIL}
     assert any("ndbc" in warning for warning in qc_manifest(data_root)["warnings"])
+
+
+def test_a_partition_left_holding_two_files_does_not_change_what_qc_stores(data_root):
+    """Issue #3, end to end.
+
+    Before the read deduped, this run reported 6058 rows for a 3029-row series
+    and stored three verdicts that a clean run does not produce -- the install
+    transient came back `spike:suspect;rate_of_change:pass` instead of
+    `spike:fail;rate_of_change:suspect`, silently retiring the doc 06 s5 check 6
+    redundancy. Exit code was 0 throughout.
+    """
+    ingest(data_root)
+    run(data_root, "qc")
+    clean = stored(data_root).sort_values("timestamp").reset_index(drop=True)
+
+    (part,) = partitions(data_root)
+    (part.parent / "part-20260101T000000000Z-ingest.parquet").write_bytes(part.read_bytes())
+    assert len(partitions(data_root)) == 2
+
+    result = run(data_root, "qc")
+    assert "3029 rows" in result.output
+
+    again = stored(data_root).sort_values("timestamp").reset_index(drop=True)
+    assert len(again) == 3029
+    assert again["qc_flag"].equals(clean["qc_flag"])
+    assert again["qc_tests"].equals(clean["qc_tests"])
+    assert len(partitions(data_root)) == 1

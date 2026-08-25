@@ -7,6 +7,8 @@ that wrote there would be unrepeatable by construction.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -204,6 +206,98 @@ def test_sources_are_stored_separately(tmp_path):
     assert len(storage.read_observations(zones)) == 2
     assert len(storage.read_observations(zones, source="project")) == 1
     assert storage.read_observations(zones, source="ndbc")["site_id"].iloc[0] == "NDBC:LJAC1"
+
+
+def test_a_partition_left_holding_two_files_reads_as_one_series(tmp_path):
+    """The write that leaves one file per partition is not atomic (issue #3).
+
+    `_write_partition` creates the new file and only then removes the ones it
+    supersedes, so an interrupted run leaves both. The two overlap completely --
+    the newer is a rewrite of the older -- so a naive read returns every row
+    twice, and the QARTOD tests read a row's neighbours.
+    """
+    zones = Zones.at(tmp_path)
+    stamps = ["2026-07-11T15:00Z", "2026-07-11T15:10Z"]
+
+    (superseded,) = write_observations(
+        observations(stamps, values=[17.0, 17.1], run_id=RUN_A),
+        zones,
+        source="project",
+        run_id=RUN_A,
+    )
+    leftover = superseded.read_bytes()
+
+    (current,) = write_observations(
+        observations(stamps, values=[18.0, 18.1], run_id=RUN_B),
+        zones,
+        source="project",
+        run_id=RUN_B,
+    )
+    assert not superseded.exists()
+
+    superseded.write_bytes(leftover)  # the unlink that did not happen
+    assert len(sorted(current.parent.glob("part-*.parquet"))) == 2
+
+    rows = storage.read_observations(zones, "project")
+    assert len(rows) == 2
+    assert list(rows["value"]) == [18.0, 18.1]
+
+
+def test_a_leftover_file_in_one_partition_does_not_touch_another(tmp_path):
+    """Dedupe is per partition, not zone-wide: `OBSERVATION_KEY` has no `source`."""
+    zones = Zones.at(tmp_path)
+    stamps = ["2026-07-11T15:00Z"]
+    write_observations(observations(stamps), zones, source="project", run_id=RUN_A)
+    write_observations(observations(stamps, site="NDBC:LJAC1"), zones, source="ndbc", run_id=RUN_A)
+
+    rows = storage.read_observations(zones)
+    assert sorted(rows["site_id"]) == ["NDBC:LJAC1", "PROJ:YELLOW-BUOY"]
+
+
+def test_a_rewrite_that_preserves_fetch_run_id_still_wins(tmp_path):
+    """What the qc rewrite depends on, named directly.
+
+    qc rewrites the zone preserving each row's `fetch_run_id` (docs/03), so both
+    copies of a rewritten row carry the same one and "newest `fetch_run_id`
+    wins" cannot break the tie. What resolves it is that the incoming rows are
+    concatenated last and `_dedupe` sorts stably. Reorder either and qc silently
+    writes back the flags it just replaced -- so this pins the ordering rather
+    than leaving it to the end-to-end qc tests to notice indirectly.
+    """
+    zones = Zones.at(tmp_path)
+    stamps = ["2026-07-11T15:00Z"]
+    write_observations(
+        observations(stamps, values=[17.0], run_id=RUN_A), zones, source="project", run_id=RUN_A
+    )
+    write_observations(
+        observations(stamps, values=[99.0], run_id=RUN_A), zones, source="project", run_id=RUN_B
+    )
+
+    assert list(storage.read_observations(zones, "project")["value"]) == [99.0]
+
+
+def test_an_interrupted_write_leaves_the_previous_partition_intact(tmp_path, monkeypatch):
+    """The new file lands under a staging name, so a half-written Parquet never
+    becomes the partition (issue #3). Before this, a failed write left a
+    truncated `part-*.parquet` that every later read raised on."""
+    zones = Zones.at(tmp_path)
+    stamps = ["2026-07-11T15:00Z"]
+    write_observations(observations(stamps, values=[17.0]), zones, source="project", run_id=RUN_A)
+
+    def die_mid_write(self, path, **kwargs):
+        Path(path).write_bytes(b"half a parquet file")
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", die_mid_write)
+    with pytest.raises(OSError):
+        write_observations(
+            observations(stamps, values=[99.0]), zones, source="project", run_id=RUN_B
+        )
+    monkeypatch.undo()
+
+    directory = zones.partition("project", 2026)
+    assert [p.name for p in sorted(directory.glob("part-*.parquet"))] == [f"part-{RUN_A}.parquet"]
+    assert list(storage.read_observations(zones, "project")["value"]) == [17.0]
 
 
 def test_reading_an_empty_zone_returns_the_documented_columns(tmp_path):
