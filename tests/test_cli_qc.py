@@ -264,3 +264,22 @@ def test_a_source_whose_stored_verdicts_are_corrupt_fails_loudly(data_root):
     result = run(data_root, "qc", expect=1)
     assert "deployment_window" in result.output
     assert set(stored(data_root)["qc_flag"]) == {FLAG_NOT_EVALUATED, FLAG_FAIL}
+
+
+def test_a_source_that_cannot_be_read_does_not_cost_the_run_the_ones_that_can(data_root):
+    """docs/02 fail-soft, and hard rule 7: recorded and stepped over, with a
+    manifest either way.
+
+    `ndbc` sorts before `project`, so a read failure that escaped would abort
+    the run before the source that was fine had been evaluated at all -- and
+    take the manifest with it, leaving no record that the run happened.
+    """
+    ingest(data_root)
+    unreadable = data_root / "observations" / "source=ndbc" / "year=2026"
+    unreadable.mkdir(parents=True)
+    (unreadable / "part-20260101T000000000Z-ingest.parquet").write_text("not a parquet file")
+
+    result = run(data_root, "qc", expect=1)
+    assert "ndbc" in result.output
+    assert set(stored(data_root)["qc_flag"]) == {FLAG_PASS, FLAG_FAIL}
+    assert any("ndbc" in warning for warning in qc_manifest(data_root)["warnings"])

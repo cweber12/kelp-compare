@@ -164,40 +164,43 @@ def qc(source: str | None, data_root: Path | None, dry_run: bool) -> None:
 def _qc_source(name: str, *, zones: Zones, parameters, run: RunManifest, dry_run: bool) -> bool:
     """Evaluate one source's rows. Returns whether there were any to evaluate.
 
-    Never raises. One source whose stored rows cannot be read must not cost the
-    run the sources that are fine -- the same fail-soft rule ingest follows
-    (docs/02 cross-cutting rules) -- but it does set the exit code, because a
-    zone that silently went unevaluated is worse than a loud failure.
+    Never raises. One source whose stored rows cannot be read, evaluated, or
+    written back must not cost the run the sources that are fine -- the same
+    fail-soft rule ingest follows (docs/02 cross-cutting rules) -- but it does
+    set the exit code, because a zone that silently went unevaluated is worse
+    than a loud failure. The whole body is guarded, not just the evaluation: an
+    unreadable partition and a partition that cannot be rewritten are both
+    ordinary disk failures, and either one escaping would abort the run and take
+    its manifest with it (hard rule 7).
     """
-    frame = read_observations(zones, name)
-    if frame.empty:
-        return False
-
     try:
+        frame = read_observations(zones, name)
+        if frame.empty:
+            return False
+
         # Storage keeps timestamps tz-naive UTC (docs/03); everything upstream of
         # that boundary carries the zone explicitly, so put it back before use.
         frame["timestamp"] = frame["timestamp"].dt.tz_localize("UTC")
         outcome = evaluate(frame, parameters)
+
+        run.note_flags(outcome.flag_counts)
+        for warning in outcome.warnings:
+            run.note_warning(f"{name}: {warning}")
+        for series in outcome.series:
+            run.add_series(
+                source=series.source,
+                site_id=series.site_id,
+                parameter=series.parameter,
+                depth_m=series.depth_m,
+                rows=series.rows,
+                tests=list(series.tests),
+                qc_flags=series.flag_counts,
+            )
+
+        if not dry_run:
+            write_observations(outcome.frame, zones, source=name, run_id=run.run_id)
     except Exception as error:  # noqa: BLE001 -- one bad source must not end the run
         run.note_warning(f"{name}: {type(error).__name__}: {error}")
-        return True
-
-    run.note_flags(outcome.flag_counts)
-    for warning in outcome.warnings:
-        run.note_warning(f"{name}: {warning}")
-    for series in outcome.series:
-        run.add_series(
-            source=series.source,
-            site_id=series.site_id,
-            parameter=series.parameter,
-            depth_m=series.depth_m,
-            rows=series.rows,
-            tests=list(series.tests),
-            qc_flags=series.flag_counts,
-        )
-
-    if not dry_run:
-        write_observations(outcome.frame, zones, source=name, run_id=run.run_id)
     return True
 
 
