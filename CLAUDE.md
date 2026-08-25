@@ -168,6 +168,62 @@ Once the operator reports the merge, pull `main` back down and delete the
 merged branch without asking — that is cleanup, not a decision. Pushing
 anything else to `origin` remains a separate ask.
 
+## Reporting work
+
+The operator works in short, frequently interrupted sessions. A report he has
+to read from the top to find the decision has already failed, however accurate
+it is. Lead with the decision; everything under it is optional reading.
+
+**While working.** One plain sentence per slice commit, so a session can be
+rejoined at a glance. Nothing else — the tool output is already on screen.
+
+**When a branch is ready to merge**, and only then, write the full report.
+A blank line between every section; adjacent bold headings scan no better
+than prose:
+
+    **Ready to merge — [PR #N](url) ✅ green.** One sentence: what it does,
+    and what it does not touch.
+
+    **What I did** — the change in plain terms.
+
+    **Problems found** — each one filed, with its number. Or "none".
+
+    **Next step** — what to do once it is merged.
+
+- **It fits one screen without scrolling.** Top line at most two sentences;
+  each section at most three sentences or three bullets. This is the one rule
+  with a failure condition the operator can check in half a second, which is
+  why it is a cap and not an encouragement to be brief.
+- **Overflow goes to the PR body**, which is written for an auditor and has no
+  cap. The cap routes detail; it does not delete it.
+- **Plain language, not no language.** Domain vocabulary stays — QARTOD,
+  anomaly, quarter, climatology cost the operator nothing and replacing them
+  makes sentences longer and less precise. Implementation vocabulary is
+  translated into what changed and whether it is safe: not "each partition
+  writes through a staging file with an atomic rename", but "a crashed run can
+  no longer leave a half-written file behind".
+- **No code blocks** unless asked; they cost a screen and say nothing about
+  whether to merge. Tables are fine and scan faster than prose.
+- **This governs the chat report only.** PR bodies, commit messages and docs
+  stay technical and thorough — same facts, different reader.
+
+**When a problem is found, file it.** Create the issue or PRD, apply a triage
+label per `docs/agents/triage-labels.md`, and report the number. Never ask
+"want me to file it, or leave it?" — naming a problem and handing back the
+decision converts a finding into homework. For each one, state what is wrong,
+the concrete fix as real work, roughly how big it is, and whether to do it now
+or in a new session — with a recommendation, not an open either/or.
+
+Fix it in the current branch instead only when it is in scope, small, and does
+not break the one-concern rule. If it is cosmetic, or you are not confident it
+is real, say so in prose and file nothing. A PRD rather than an issue when the
+work needs design decisions before it can start.
+
+**Two standing signals** mean this section should be edited, not just that one
+report redone. **"too long"** — the one-screen rule broke. **"why did you
+stop"** — a stop fired on something that was not really a schema, storage,
+feature or dependency change.
+
 ## Project skills
 
 Per-source and per-task depth lives in `.claude/skills/` (data-source-access,
