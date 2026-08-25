@@ -30,11 +30,13 @@ jobs:
       - name: Install Python 3.13
         run: uv python install 3.13
 
-      # --frozen: install exactly what uv.lock records, and fail rather than
-      # silently re-resolving. Tests never touch the network (CLAUDE.md), so a
-      # run that needs it is a bug, not an outage.
+      # --frozen installs exactly what uv.lock records and fails rather than
+      # silently re-resolving; tests never touch the network (CLAUDE.md), so a
+      # run that needs it is a bug, not an outage. --extra dev is required
+      # because ruff and pytest live in that extra and a default sync installs
+      # neither -- a local venv has them already, a clean runner does not.
       - name: Sync dependencies
-        run: uv sync --frozen --python 3.13
+        run: uv sync --frozen --extra dev --python 3.13
 
       - name: Lint
         run: uv run --no-sync ruff check .
