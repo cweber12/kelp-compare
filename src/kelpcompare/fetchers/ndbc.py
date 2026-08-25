@@ -117,6 +117,16 @@ class ParsedPayload:
     unmapped_columns: tuple[str, ...] = ()
     missing_counts: dict[str, int] = field(default_factory=dict)
 
+    @property
+    def flag_counts(self) -> dict[str, int]:
+        """The docs/03 flag histogram, shaped as `NormalizedBatch` reports it.
+
+        Same shape on purpose: the manifest should not be able to tell whether a
+        run's rows arrived through an adapter or a fetcher.
+        """
+        counts = self.frame["qc_flag"].value_counts().to_dict()
+        return {str(flag): int(n) for flag, n in sorted(counts.items())}
+
 
 def fetch_realtime(station: str, *, session=None) -> Payload:
     """The rolling realtime file for one station (~45 days)."""

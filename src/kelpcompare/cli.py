@@ -21,11 +21,20 @@ import click
 
 from kelpcompare.adapters import hobo_xlsx
 from kelpcompare.adapters.base import REGISTRY_GATE, Check, ValidationReport
+from kelpcompare.fetchers import ndbc
+from kelpcompare.fetchers.base import SourceUnavailable, land
 from kelpcompare.manifest import RunManifest
 from kelpcompare.normalize import to_observations
 from kelpcompare.parameters import load_parameters
 from kelpcompare.qc import evaluate
-from kelpcompare.registry import Deployment, Registry, find_deployments, load_registry
+from kelpcompare.registry import (
+    Deployment,
+    Registry,
+    Station,
+    find_deployments,
+    find_stations,
+    load_registry,
+)
 from kelpcompare.storage import Zones, read_observations, stored_sources, write_observations
 
 #: Tried in order; the first whose `sniff()` accepts the file wins. A new logger
@@ -35,6 +44,12 @@ ADAPTERS = (hobo_xlsx,)
 #: docs/03 source vocabulary -> its raw landing directory. The names differ on
 #: purpose: the source is `project`, the directory is `project_sensors/`.
 RAW_DIRECTORY = {"project": "project_sensors"}
+
+#: Sources that are pulled rather than dropped. A new public source is one
+#: fetcher module and one entry here (docs/02). Keyed by the docs/03 source name,
+#: which is also the raw landing directory for these -- the asymmetry above is
+#: peculiar to project sensors.
+FETCHERS = {ndbc.SOURCE: ndbc}
 
 #: Where a file-drop source expects its files (docs/02 "Project sensors").
 INCOMING = "incoming"
@@ -50,12 +65,24 @@ def main() -> None:
 
 
 @main.command()
-@click.option("--source", required=True, help="Source name per docs/02 (currently: project).")
+@click.option("--source", required=True, help="Source name per docs/02 (currently: project, ndbc).")
 @click.option(
     "--path",
     type=click.Path(exists=True, path_type=Path),
     default=None,
-    help="File or directory to ingest. Defaults to the source's incoming/ directory.",
+    help="File-drop sources only. File or directory to ingest; defaults to incoming/.",
+)
+@click.option(
+    "--station",
+    multiple=True,
+    help="Pulled sources only. Station code or site_id; repeatable. Defaults to every "
+    "station the registry declares for the source.",
+)
+@click.option(
+    "--year",
+    multiple=True,
+    type=int,
+    help="Pulled sources only. Archive year; repeatable. Defaults to the realtime feed.",
 )
 @click.option(
     "--data-root",
@@ -78,15 +105,43 @@ def main() -> None:
 def ingest(
     source: str,
     path: Path | None,
+    station: tuple[str, ...],
+    year: tuple[int, ...],
     data_root: Path | None,
     registry_path: Path | None,
     dry_run: bool,
 ) -> None:
-    """Parse one source's files into raw/ and observations/ (docs/03)."""
+    """Land one source's data in raw/ and observations/ (docs/03).
+
+    Two shapes of source, one command, because what an operator wants is the
+    same either way -- everything for this source, landed and normalized, with a
+    manifest. Project sensors arrive as files dropped in `incoming/`; public
+    sources are pulled over HTTP. The options that apply to only one shape say
+    so, and refuse rather than being quietly ignored: `--year 2023` silently
+    doing nothing to a HOBO ingest is how an operator comes to believe they have
+    a year of data they never fetched.
+    """
+    if source in FETCHERS:
+        if path is not None:
+            raise SystemExit(f"--path does not apply to {source!r}, which is pulled, not dropped")
+        return _ingest_pulled(
+            source,
+            stations=station,
+            years=year,
+            data_root=data_root,
+            registry_path=registry_path,
+            dry_run=dry_run,
+        )
+
     if source not in RAW_DIRECTORY:
         raise SystemExit(
-            f"ingest --source {source!r} is not implemented; "
-            f"available: {', '.join(sorted(RAW_DIRECTORY))}. See docs/02 for the rest."
+            f"ingest --source {source!r} is not implemented; available: "
+            f"{', '.join(sorted(set(RAW_DIRECTORY) | set(FETCHERS)))}. See docs/02 for the rest."
+        )
+    if station or year:
+        raise SystemExit(
+            f"--station/--year do not apply to {source!r}, which is a file-drop source; "
+            "its deployment windows come from the registry (docs/06 §3)"
         )
 
     zones = Zones.at(data_root)
@@ -231,6 +286,156 @@ def _report_qc(run: RunManifest, zones: Zones, *, dry_run: bool) -> None:
 def rebuild() -> None:
     """Regenerate all derived zones from raw/. Not yet implemented."""
     raise SystemExit("rebuild not implemented — see docs/03 integrity rules")
+
+
+# --------------------------------------------------------------------------
+# Pulled sources, one station-window at a time
+# --------------------------------------------------------------------------
+
+
+def _ingest_pulled(
+    source: str,
+    *,
+    stations: tuple[str, ...],
+    years: tuple[int, ...],
+    data_root: Path | None,
+    registry_path: Path | None,
+    dry_run: bool,
+) -> None:
+    """Fetch, land, parse and store every requested station-window (docs/02).
+
+    The unit of work is one station and one window, because that is the unit an
+    outage applies to: a station that is down for 2019 must cost the run 2019 for
+    that station and nothing else.
+    """
+    zones = Zones.at(data_root)
+    registry = load_registry(registry_path or zones.sites_json)
+    parameters = load_parameters(zones.parameters_json)
+    fetcher = FETCHERS[source]
+
+    declared = find_stations(registry, source)
+    wanted = _select_stations(declared, stations)
+    if not wanted:
+        known = ", ".join(s.station_code for s in declared) or "none"
+        raise SystemExit(
+            f"no station to ingest for {source!r}; requested "
+            f"{', '.join(stations) or 'all'}, registry declares: {known}"
+        )
+
+    run = RunManifest.start("ingest", argv=_pulled_argv(source, stations, years), sources=[source])
+    for site in wanted:
+        for window in years or (None,):
+            _ingest_window(
+                site,
+                window,
+                zones=zones,
+                parameters=parameters,
+                run=run,
+                source=source,
+                fetcher=fetcher,
+                dry_run=dry_run,
+            )
+
+    _report(run, zones, dry_run=dry_run)
+
+
+def _ingest_window(
+    site: Station,
+    year: int | None,
+    *,
+    zones: Zones,
+    parameters,
+    run: RunManifest,
+    source: str,
+    fetcher,
+    dry_run: bool,
+) -> None:
+    """One station, one window. Never raises (docs/02 fail-soft rule).
+
+    Two failures, told apart deliberately. A source that did not answer is
+    `skipped` and recorded as a manifest gap -- docs/01 s5 requires a missing
+    NDBC month not to block the rest of a run, so it does not set the exit code.
+    Anything else is `failed`, which does: a payload that arrived and could not
+    be parsed is a bug or a format change, and both need a human.
+    """
+    label = f"{site.station_code} {year if year is not None else 'realtime'}"
+    entry = run.add_file(label, "failed", fetcher=getattr(fetcher, "FETCHER_NAME", source))
+    entry.site_id = site.site_id
+
+    try:
+        payload = (
+            fetcher.fetch_archive(site.station_code, year)
+            if year is not None
+            else fetcher.fetch_realtime(site.station_code)
+        )
+    except SourceUnavailable as outage:
+        entry.outcome = "skipped"
+        entry.reason = str(outage)
+        run.note_gap(f"{source}: {label}: {outage}")
+        return
+    except Exception as error:  # noqa: BLE001 -- one window must not end the run
+        entry.outcome = "failed"
+        entry.reason = f"{type(error).__name__}: {error}"
+        run.note_warning(f"{label}: {entry.reason}")
+        return
+
+    entry.path = payload.url
+    try:
+        # Landed before parsing, always: NDBC realtime holds roughly 45 days, so
+        # a payload not written down today cannot be fetched again tomorrow
+        # (docs/02 cross-cutting rules).
+        if not dry_run:
+            entry.landed = str(land(payload, zones))
+
+        parsed = fetcher.parse(
+            payload,
+            parameters,
+            site_id=site.site_id,
+            depths_m=site.sensor_depths_m,
+            run_id=run.run_id,
+        )
+        entry.rows_in = parsed.rows_in
+        entry.rows_out = len(parsed.frame)
+        entry.qc_flags = parsed.flag_counts
+        entry.warnings.extend(parsed.warnings)
+        run.note_flags(parsed.flag_counts)
+        for warning in parsed.warnings:
+            run.note_warning(f"{label}: {warning}")
+
+        if not dry_run:
+            written = write_observations(parsed.frame, zones, source=source, run_id=run.run_id)
+            entry.partitions = [str(p) for p in written]
+        entry.outcome = "ingested"
+
+    except Exception as error:  # noqa: BLE001 -- one window must not end the run
+        entry.outcome = "failed"
+        entry.reason = f"{type(error).__name__}: {error}"
+        run.note_warning(f"{label}: {entry.reason}")
+
+
+def _select_stations(declared: tuple[Station, ...], requested: tuple[str, ...]) -> list[Station]:
+    """Match `--station` against either identifier, case-insensitively.
+
+    Both, because an operator thinks in station codes (`LJAC1`) while the rest of
+    the project joins on `site_id` (`NDBC:LJAC1`), and making them type the one
+    they were not thinking of buys nothing.
+    """
+    if not requested:
+        return list(declared)
+    wanted = {value.strip().upper() for value in requested}
+    return [
+        site
+        for site in declared
+        if site.station_code.upper() in wanted or site.site_id.upper() in wanted
+    ]
+
+
+def _pulled_argv(source: str, stations: tuple[str, ...], years: tuple[int, ...]) -> list[str]:
+    return [
+        f"--source={source}",
+        *(f"--station={value}" for value in stations),
+        *(f"--year={value}" for value in years),
+    ]
 
 
 # --------------------------------------------------------------------------

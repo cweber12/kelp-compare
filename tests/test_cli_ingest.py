@@ -270,9 +270,13 @@ def test_an_empty_drop_directory_is_not_an_error(data_root):
 
 
 def test_an_unimplemented_source_says_so(data_root):
-    result = CliRunner().invoke(main, ["ingest", "--source", "ndbc", "--data-root", str(data_root)])
+    """`cdip` is still only a docs/02 entry; `ndbc` stopped being one."""
+    result = CliRunner().invoke(main, ["ingest", "--source", "cdip", "--data-root", str(data_root)])
     assert result.exit_code != 0
     assert "not implemented" in str(result.exception)
+    # The message lists what an operator can actually run, both shapes together.
+    assert "ndbc" in str(result.exception)
+    assert "project" in str(result.exception)
 
 
 # --------------------------------------------------------------------------
