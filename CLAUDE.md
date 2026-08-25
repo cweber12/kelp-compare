@@ -161,6 +161,22 @@ Cover, in whatever order suits the change:
   thin data;
 - a slice-by-slice review guide, and which hard rules the change touches.
 
+**The repo is public, and pushing is now automatic.** The rule in
+`docs/agents/issue-tracker.md` about issue bodies binds PR bodies, commit
+messages, and every file on a pushed branch just as hard: no unpublished
+results, no site coordinates that are not already in `data/registry/sites.json`,
+nothing embargoed. That rule used to be backed by the operator eyeballing
+everything before it left the machine. Nothing eyeballs it now, so it has to be
+obeyed at the point of writing.
+
+**One closing keyword per PR.** GitHub fires `closes`/`fixes` from commit
+messages on the default branch as well as from PR bodies, and surrounding prose
+does not disarm them — "this closes #148 open question 2" closes #148. Every
+issue other than the single one a PR is closing goes in by full URL, which
+cross-references without being parsed. This matters more now that issues are
+filed automatically alongside the PRs that reference them; a PRD closed by
+accident takes its unshipped children with it.
+
 **Landing.** Merging is the operator's, on GitHub, with **Create a merge
 commit** — never *Squash and merge*, which would collapse the slices into one
 and destroy the per-commit record that the repo was green at every step.
