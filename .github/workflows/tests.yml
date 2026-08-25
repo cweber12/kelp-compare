@@ -1,0 +1,48 @@
+name: tests
+
+# The only automated verification this repo has. A branch reaches `main`
+# through a pull request (CLAUDE.md, "Branching and finishing a task"), and
+# this workflow is what makes that PR's green check independent of whoever
+# wrote the change.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # Pinned to the version the operator runs locally. Deliberately a single
+      # version, not a matrix: an extra leg can only fail for reasons that are
+      # not about the change under review.
+      - name: Install Python 3.13
+        run: uv python install 3.13
+
+      # --frozen installs exactly what uv.lock records and fails rather than
+      # silently re-resolving; tests never touch the network (CLAUDE.md), so a
+      # run that needs it is a bug, not an outage. --extra dev is required
+      # because ruff and pytest live in that extra and a default sync installs
+      # neither -- a local venv has them already, a clean runner does not.
+      - name: Sync dependencies
+        run: uv sync --frozen --extra dev --python 3.13
+
+      - name: Lint
+        run: uv run --no-sync ruff check .
+
+      - name: Format check
+        run: uv run --no-sync ruff format --check .
+
+      - name: Tests
+        run: uv run --no-sync pytest
