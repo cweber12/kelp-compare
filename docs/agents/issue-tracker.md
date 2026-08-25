@@ -25,4 +25,7 @@ Run `gh issue view <number> --comments`.
 ## Project note
 
 The repo is public. Don't put unpublished results, site coordinates not already
-in `data/registry/sites.json`, or anything embargoed into an issue body.
+in `data/registry/sites.json`, or anything embargoed into an issue body — or
+into a PR body, a commit message, or any file on a pushed branch. Branches are
+pushed without a confirmation step (CLAUDE.md, "Branching and finishing a
+task"), so nothing reviews this before it is public.

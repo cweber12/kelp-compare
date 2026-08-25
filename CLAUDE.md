@@ -88,9 +88,10 @@ diff alone isn't obvious.
   writes its own subject. Commits up to `a25b38a` carry `merge:` from the
   earlier local-merge workflow; leave them as they are.
 - Scopes match the repo map: `adapters`, `fetchers`, `normalize`, `qc`,
-  `features`, `cli`, `registry`, `dashboard`, `docs`, `skills`, and `agents`
-  — this file and `docs/agents/`, the instructions agents read. `docs` stays
-  reserved for the numbered specs in `docs/`.
+  `features`, `cli`, `registry`, `dashboard`, `docs`, `skills`, `agents`, and
+  `ci`. `agents` covers this file, `docs/agents/`, and `.claude/` configuration
+  — the instructions and permissions agents work under. `ci` covers
+  `.github/`. `docs` stays reserved for the numbered specs in `docs/`.
 - When a commit implements or changes documented behavior, cite the doc
   section in the body (e.g. `per docs/06 §5`). If it changed a doc in the
   same commit (required when behavior and docs move together), say so.
@@ -121,20 +122,28 @@ slice keeps the one-concern rule and cites the doc section it implements.
 Slices are never squashed away at merge; they are the reviewable record of how
 the change was built.
 
-Then two confirmation gates — never chain them into a single step.
+**Land it — automatically.** Committing, pushing and opening the PR are not
+gated. Do not wait to be asked, do not propose them a step at a time, and do
+not summarise a commit for approval before making it. The operator has exactly
+one gate: the merge button on GitHub.
 
-1. **Confirm each slice commit.** Fires once per slice, not once per branch. A
-   slice is finishable only once `pytest` and `ruff check .` are green. Report
-   that result, then propose the commit — branch, subject, body, and exactly
-   which files are staged — and wait for a go-ahead. Untracked session
-   artifacts are never swept in.
-2. **Confirm the push and the PR.** After the last slice is committed, propose
-   both together and wait. Show the PR title and the full body first: until
-   this gate the work has never left the machine, and a PR is outward-facing
-   in a way a local merge was not. Then:
+A slice is committable only once `pytest` and `ruff check .` are green. A red
+run is never committed — that is what makes "every commit was green" a true
+statement about the history rather than an aspiration. Stage the files the
+slice is about, by name; untracked session artifacts are never swept in.
 
-       git push -u origin <branch>
-       gh pr create --base main --head <branch> --title '<type>(<scope>): ...' --body-file <file>
+Push once, after the last slice, so the PR arrives finished and CI runs on a
+complete branch rather than flickering red and green while work is still going
+on:
+
+    git push -u origin <branch>
+    gh pr create --base main --head <branch> --title '<type>(<scope>): ...' --body-file <file>
+
+**Stop and ask anyway** if the work turns out to touch the observation schema,
+a storage zone, a feature definition, or to need a new dependency — the changes
+this file already says need plan mode. Discovering that mid-task is the case
+the removed gates used to catch by accident, and it is the one thing still
+worth an interruption. Nothing else is.
 
 **Write the PR body for an auditor**, not for someone who already sat through
 the work. It is the durable record of why the change looks the way it does —
@@ -152,11 +161,89 @@ Cover, in whatever order suits the change:
   thin data;
 - a slice-by-slice review guide, and which hard rules the change touches.
 
+**The repo is public, and pushing is now automatic.** The rule in
+`docs/agents/issue-tracker.md` about issue bodies binds PR bodies, commit
+messages, and every file on a pushed branch just as hard: no unpublished
+results, no site coordinates that are not already in `data/registry/sites.json`,
+nothing embargoed. That rule used to be backed by the operator eyeballing
+everything before it left the machine. Nothing eyeballs it now, so it has to be
+obeyed at the point of writing.
+
+**One closing keyword per PR.** GitHub fires `closes`/`fixes` from commit
+messages on the default branch as well as from PR bodies, and surrounding prose
+does not disarm them — "this closes #148 open question 2" closes #148. Every
+issue other than the single one a PR is closing goes in by full URL, which
+cross-references without being parsed. This matters more now that issues are
+filed automatically alongside the PRs that reference them; a PRD closed by
+accident takes its unshipped children with it.
+
 **Landing.** Merging is the operator's, on GitHub, with **Create a merge
 commit** — never *Squash and merge*, which would collapse the slices into one
 and destroy the per-commit record that the repo was green at every step.
-Deleting the merged branch and pulling `main` back down are follow-ups; neither
-is implied by opening the PR.
+Once the operator reports the merge, pull `main` back down and delete the
+merged branch without asking — that is cleanup, not a decision. Pushing
+anything else to `origin` remains a separate ask.
+
+## Reporting work
+
+The operator works in short, frequently interrupted sessions. A report he has
+to read from the top to find the decision has already failed, however accurate
+it is. Lead with the decision; everything under it is optional reading.
+
+**While working.** One plain sentence per slice commit, so a session can be
+rejoined at a glance. Nothing else — the tool output is already on screen.
+
+**When a branch is ready to merge**, and only then, write the full report.
+A blank line between every section; adjacent bold headings scan no better
+than prose:
+
+    **Ready to merge — [PR #N](url) ✅ green.** One sentence: what it does,
+    and what it does not touch.
+
+    **What I did** — the change in plain terms.
+
+    **Problems found** — each one filed, with its number. Or "none".
+
+    **Next step** — what to do once it is merged.
+
+- **It fits one screen without scrolling.** Top line at most two sentences;
+  each section at most three sentences or three bullets. This is the one rule
+  with a failure condition the operator can check in half a second, which is
+  why it is a cap and not an encouragement to be brief.
+- **Overflow goes to the PR body**, which is written for an auditor and has no
+  cap. The cap routes detail; it does not delete it.
+- **Plain language, not no language.** Domain vocabulary stays — QARTOD,
+  anomaly, quarter, climatology cost the operator nothing and replacing them
+  makes sentences longer and less precise. Implementation vocabulary is
+  translated into what changed and whether it is safe: not "each partition
+  writes through a staging file with an atomic rename", but "a crashed run can
+  no longer leave a half-written file behind".
+- **Bullets over block paragraphs.** Wherever a section carries more than one
+  point, list them. A paragraph joining three facts is one object that has to
+  be parsed whole; three bullets are three, and two of them can be skipped
+  without losing the third. Reserve prose for a single point that needs a
+  sentence of reasoning.
+- **No code blocks** unless asked; they cost a screen and say nothing about
+  whether to merge. Tables are fine and scan faster than prose.
+- **This governs the chat report only.** PR bodies, commit messages and docs
+  stay technical and thorough — same facts, different reader.
+
+**When a problem is found, file it.** Create the issue or PRD, apply a triage
+label per `docs/agents/triage-labels.md`, and report the number. Never ask
+"want me to file it, or leave it?" — naming a problem and handing back the
+decision converts a finding into homework. For each one, state what is wrong,
+the concrete fix as real work, roughly how big it is, and whether to do it now
+or in a new session — with a recommendation, not an open either/or.
+
+Fix it in the current branch instead only when it is in scope, small, and does
+not break the one-concern rule. If it is cosmetic, or you are not confident it
+is real, say so in prose and file nothing. A PRD rather than an issue when the
+work needs design decisions before it can start.
+
+**Two standing signals** mean this section should be edited, not just that one
+report redone. **"too long"** — the one-screen rule broke. **"why did you
+stop"** — a stop fired on something that was not really a schema, storage,
+feature or dependency change.
 
 ## Project skills
 
