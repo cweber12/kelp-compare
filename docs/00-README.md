@@ -48,7 +48,14 @@ run manifests (doc 03), the normalizer, and `kelpcompare ingest --source
 project` joining them end to end — a HOBO export becomes queryable
 UTC/SI observations with a manifest recording every check.
 
-Not built yet: the QARTOD QC stage (doc 04 §1) — ingested rows carry
-`qc_flag = 2`, not evaluated, until it exists — every public-source fetcher
-(doc 02), quarterly features and anomalies (doc 04 §2–3), the comparison
-table, the notebooks, and the dashboard.
+Also built: the QARTOD QC stage, `kelpcompare qc` (doc 04 §1, ADR-004). It
+re-derives `qc_flag` and `qc_tests` in place from gross-range, spike, and
+rate-of-change tests whose thresholds live in `parameters.json`, never
+relaxing a verdict ingest already recorded and never deleting a row. On the
+reviewed deployment it passes all 3,022 in-water readings and catches the
+install transient with two independent tests, as doc 06 §5 check 6 predicted.
+
+Not built yet: the climatology and flat-line tests and neighbor validation
+(doc 04 §1 records why each waits), every public-source fetcher (doc 02),
+quarterly features and anomalies (doc 04 §2–3), the comparison table, the
+notebooks, and the dashboard.

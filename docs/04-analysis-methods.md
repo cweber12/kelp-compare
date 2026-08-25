@@ -18,12 +18,67 @@ detection. Roll-up flag per row: pass / not evaluated / suspect / fail.
 Default analysis filter is pass + not-evaluated; sensitivity checks rerun
 key results at pass-only.
 
+### What `kelpcompare qc` runs today
+
+Three of those tests are implemented: **gross range**, **spike**, and **rate
+of change**. Thresholds live in `parameters.json`, not in code (ADR-004); doc
+03 documents the block. A parameter with no thresholds for a test does not get
+that test, and the omission is visible in `qc_tests` rather than hidden behind
+a default. Every row of a series is tested, including rows ingest already
+failed for falling outside a deployment window — that redundancy is the point
+(doc 06 §5 check 6), and a verdict already recorded is never relaxed.
+
+On the reviewed TidbiT deployment these settings flag nothing in-water at all,
+while the install transient — a reading taken in air — fails the spike test and
+comes out suspect on rate of change, having passed gross range. That is the
+predicted result, and it is what the thresholds were sized against.
+
+Three properties to keep in mind when reading flags:
+
+- The spike test judges a sample against the midpoint of its two neighbours, so
+  a spike large enough to fail necessarily pushes both neighbours past the
+  suspect threshold. One bad reading costs three rows from a `qc_flag <= 2`
+  query, not one.
+- The same arithmetic fires on a *step*, where the midpoint is not a valid
+  reference at all. An internal-bore front — a discontinuity, not a spike —
+  draws suspect flags on the two rows straddling it, with nothing anomalous in
+  either. The test cannot tell the two shapes apart.
+- A suspect flag *removes* data under the default filter, and the thresholds
+  have less headroom than that warrants. They are provisional, tuned against a
+  single three-week deployment: on that record the largest 10-minute step is
+  2.11 °C (12.7 °C/h) against an 18 °C/h suspect threshold — a factor of 1.4 —
+  and the largest spike statistic is 0.91 °C against 1.5 °C. Those three weeks
+  span 17.8–24.1 °C with no upwelling excursion in them, so the events the
+  thresholds most need to survive are absent from the data they were sized
+  against: a 4 °C drop in one 10-minute sample is 24 °C/h and comes out
+  suspect. Since §2 makes the quarterly minimum and `days_below_14c` the
+  nitrate proxy, the rows at risk are the coldest rows of the sharpest
+  intrusions — the signal, not the noise. Retuning is deferred on the same
+  grounds as climatology below: it needs a record that contains the events,
+  and this one does not.
+
+**Deferred, with reasons.** *Climatology* needs a multi-year per-quarter
+baseline that no series in this project yet has; running it against three weeks
+of data would test the data against itself. *Flat line* fires on genuinely
+quiescent water at naive settings — the reviewed deployment holds within
+instrument resolution for over four hours at one point — so its tolerance has
+to be tied to instrument resolution and its duration tuned against a longer
+record before it can be trusted to flag a stuck sensor rather than a calm
+night. *Gap detection* is reported at ingest as a cadence audit (doc 06 §5
+check 3) rather than as a per-row flag.
+
+### Neighbor validation
+
 Project sensors additionally get neighbor validation per deployment: bias,
 RMSE, and correlation against the nearest public station and against
 satellite SST at the sensor location, reported in a standing validation
 table. This is the evidence base for the claim that non-NOAA/SCCOOS
 sensors are trustworthy — and later, for the more interesting claim that
 they capture *local* signal the public network misses.
+
+Not built: it is blocked on the public-source fetchers (doc 02), since there is
+no neighbor series to compare against until one exists. `sites.json` already
+carries the `neighbor_refs` this will read.
 
 ## 2. Quarterly feature definitions
 
