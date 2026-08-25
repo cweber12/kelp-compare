@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import gzip
 import io
+import time
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -61,6 +62,13 @@ ARCHIVE_URL = "https://www.ndbc.noaa.gov/data/historical/stdmet/{station_lower}h
 #: The five time columns both verified layouts open with. `MM` here is the month
 #: -- unrelated to the `MM` missing token, which never appears in these columns.
 TIME_COLUMNS = ("YY", "MM", "DD", "hh", "mm")
+
+#: Seconds to wait before the single retry docs/02 asks for.
+RETRY_DELAY_SECONDS = 2.0
+
+#: Statuses worth asking a second time. A 404 is an answer -- the station
+#: never published that year -- and 4xx generally will not change on a retry.
+RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
 
 @dataclass(frozen=True)
@@ -219,6 +227,11 @@ def parse(
 def _get(url: str, session) -> bytes:
     """Retrieve one URL, turning every upstream failure into `SourceUnavailable`.
 
+    Retries once, after a pause, then gives up and lets the run record a gap --
+    the "retry politely" of docs/02. Once rather than a backoff ladder: this is
+    a hand-run pipeline against a free public service, and the difference between
+    one retry and five is borne entirely by NOAA.
+
     Imported lazily so the parser -- the half that tests exercise -- does not
     need `requests` on the import path at all.
     """
@@ -227,17 +240,31 @@ def _get(url: str, session) -> bytes:
 
         session = requests.Session()
 
-    try:
-        response = session.get(url, timeout=60)
-    # Every transport failure -- DNS, timeout, refused, malformed TLS -- is one
-    # thing to this project: the source did not answer. Translated, never swallowed.
-    except Exception as error:
-        raise SourceUnavailable(f"{url}: {type(error).__name__}: {error}") from error
+    last: str = ""
+    for attempt in range(2):
+        if attempt:
+            time.sleep(RETRY_DELAY_SECONDS)
+        try:
+            response = session.get(url, timeout=60)
+        # Every transport failure -- DNS, timeout, refused, malformed TLS -- is
+        # one thing here: the source did not answer. Recorded and retried once,
+        # then re-raised as SourceUnavailable below; never swallowed.
+        except Exception as error:  # noqa: BLE001 -- one outage, however it arrived
+            last = f"{type(error).__name__}: {error}"
+            continue
 
-    status = getattr(response, "status_code", None)
-    if status != 200:
-        raise SourceUnavailable(f"{url}: HTTP {status}")
-    return response.content
+        status = getattr(response, "status_code", None)
+        if status == 200:
+            return response.content
+
+        last = f"HTTP {status}"
+        # A 404 is an answer, not an outage: the station never published this
+        # year. Retrying cannot change it, and asking twice for a file that does
+        # not exist is exactly the impoliteness the retry rule is about.
+        if status not in RETRYABLE_STATUS:
+            break
+
+    raise SourceUnavailable(f"{url}: {last}")
 
 
 def _text(payload: Payload) -> str:

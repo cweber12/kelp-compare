@@ -296,16 +296,44 @@ def test_archive_url_is_lowercase_station_and_year():
     assert payload.label == "ljac1h2023.txt.gz"
 
 
-def test_a_year_the_station_never_reported_is_an_outage_not_a_crash():
-    """docs/01 §5: a missing NDBC year must never block the rest of a run."""
+def test_a_transient_failure_is_retried_once(monkeypatch):
+    """docs/02 "retry politely": one second chance, then record the gap."""
+    slept = []
+    monkeypatch.setattr(ndbc.time, "sleep", slept.append)
+
+    class _Flaky(_Session):
+        def get(self, url, timeout=None):
+            self.urls.append(url)
+            return _Response(200, b"ok") if len(self.urls) > 1 else _Response(503)
+
+    session = _Flaky()
+    payload = ndbc.fetch_realtime("LJAC1", session=session)
+
+    assert payload.body == b"ok"
+    assert len(session.urls) == 2
+    assert slept == [ndbc.RETRY_DELAY_SECONDS]
+
+
+def test_a_404_is_not_retried(monkeypatch):
+    """docs/01 §5: a missing NDBC year is a gap to record, never a crash.
+
+    And it is asked for exactly once -- a year the station never published is an
+    answer, so a second request could not change it.
+    """
+    monkeypatch.setattr(ndbc.time, "sleep", lambda _: None)
     session = _Session(_Response(404))
 
     with pytest.raises(SourceUnavailable, match="HTTP 404"):
         ndbc.fetch_archive("LJAC1", 1970, session=session)
 
+    assert len(session.urls) == 1
 
-def test_a_transport_failure_is_an_outage_too():
+
+def test_a_persistent_outage_gives_up_after_the_retry(monkeypatch):
+    monkeypatch.setattr(ndbc.time, "sleep", lambda _: None)
     session = _Session(error=TimeoutError("read timed out"))
 
     with pytest.raises(SourceUnavailable, match="TimeoutError"):
         ndbc.fetch_realtime("LJAC1", session=session)
+
+    assert len(session.urls) == 2
