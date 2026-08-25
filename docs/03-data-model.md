@@ -44,6 +44,24 @@ winning; run IDs sort chronologically by construction, which is what makes
 the tie-break deterministic. That is how overlapping readouts of a running
 logger (doc 06 §5 check 5) resolve to one row per measurement.
 
+**A partition can transiently hold more than one file.** The write creates the
+new file and only then drops the ones it supersedes, so an interrupted run — or
+a `drop` that fails because a reader still holds the file open — leaves both
+behind. They overlap completely, the newer being a rewrite of the older, so
+anything that reads a partition must dedupe what it finds rather than assume one
+file: `storage.read_observations` does, per partition and by the same rule the
+write applies, which is what keeps a doubled series out of the QARTOD tests
+(doc 04 §1 — they read a row's neighbours, so a duplicated row changes the
+verdict on its neighbours too).
+
+**A DuckDB query over the raw `part-*.parquet` glob does not get this**, and
+would count those rows twice. The condition is self-healing — the next write to
+that partition merges the strays away — but a notebook that queries the zone
+directly between an interrupted run and the next one is reading duplicates.
+Until analysis reads through a helper that dedupes, check for a partition
+holding more than one file before trusting a query written against a zone whose
+last run did not finish cleanly.
+
 Timestamps are stored **tz-naive UTC**. The column is UTC by invariant, and
 a naive column reads back as a plain DuckDB `TIMESTAMP` that displays as UTC
 for every reader, whereas a tz-aware one becomes `TIMESTAMPTZ` and renders

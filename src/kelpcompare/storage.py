@@ -180,16 +180,43 @@ def write_observations(
 
 
 def read_observations(zones: Zones, source: str | None = None) -> pd.DataFrame:
-    """Read a zone back as one frame. For tests and small local inspection.
+    """Read a zone back as one frame, deduped per partition.
 
     Analysis reads through DuckDB (ADR-001); this exists so a test can assert on
     what actually landed without reimplementing the layout.
+
+    A partition should hold exactly one part file, but the write that leaves it
+    that way is not atomic: `_write_partition` creates the new file and only then
+    removes the ones it supersedes, so an interrupted run -- or an `unlink` that
+    fails because a reader still holds the file open -- can leave both behind.
+    Those two files overlap by construction, the newer being a rewrite of the
+    older, so reading them naively returns every row twice. That is how a doubled
+    series reaches the QARTOD tests, which read a row's neighbours and therefore
+    come back with different verdicts than the same data produces on its own.
+
+    Deduping per partition rather than across the zone is deliberate:
+    `OBSERVATION_KEY` does not include `source`, so a zone-wide pass could
+    collapse two sources' rows if they ever agreed on site, parameter, time and
+    depth. Within one partition the source is fixed by the directory name.
     """
     pattern = f"source={source}" if source else "source=*"
     files = sorted(zones.observations.glob(f"{pattern}/year=*/part-*.parquet"))
     if not files:
         return pd.DataFrame(columns=list(OBSERVATION_COLUMNS))
-    return pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+
+    # `sorted` puts each partition's files in run-id order, which is chronological
+    # by construction (`manifest.new_run_id`), so `_dedupe` keeping the last of an
+    # equal-`fetch_run_id` group keeps the most recently written copy -- the same
+    # rule, and the same reliance on stable ordering, that `_write_partition`
+    # applies on the way in.
+    partitions: dict[Path, list[pd.DataFrame]] = {}
+    for path in files:
+        partitions.setdefault(path.parent, []).append(pd.read_parquet(path))
+
+    return pd.concat(
+        [_dedupe(pd.concat(group, ignore_index=True)) for group in partitions.values()],
+        ignore_index=True,
+    )
 
 
 def stored_sources(zones: Zones) -> tuple[str, ...]:

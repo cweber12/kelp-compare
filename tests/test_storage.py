@@ -206,6 +206,52 @@ def test_sources_are_stored_separately(tmp_path):
     assert storage.read_observations(zones, source="ndbc")["site_id"].iloc[0] == "NDBC:LJAC1"
 
 
+def test_a_partition_left_holding_two_files_reads_as_one_series(tmp_path):
+    """The write that leaves one file per partition is not atomic (issue #3).
+
+    `_write_partition` creates the new file and only then removes the ones it
+    supersedes, so an interrupted run leaves both. The two overlap completely --
+    the newer is a rewrite of the older -- so a naive read returns every row
+    twice, and the QARTOD tests read a row's neighbours.
+    """
+    zones = Zones.at(tmp_path)
+    stamps = ["2026-07-11T15:00Z", "2026-07-11T15:10Z"]
+
+    (superseded,) = write_observations(
+        observations(stamps, values=[17.0, 17.1], run_id=RUN_A),
+        zones,
+        source="project",
+        run_id=RUN_A,
+    )
+    leftover = superseded.read_bytes()
+
+    (current,) = write_observations(
+        observations(stamps, values=[18.0, 18.1], run_id=RUN_B),
+        zones,
+        source="project",
+        run_id=RUN_B,
+    )
+    assert not superseded.exists()
+
+    superseded.write_bytes(leftover)  # the unlink that did not happen
+    assert len(sorted(current.parent.glob("part-*.parquet"))) == 2
+
+    rows = storage.read_observations(zones, "project")
+    assert len(rows) == 2
+    assert list(rows["value"]) == [18.0, 18.1]
+
+
+def test_a_leftover_file_in_one_partition_does_not_touch_another(tmp_path):
+    """Dedupe is per partition, not zone-wide: `OBSERVATION_KEY` has no `source`."""
+    zones = Zones.at(tmp_path)
+    stamps = ["2026-07-11T15:00Z"]
+    write_observations(observations(stamps), zones, source="project", run_id=RUN_A)
+    write_observations(observations(stamps, site="NDBC:LJAC1"), zones, source="ndbc", run_id=RUN_A)
+
+    rows = storage.read_observations(zones)
+    assert sorted(rows["site_id"]) == ["NDBC:LJAC1", "PROJ:YELLOW-BUOY"]
+
+
 def test_reading_an_empty_zone_returns_the_documented_columns(tmp_path):
     empty = storage.read_observations(Zones.at(tmp_path))
     assert empty.empty
