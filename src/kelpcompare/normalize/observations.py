@@ -59,6 +59,22 @@ _UNIT_ALIASES = {
     "c": "degC",
     "degc": "degC",
     "celsius": "degC",
+    # NDBC spells these in its units line as `sec` and `m/s`, while
+    # `parameters.json` stores the CF forms `s` and `m s-1`. Both sides fold to
+    # the same token here rather than either side being rewritten to match the
+    # other: the file must keep saying what it says, and the registry must keep
+    # holding the canonical name (docs/02, docs/03).
+    "s": "s",
+    "sec": "s",
+    "secs": "s",
+    "seconds": "s",
+    # After punctuation is stripped, `m/s` and `m s-1` arrive here as `ms` and
+    # `ms1`. `ms` is metres per second in every source this project reads; it is
+    # NOT milliseconds, and if a source ever means that, it gets its own token
+    # rather than a shared one.
+    "ms": "m s-1",
+    "ms1": "m s-1",
+    "mpers": "m s-1",
 }
 
 #: Only conversions the project has a reason to perform.
