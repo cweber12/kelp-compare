@@ -18,12 +18,55 @@ detection. Roll-up flag per row: pass / not evaluated / suspect / fail.
 Default analysis filter is pass + not-evaluated; sensitivity checks rerun
 key results at pass-only.
 
+### What `kelpcompare qc` runs today
+
+Three of those tests are implemented: **gross range**, **spike**, and **rate
+of change**. Thresholds live in `parameters.json`, not in code (ADR-004); doc
+03 documents the block. A parameter with no thresholds for a test does not get
+that test, and the omission is visible in `qc_tests` rather than hidden behind
+a default. Every row of a series is tested, including rows ingest already
+failed for falling outside a deployment window — that redundancy is the point
+(doc 06 §5 check 6), and a verdict already recorded is never relaxed.
+
+On the reviewed TidbiT deployment these settings flag nothing in-water at all,
+while the install transient — a reading taken in air — fails the spike test and
+comes out suspect on rate of change, having passed gross range. That is the
+predicted result, and it is what the thresholds were sized against.
+
+Two properties to keep in mind when reading flags:
+
+- The spike test judges a sample against the midpoint of its two neighbours, so
+  a spike large enough to fail necessarily pushes both neighbours past the
+  suspect threshold. One bad reading costs three rows from a `qc_flag <= 2`
+  query, not one.
+- A suspect flag *removes* data under the default filter. Thresholds are
+  therefore set generously and are provisional, tuned against a single
+  three-week deployment. Setting them tighter would preferentially remove the
+  brief cold excursions §2 relies on as a nitrate proxy — the signal, not the
+  noise.
+
+**Deferred, with reasons.** *Climatology* needs a multi-year per-quarter
+baseline that no series in this project yet has; running it against three weeks
+of data would test the data against itself. *Flat line* fires on genuinely
+quiescent water at naive settings — the reviewed deployment holds within
+instrument resolution for over four hours at one point — so its tolerance has
+to be tied to instrument resolution and its duration tuned against a longer
+record before it can be trusted to flag a stuck sensor rather than a calm
+night. *Gap detection* is reported at ingest as a cadence audit (doc 06 §5
+check 3) rather than as a per-row flag.
+
+### Neighbor validation
+
 Project sensors additionally get neighbor validation per deployment: bias,
 RMSE, and correlation against the nearest public station and against
 satellite SST at the sensor location, reported in a standing validation
 table. This is the evidence base for the claim that non-NOAA/SCCOOS
 sensors are trustworthy — and later, for the more interesting claim that
 they capture *local* signal the public network misses.
+
+Not built: it is blocked on the public-source fetchers (doc 02), since there is
+no neighbor series to compare against until one exists. `sites.json` already
+carries the `neighbor_refs` this will read.
 
 ## 2. Quarterly feature definitions
 
