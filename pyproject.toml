@@ -2,7 +2,7 @@
 name = "kelpcompare"
 version = "0.0.1"
 description = "Compare Kelp Watch quarterly kelp canopy data with environmental sensor time series"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "pandas>=2.2",
     "duckdb>=1.0",
