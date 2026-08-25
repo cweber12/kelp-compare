@@ -122,20 +122,28 @@ slice keeps the one-concern rule and cites the doc section it implements.
 Slices are never squashed away at merge; they are the reviewable record of how
 the change was built.
 
-Then two confirmation gates — never chain them into a single step.
+**Land it — automatically.** Committing, pushing and opening the PR are not
+gated. Do not wait to be asked, do not propose them a step at a time, and do
+not summarise a commit for approval before making it. The operator has exactly
+one gate: the merge button on GitHub.
 
-1. **Confirm each slice commit.** Fires once per slice, not once per branch. A
-   slice is finishable only once `pytest` and `ruff check .` are green. Report
-   that result, then propose the commit — branch, subject, body, and exactly
-   which files are staged — and wait for a go-ahead. Untracked session
-   artifacts are never swept in.
-2. **Confirm the push and the PR.** After the last slice is committed, propose
-   both together and wait. Show the PR title and the full body first: until
-   this gate the work has never left the machine, and a PR is outward-facing
-   in a way a local merge was not. Then:
+A slice is committable only once `pytest` and `ruff check .` are green. A red
+run is never committed — that is what makes "every commit was green" a true
+statement about the history rather than an aspiration. Stage the files the
+slice is about, by name; untracked session artifacts are never swept in.
 
-       git push -u origin <branch>
-       gh pr create --base main --head <branch> --title '<type>(<scope>): ...' --body-file <file>
+Push once, after the last slice, so the PR arrives finished and CI runs on a
+complete branch rather than flickering red and green while work is still going
+on:
+
+    git push -u origin <branch>
+    gh pr create --base main --head <branch> --title '<type>(<scope>): ...' --body-file <file>
+
+**Stop and ask anyway** if the work turns out to touch the observation schema,
+a storage zone, a feature definition, or to need a new dependency — the changes
+this file already says need plan mode. Discovering that mid-task is the case
+the removed gates used to catch by accident, and it is the one thing still
+worth an interruption. Nothing else is.
 
 **Write the PR body for an auditor**, not for someone who already sat through
 the work. It is the durable record of why the change looks the way it does —
@@ -156,8 +164,9 @@ Cover, in whatever order suits the change:
 **Landing.** Merging is the operator's, on GitHub, with **Create a merge
 commit** — never *Squash and merge*, which would collapse the slices into one
 and destroy the per-commit record that the repo was green at every step.
-Deleting the merged branch and pulling `main` back down are follow-ups; neither
-is implied by opening the PR.
+Once the operator reports the merge, pull `main` back down and delete the
+merged branch without asking — that is cleanup, not a decision. Pushing
+anything else to `origin` remains a separate ask.
 
 ## Project skills
 
