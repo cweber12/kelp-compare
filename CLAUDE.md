@@ -82,10 +82,11 @@ Conventional Commits: `type(scope): imperative summary` — subject ≤72 chars,
 imperative mood, no trailing period. Body explains why, not what, when the
 diff alone isn't obvious.
 
-- Types: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`, `data`
-  (reserved for `data/registry/` changes — versioned scientific metadata),
-  and `merge` — a local extension to Conventional Commits, used only on the
-  `--no-ff` commit that lands a branch.
+- Types: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`, and `data`
+  (reserved for `data/registry/` changes — versioned scientific metadata).
+  There is no `merge` type: branches land through GitHub's merge button, which
+  writes its own subject. Commits up to `a25b38a` carry `merge:` from the
+  earlier local-merge workflow; leave them as they are.
 - Scopes match the repo map: `adapters`, `fetchers`, `normalize`, `qc`,
   `features`, `cli`, `registry`, `dashboard`, `docs`, `skills`, and `agents`
   — this file and `docs/agents/`, the instructions agents read. `docs` stays
@@ -104,8 +105,10 @@ Example:
 
 ## Branching and finishing a task
 
-Every change reaches `main` through a branch and a `--no-ff` merge — features,
-fixes, docs, and registry edits alike. Never commit on `main` itself.
+Every change reaches `main` through a branch and a reviewed pull request —
+features, fixes, docs, and registry edits alike. Never commit on `main` itself,
+and never merge a branch locally: `main` moves only when the operator presses
+the button on GitHub.
 
 **Branch.** Branch from an up-to-date `main`, named `<type>/<slug>` reusing the
 commit types above: `feat/hobo-csv-adapter`, `fix/quarter-boundary-utc`,
@@ -125,16 +128,35 @@ Then two confirmation gates — never chain them into a single step.
    that result, then propose the commit — branch, subject, body, and exactly
    which files are staged — and wait for a go-ahead. Untracked session
    artifacts are never swept in.
-2. **Confirm the merge.** After the last slice is committed, propose the merge
-   and wait:
+2. **Confirm the push and the PR.** After the last slice is committed, propose
+   both together and wait. Show the PR title and the full body first: until
+   this gate the work has never left the machine, and a PR is outward-facing
+   in a way a local merge was not. Then:
 
-       git switch main
-       git merge --no-ff <branch> -m 'merge: <what the branch delivered>'
+       git push -u origin <branch>
+       gh pr create --base main --head <branch> --title '<type>(<scope>): ...' --body-file <file>
 
-   Re-run the tests on `main` afterwards and report the result.
-3. **Clean up.** Once the merge is green, delete the merged branch — this
-   step needs no separate confirmation. Pushing to `origin` is a separate
-   ask, never implied by a merge.
+**Write the PR body for an auditor**, not for someone who already sat through
+the work. It is the durable record of why the change looks the way it does —
+the commits say what moved, the PR says why that was the right thing to move.
+Cover, in whatever order suits the change:
+
+- what it delivers and what problem that solves, naming the doc section or ADR
+  it implements;
+- the decisions taken **and the alternatives rejected**, with the reason each
+  was rejected — a reviewer cannot audit a choice they cannot see was a choice;
+- evidence, with real numbers from a real run, not a claim that it works;
+- any deliberate divergence from an upstream library's or a standard's
+  behavior, called out explicitly rather than left to be discovered;
+- the risks and costs accepted, especially anything provisional or tuned on
+  thin data;
+- a slice-by-slice review guide, and which hard rules the change touches.
+
+**Landing.** Merging is the operator's, on GitHub, with **Create a merge
+commit** — never *Squash and merge*, which would collapse the slices into one
+and destroy the per-commit record that the repo was green at every step.
+Deleting the merged branch and pulling `main` back down are follow-ups; neither
+is implied by opening the PR.
 
 ## Project skills
 
