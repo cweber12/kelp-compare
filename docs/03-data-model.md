@@ -196,6 +196,8 @@ One record per station or deployment location.
 | `deployments[]` | For project sensors: instrument model, serial, depth_m, start/end, calibration dates, clock-sync events |
 | `neighbor_refs[]` | Ordered public stations used for validation of this site |
 | `erddap_dataset_id` / `station_code` | Pinned source identifiers |
+| `sensor_depths_m` | For public stations: `{parameter: depth}`, positive down. What a fetcher writes into `depth_m` |
+| `same_platform_as[]` | Other `site_id`s that are the same physical instrument package under another provider's identifier |
 
 Each `deployments[]` record carries `tz`, `window_local` (the in-water
 window, doc 06 §3), and `series_map` — the mapping from the vendor file's
@@ -209,6 +211,19 @@ inferred from its unit — `degC` is equally `sea_water_temperature` and
 
 Deployment metadata is mandatory before project-sensor data is accepted;
 this is enforced in the ingest CLI, not by convention.
+
+Public stations carry no `deployments[]`. What they need instead is the
+identifier their provider knows them by and the geometry of their sensors:
+`sensor_depths_m` is where a water-temperature intake depth is declared, and it
+is what the fetcher writes into each row's `depth_m`. A parameter absent from
+that map gets a null depth — correct for a met parameter, and equally correct
+for a water parameter whose depth the provider has not published. Neither is
+guessed.
+
+`same_platform_as` records that two site records describe one instrument
+package. `NDBC:LJAC1` and `COOPS:9410230` are the same NOS platform, NDBC
+redistributing the NOS observations, and the doc 04 neighbor validation must not
+count them as two independent references for the same sensor.
 
 ## Kelp geometry and series
 
@@ -253,7 +268,9 @@ exclusively; it is regenerated wholesale by `kelpcompare features`.
 Every ingest/QC/feature run writes
 `raw/_manifests/{run_id}.json`: command, code version (git SHA), sources
 touched, date windows, row counts in/out, QC flag histogram, warnings, and
-upstream gaps encountered. Manifests are how any number in a notebook
+upstream gaps encountered. Each input records either an `adapter` or a
+`fetcher`, never both — how a row was obtained is part of its provenance, and a
+pulled station-window has no adapter to name. Manifests are how any number in a notebook
 traces back to specific fetches — required for publication-grade
 reproducibility.
 
