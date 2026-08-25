@@ -244,16 +244,35 @@ def _write_partition(
     Wholesale rewrite rather than append because ADR-001 chose a store with no
     row-level updates -- zones rebuild, they do not mutate -- and because a
     duplicate can only be resolved against the rows already on disk.
+
+    The new file is written under a temporary name and moved into place, so a
+    part file is never seen half-written: an interrupted write leaves the
+    partition exactly as it was rather than leaving a truncated Parquet that
+    every later read raises on. What it cannot make atomic is the pair of steps
+    -- a crash between the move and the drop leaves the superseded file behind,
+    which is why `read_observations` dedupes per partition rather than trusting
+    the count.
+
+    The staging name deliberately does not match `part-*.parquet`: a leftover
+    from a crashed run must be invisible to every reader of this zone, including
+    a DuckDB query written against the glob.
     """
     directory = zones.partition(source, year)
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / f"part-{run_id}.parquet"
     existing = sorted(directory.glob("part-*.parquet"))
 
+    # Incoming rows go last and `_dedupe` sorts stably, which is what makes them
+    # win. Not `fetch_run_id`: qc rewrites the zone preserving it (docs/03), so
+    # both copies of a rewritten row carry the same one and it cannot break the
+    # tie. Reorder either and qc writes back the flags it just replaced.
     frames = [pd.read_parquet(path) for path in existing]
     frames.append(part)
     merged = _dedupe(pd.concat(frames, ignore_index=True))
-    merged.astype(OBSERVATION_DTYPES).to_parquet(target, index=False)
+
+    staging = directory / f".{target.name}.writing"
+    merged.astype(OBSERVATION_DTYPES).to_parquet(staging, index=False)
+    staging.replace(target)
 
     for stale in existing:
         if stale != target:

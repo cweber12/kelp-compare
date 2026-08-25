@@ -44,13 +44,20 @@ winning; run IDs sort chronologically by construction, which is what makes
 the tie-break deterministic. That is how overlapping readouts of a running
 logger (doc 06 §5 check 5) resolve to one row per measurement.
 
-**A partition can transiently hold more than one file.** The write creates the
-new file and only then drops the ones it supersedes, so an interrupted run — or
-a `drop` that fails because a reader still holds the file open — leaves both
-behind. They overlap completely, the newer being a rewrite of the older, so
-anything that reads a partition must dedupe what it finds rather than assume one
-file: `storage.read_observations` does, per partition and by the same rule the
-write applies, which is what keeps a doubled series out of the QARTOD tests
+**A part file is never half-written.** The new file is written under a staging
+name that deliberately does not match `part-*.parquet` — so a leftover from a
+crashed run is invisible to every reader of this zone, DuckDB globs included —
+and then moved into place. An interrupted write leaves the partition exactly as
+it was, rather than leaving a truncated Parquet that every later read raises on.
+
+**A partition can still transiently hold more than one file.** The move and the
+drop are two steps, not one: the new file lands and only then are the ones it
+supersedes removed, so a crash between them — or a drop that fails because a
+reader still holds the file open — leaves both behind. They overlap completely,
+the newer being a rewrite of the older, so anything that reads a partition must
+dedupe what it finds rather than assume one file: `storage.read_observations`
+does, per partition and by the same rule the write applies, which is what keeps
+a doubled series out of the QARTOD tests
 (doc 04 §1 — they read a row's neighbours, so a duplicated row changes the
 verdict on its neighbours too).
 
