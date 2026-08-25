@@ -88,9 +88,10 @@ diff alone isn't obvious.
   writes its own subject. Commits up to `a25b38a` carry `merge:` from the
   earlier local-merge workflow; leave them as they are.
 - Scopes match the repo map: `adapters`, `fetchers`, `normalize`, `qc`,
-  `features`, `cli`, `registry`, `dashboard`, `docs`, `skills`, and `agents`
-  — this file and `docs/agents/`, the instructions agents read. `docs` stays
-  reserved for the numbered specs in `docs/`.
+  `features`, `cli`, `registry`, `dashboard`, `docs`, `skills`, `agents`, and
+  `ci`. `agents` covers this file, `docs/agents/`, and `.claude/` configuration
+  — the instructions and permissions agents work under. `ci` covers
+  `.github/`. `docs` stays reserved for the numbered specs in `docs/`.
 - When a commit implements or changes documented behavior, cite the doc
   section in the body (e.g. `per docs/06 §5`). If it changed a doc in the
   same commit (required when behavior and docs move together), say so.
