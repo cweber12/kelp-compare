@@ -11,6 +11,7 @@ features and the coverage bookkeeping that makes them interpretable; and
 kelp-vs-environment correlation a relationship rather than a picture of summer.
 """
 
+from kelpcompare.features.build import BuildOutcome, build_features
 from kelpcompare.features.climatology import (
     CLIMATOLOGY_COLUMNS,
     CLIMATOLOGY_KEY,
@@ -47,11 +48,13 @@ __all__ = [
     "QUARTERLY_KEY",
     "STATISTICS",
     "Baseline",
+    "BuildOutcome",
     "FeatureConfig",
     "ParameterFeatures",
     "QuarterlyOutcome",
     "SeriesQuarters",
     "build_climatology",
+    "build_features",
     "build_quarterly",
     "feature_columns",
     "load_feature_config",
