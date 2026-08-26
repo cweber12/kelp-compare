@@ -102,7 +102,7 @@ def test_realtime_ingest_lands_raw_and_writes_observations(data_root, offline):
     assert landed[0].read_bytes() == REALTIME.read_bytes()  # untouched, hard rule 1
 
     stored = read_observations(Zones.at(data_root), "ndbc")
-    assert len(stored) == 300 * 5
+    assert len(stored) == 300 * 3  # the three parameters LJAC1 declares, not five columns
     assert set(stored["site_id"]) == {"NDBC:LJAC1"}
 
 
@@ -179,20 +179,39 @@ def test_qc_runs_over_the_ingested_station(data_root, offline):
     assert water["qc_flag"].value_counts().to_dict() == {1: 395, 9: 5}
 
 
-def test_a_parameter_the_station_never_measures_is_all_missing(data_root, offline):
-    """LJAC1 is a shore station: its wave columns are sentinel from end to end.
+def test_a_parameter_the_station_has_no_sensor_for_lands_no_rows(data_root, offline):
+    """LJAC1 is a shore station with no wave sensor, and `sites.json` says so.
 
-    Stored anyway, as 400 missing rows rather than as nothing. "This station
-    reported no wave height" and "nobody asked this station for wave height" are
-    different facts, and only the first is recoverable from a row that exists.
+    The stdmet format has fixed columns, so WVHT and DPD arrive in every file
+    holding the sentinel. Storing them was landing millions of rows that say
+    nothing (issue #21). "Nobody asked this station for wave height" is now
+    recorded in the registry, which is a better home for it than a row.
     """
     run(data_root, "--year", "2023")
     stored = read_observations(Zones.at(data_root), "ndbc")
 
-    waves = stored[stored["parameter"] == "wave_significant_height"]
-    assert len(waves) == 400
-    assert waves["value"].isna().all()
-    assert set(waves["qc_flag"]) == {9}
+    assert set(stored["parameter"]) == {
+        "sea_water_temperature",
+        "air_temperature",
+        "wind_speed",
+    }
+    assert stored[stored["parameter"].isin(["wave_significant_height", "wave_peak_period"])].empty
+
+
+def test_a_declared_sensor_reporting_nothing_still_lands_its_missing_rows(data_root, offline):
+    """The distinction the registry exists to hold: an outage stays in the record.
+
+    Air temperature is declared and the 2023 file holds sentinel for some of it,
+    so those rows land flagged missing rather than vanishing the way the wave
+    columns now do.
+    """
+    run(data_root, "--year", "2023")
+    stored = read_observations(Zones.at(data_root), "ndbc")
+
+    air = stored[stored["parameter"] == "air_temperature"]
+    assert len(air) == 400
+    assert air["value"].isna().any()
+    assert set(air.loc[air["value"].isna(), "qc_flag"]) == {9}
 
 
 # --------------------------------------------------------------------------
@@ -209,7 +228,7 @@ def test_the_manifest_records_the_fetch_not_an_adapter(data_root, offline):
     assert entry["adapter"] is None  # exactly one of the two is ever set
     assert entry["site_id"] == "NDBC:LJAC1"
     assert entry["rows_in"] == 400
-    assert entry["rows_out"] == 400 * 5
+    assert entry["rows_out"] == 400 * 3
     assert entry["landed"].endswith("ljac1h2023.txt.gz")
 
 
@@ -220,7 +239,7 @@ def test_the_manifest_carries_the_flag_histogram(data_root, offline):
     # 2 = not evaluated, 9 = missing. Both are docs/03 ingest-time states.
     assert payload["qc_flags"]["2"] > 0
     assert payload["qc_flags"]["9"] > 0
-    assert sum(payload["qc_flags"].values()) == 400 * 5
+    assert sum(payload["qc_flags"].values()) == 400 * 3
 
 
 # --------------------------------------------------------------------------
