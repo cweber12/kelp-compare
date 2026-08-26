@@ -153,11 +153,22 @@ def test_a_spike_fails_and_its_neighbours_come_out_suspect(tmp_path):
 
 
 def test_a_series_too_short_to_have_neighbours_gets_no_spike_verdict(tmp_path):
-    """`ioos_qc.spike_test` needs three points, and raises on none at all."""
+    """`ioos_qc.spike_test` judges a sample against its two neighbours.
+
+    The stored columns alone cannot hold this: below three points `spike_test`
+    returns UNKNOWN, which the roll-up omits, so `qc_tests` reads the same
+    whether the guard is there or not. What differs is the manifest -- the run
+    says the test was skipped and why, instead of listing it among the tests
+    that ran and finding nothing.
+    """
     parameters = registry(tmp_path, qc={"spike": SPIKE})
     outcome = evaluate(observations([18.0, 24.0]), parameters)
     assert verdict(outcome.frame, 0, "spike") is None
     assert flags(outcome.frame) == [FLAG_PASS, FLAG_PASS]  # gross range still ran
+
+    (series,) = outcome.series
+    assert "spike" not in series.tests
+    assert any("spike not run: 2 rows" in warning for warning in outcome.warnings)
 
 
 def test_an_abrupt_step_between_samples_fails_rate_of_change(tmp_path):
