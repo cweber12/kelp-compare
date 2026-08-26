@@ -76,9 +76,22 @@ def test_an_unknown_status_word_is_refused():
 
 
 def test_verdicts_serialize_in_a_fixed_order_whatever_order_they_arrive_in():
-    """Deterministic strings keep partition files byte-stable across reruns."""
-    text = format_tests({"spike": "pass", "deployment_window": "fail", "gross_range": "pass"})
-    assert text == "deployment_window:fail;gross_range:pass;spike:pass"
+    """Deterministic strings keep partition files byte-stable across reruns.
+
+    `rate_of_change` earns its place here: it is the one pair in the documented
+    order that alphabetical sorting would swap. Without it the assertion holds
+    just as well against an accidentally-alphabetical order, and a change that
+    rewrote every stored `qc_tests` string in the zone would go unnoticed.
+    """
+    text = format_tests(
+        {
+            "spike": "pass",
+            "rate_of_change": "suspect",
+            "deployment_window": "fail",
+            "gross_range": "pass",
+        }
+    )
+    assert text == "deployment_window:fail;gross_range:pass;spike:pass;rate_of_change:suspect"
 
 
 def test_a_test_outside_the_known_order_still_serializes_deterministically():
@@ -141,6 +154,23 @@ def test_the_flag_always_matches_what_the_tests_column_records():
     flags, text = summarize({"deployment_window": FAIL, "gross_range": PASS}, rows=1)
     assert int(flags[0]) == FLAG_FAIL
     assert parse_tests(str(text[0])) == {"deployment_window": "fail", "gross_range": "pass"}
+
+
+def test_a_verdict_that_does_not_cover_the_series_is_refused():
+    """The one place per-test vectors are checked against the rows they describe.
+
+    A vector shorter than its series would otherwise roll up against whichever
+    rows it happened to line up with, and the `qc_tests` column beside it would
+    describe a different set of rows than the flags -- an audit trail that
+    disagrees with itself, which docs/03 relies on never happening.
+    """
+    with pytest.raises(ValueError, match="'spike' verdict covers 2 rows"):
+        summarize({"spike": np.array([FLAG_PASS, FLAG_PASS])}, rows=3)
+
+
+def test_a_verdict_longer_than_the_series_is_refused_too():
+    with pytest.raises(ValueError, match="covers 3 rows but the series has 1"):
+        summarize({"gross_range": np.array([FLAG_PASS] * 3)}, rows=1)
 
 
 def test_a_test_that_reached_no_verdict_is_left_out_of_the_record():

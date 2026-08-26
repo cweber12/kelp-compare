@@ -174,7 +174,11 @@ def _run_tests(
     spike = parameter.qc.spike
     if spike is not None:
         # Three points, because the test judges a sample against the midpoint of
-        # its two neighbours -- and `spike_test` raises outright on an empty one.
+        # its two neighbours. Below that `spike_test` returns UNKNOWN rather than
+        # raising -- it raises only on an empty series, which `evaluate` cannot
+        # hand it -- so the stored columns come out identical either way. What
+        # the guard buys is the manifest: a skip reason a reader can act on,
+        # instead of a series whose recorded `tests` claim spike ran.
         if len(values) < 3:
             skipped.append(f"spike not run: {len(values)} rows is fewer than the three it needs")
         else:
