@@ -57,22 +57,95 @@ should record time-sync events.
 
 ## NDBC (National Data Buoy Center)
 
+**Implemented** — `src/kelpcompare/fetchers/ndbc.py`, `kelpcompare ingest
+--source ndbc`. Everything below the first paragraph was verified against real
+LJAC1 payloads on 2026-08-25; the excerpts are recorded in
+`tests/fixtures/ndbc/`.
+
 Reference meteorological and oceanographic observations. Realtime data for
 roughly the last 45 days per station at
-`https://www.ndbc.noaa.gov/data/realtime2/{STATION}.txt`; multi-year
-archives as annual standard meteorological (`stdmet`) files. Both are
-fixed-width text with two header rows (names, units). Candidate stations
-near the study area: LJAC1 (La Jolla shore station) and nearby buoys such
-as Scripps Nearshore; the final station list lives in the site registry,
-chosen by distance and parameter coverage. Quirks: missing values are
-sentinel codes (`MM`, `999`, `99.0` variants) that must be mapped to null,
-units follow the NDBC measurement description page and are not SI
-throughout (wind in m/s, pressure in hPa, temp in °C — verify per column),
-station instrumentation changes over the years, and realtime vs. historical
-files differ slightly in layout. Water temperature depth differs by
-platform (shore station intake vs. buoy hull) and must be recorded in the
-site registry, since comparing a 1 m buoy temp to a 10 m logger temp is a
-real analysis error we have to prevent structurally.
+`https://www.ndbc.noaa.gov/data/realtime2/{STATION}.txt`; multi-year archives
+as annual standard meteorological files at
+`https://www.ndbc.noaa.gov/data/historical/stdmet/{station}h{year}.txt.gz`,
+gzipped, one calendar year each. Candidate stations near the study area: LJAC1
+(La Jolla shore station) and nearby buoys such as Scripps Nearshore; the final
+station list lives in the site registry, chosen by distance and parameter
+coverage.
+
+### The two layouts are not the same file shape
+
+Both open with two `#`-prefixed header lines — column names, then units — but
+they differ in four ways at once, which is why the fetcher parses them
+separately rather than treating realtime as a short archive:
+
+| | realtime | stdmet archive |
+|---|---|---|
+| row order | **newest first** | oldest first |
+| missing token | `MM` | the column's all-nines fill |
+| `PTDY` column | present, signed (`+0.4`) | absent |
+| `VIS` unit | `nmi` | `mi` |
+
+The last row is the important one in principle: the same station reports the
+same quantity under two different unit tokens depending on which file was
+asked for. The fetcher therefore reads each column's unit from the file's own
+units line and refuses to store a column whose unit is not the one it expects,
+rather than trusting the column name. A wind speed in knots stored as m/s is
+the kind of error that survives into a publication.
+
+### Sentinels are numeric, and differ per column
+
+NDBC fills a missing value with nines to that column's own width and precision.
+Observed in the 2023 LJAC1 archive: `999` (WDIR, MWD), `99.0` (WSPD, GST, VIS),
+`99.00` (WVHT, DPD, APD, TIDE), `999.0` (ATMP, WTMP, DEWP), `9999.0` (PRES).
+Read naively, a missing water temperature becomes a 999 °C measurement. The
+fetcher compares numerically rather than as text, so a change in printed
+precision cannot smuggle one through, and maps them to null at parse time.
+
+Realtime uses `MM` throughout instead and never the numeric form. Any token
+that is neither a number nor `MM` is read as missing **and reported** in the run
+manifest: a token nobody has verified must not be indistinguishable from a
+sentinel NDBC documents.
+
+### What is mapped, and what deliberately is not
+
+`WTMP` → `sea_water_temperature`, `ATMP` → `air_temperature`, `WVHT` →
+`wave_significant_height`, `DPD` → `wave_peak_period`, `WSPD` → `wind_speed`.
+These arrive in degC, m, sec and m/s; only the unit *tokens* need folding to
+the registry's canonical spellings, which happens in the normalizer.
+
+Two columns are read and stored by nobody, on purpose:
+
+- **`PRES`** has no `parameters.json` entry. Adding one is a registry decision,
+  not a parsing one.
+- **`TIDE`** carries no declared datum. `water_level` is MLLW by definition
+  (doc 03), and folding an undeclared datum into it would be invisible
+  afterwards. Water level comes from CO-OPS, which states its datum on every
+  request.
+
+A station that does not measure something still stores rows for it — LJAC1's
+wave columns are sentinel from end to end, and land as missing rows rather than
+as nothing. "This station reported no wave height" and "nobody asked this
+station for wave height" are different facts, and only the first survives in a
+row that exists.
+
+### Other quirks
+
+Station instrumentation changes over the years. Pre-2005 archives use a
+different time layout with no minute column; the fetcher refuses them by name
+rather than misreading the columns that follow. Water temperature depth differs
+by platform (shore station intake vs. buoy hull) and **must** be recorded in the
+site registry as `sensor_depths_m`, since comparing a 1 m buoy temp to a 10 m
+logger temp is a real analysis error we have to prevent structurally. LJAC1's
+intake is 3.4 m below MLLW.
+
+### LJAC1 is CO-OPS 9410230
+
+The NDBC station page titles this platform `LJAC1 - 9410230 - La Jolla, CA`,
+owned and maintained by NOAA's National Ocean Service. NDBC redistributes the
+NOS observations: the two site records describe one instrument package, not two
+stations. `sites.json` records this as `same_platform_as`, because the doc 04
+neighbor validation must never count them as two independent references for the
+same sensor — `PROJ:YELLOW-BUOY` lists both in `neighbor_refs`.
 
 ## NOAA CO-OPS (Tides & Currents)
 

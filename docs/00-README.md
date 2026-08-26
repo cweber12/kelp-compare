@@ -55,7 +55,13 @@ relaxing a verdict ingest already recorded and never deleting a row. On the
 reviewed deployment it passes all 3,022 in-water readings and catches the
 install transient with two independent tests, as doc 06 §5 check 6 predicted.
 
+Also built: the first public-source fetcher, `kelpcompare ingest --source
+ndbc` (doc 02). It pulls NDBC realtime and annual stdmet archives, lands the
+untouched payload, maps five columns to controlled parameters, and writes
+observations that the existing QC stage evaluates with no code of its own —
+the first evidence that the doc 03 schema generalizes past one vendor file.
+
 Not built yet: the climatology and flat-line tests and neighbor validation
-(doc 04 §1 records why each waits), every public-source fetcher (doc 02),
-quarterly features and anomalies (doc 04 §2–3), the comparison table, the
-notebooks, and the dashboard.
+(doc 04 §1 records why each waits), the remaining public-source fetchers
+(doc 02), quarterly features and anomalies (doc 04 §2–3), the comparison table,
+the notebooks, and the dashboard.

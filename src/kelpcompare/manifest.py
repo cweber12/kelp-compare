@@ -57,11 +57,19 @@ def code_version() -> tuple[str | None, bool]:
 
 @dataclass
 class FileEntry:
-    """One input file's story, in the order a reader wants it."""
+    """One input's story, in the order a reader wants it.
+
+    "File" is the older half of the truth: a pulled source's input is a URL and a
+    window, not a file on disk. The fields are the same ones either way -- what
+    it was, what happened to it, how many rows came in and out -- so the entry is
+    shared rather than duplicated. `adapter` and `fetcher` are how a reader tells
+    which road a row travelled, and exactly one of them is ever set.
+    """
 
     path: str
     outcome: Outcome
     adapter: str | None = None
+    fetcher: str | None = None
     provenance: str | None = None
     serial: str | None = None
     site_id: str | None = None

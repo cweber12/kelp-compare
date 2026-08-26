@@ -16,7 +16,7 @@ cannot come to depend on one or quietly invent one.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_REGISTRY_PATH = Path("data/registry/sites.json")
@@ -55,6 +55,42 @@ class Deployment:
         a registry gap for a human, never an inference.
         """
         return (self.series_map or {}).get(series_name)
+
+
+@dataclass(frozen=True)
+class Station:
+    """A public-station site record: what a fetcher needs in order to ask for it.
+
+    The counterpart to `Deployment`. A project sensor is described by when it was
+    where; a public station is described by the identifier its provider knows it
+    by, and by the geometry of its sensors -- which is not decoration. docs/02
+    requires the water-temperature depth to be recorded because comparing a
+    3.4 m shore-station intake against a logger at another depth is a real
+    analysis error, and `depth_m` on every observation row is where that is
+    prevented structurally rather than remembered.
+
+    `same_platform_as` records that two site records describe one instrument
+    package. NDBC redistributes NOS observations, so `NDBC:LJAC1` and
+    `COOPS:9410230` are the same hardware under two identifiers -- and the
+    docs/04 neighbor validation must never count them as two independent
+    references for the same sensor.
+    """
+
+    site_id: str
+    station_code: str
+    operator: str
+    name: str | None = None
+    sensor_depths_m: dict[str, float] = field(default_factory=dict)
+    same_platform_as: tuple[str, ...] = ()
+
+    def depth_for(self, parameter: str) -> float | None:
+        """The declared depth for one parameter, or None.
+
+        None is the right answer for a met parameter -- docs/03 says `depth_m` is
+        null for those -- and equally the right answer for a water parameter
+        whose depth the provider has not published. Neither is guessed.
+        """
+        return self.sensor_depths_m.get(parameter)
 
 
 @dataclass(frozen=True)
@@ -97,6 +133,20 @@ def find_deployments(registry: Registry, serial: str) -> tuple[Deployment, ...]:
     return tuple(d for d in registry.deployments if _normalize_serial(d.serial) == wanted)
 
 
+def find_stations(registry: Registry, operator: str) -> tuple[Station, ...]:
+    """Every public station this registry declares for one operator.
+
+    A site with no `station_code` is skipped: without the identifier its provider
+    knows it by, there is nothing a fetcher could ask for. Site order is
+    preserved, so a run over "every NDBC station" is reproducible.
+    """
+    return tuple(
+        _station(site)
+        for site in registry.sites
+        if site.get("operator") == operator and site.get("station_code")
+    )
+
+
 def find_deployment(registry: Registry, serial: str) -> Deployment | None:
     """The first deployment record matching `serial`, or None."""
     matches = find_deployments(registry, serial)
@@ -110,6 +160,19 @@ def _normalize_serial(serial: object) -> str:
     if isinstance(serial, float) and serial.is_integer():
         return str(int(serial))
     return str(serial).strip()
+
+
+def _station(site: dict) -> Station:
+    depths = site.get("sensor_depths_m") or {}
+    platform = site.get("same_platform_as") or ()
+    return Station(
+        site_id=site.get("site_id", ""),
+        station_code=str(site.get("station_code", "")),
+        operator=str(site.get("operator", "")),
+        name=site.get("name"),
+        sensor_depths_m={str(k): float(v) for k, v in depths.items()},
+        same_platform_as=tuple(str(s) for s in platform),
+    )
 
 
 def _deployment(site: dict, record: dict) -> Deployment:
