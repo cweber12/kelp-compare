@@ -156,6 +156,23 @@ def test_the_flag_always_matches_what_the_tests_column_records():
     assert parse_tests(str(text[0])) == {"deployment_window": "fail", "gross_range": "pass"}
 
 
+def test_a_verdict_that_does_not_cover_the_series_is_refused():
+    """The one place per-test vectors are checked against the rows they describe.
+
+    A vector shorter than its series would otherwise roll up against whichever
+    rows it happened to line up with, and the `qc_tests` column beside it would
+    describe a different set of rows than the flags -- an audit trail that
+    disagrees with itself, which docs/03 relies on never happening.
+    """
+    with pytest.raises(ValueError, match="'spike' verdict covers 2 rows"):
+        summarize({"spike": np.array([FLAG_PASS, FLAG_PASS])}, rows=3)
+
+
+def test_a_verdict_longer_than_the_series_is_refused_too():
+    with pytest.raises(ValueError, match="covers 3 rows but the series has 1"):
+        summarize({"gross_range": np.array([FLAG_PASS] * 3)}, rows=1)
+
+
 def test_a_test_that_reached_no_verdict_is_left_out_of_the_record():
     """A spike test reaches no verdict at the ends of a series; say nothing."""
     assert qc_tests_of(gross_range=PASS, spike=UNKNOWN) == "gross_range:pass"
