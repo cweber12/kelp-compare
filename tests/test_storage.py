@@ -50,6 +50,7 @@ def test_zones_lay_out_the_documented_directories(tmp_path):
     assert zones.manifests == tmp_path / "raw" / "_manifests"
     assert zones.quarantine == tmp_path / "quarantine"
     assert zones.sites_json == tmp_path / "registry" / "sites.json"
+    assert zones.features_json == tmp_path / "registry" / "features.json"
     assert zones.raw_source("project_sensors") == tmp_path / "raw" / "project_sensors"
     assert zones.partition("project", 2026) == (
         tmp_path / "observations" / "source=project" / "year=2026"

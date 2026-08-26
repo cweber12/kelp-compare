@@ -122,6 +122,10 @@ class Zones:
     def parameters_json(self) -> Path:
         return self.registry / "parameters.json"
 
+    @property
+    def features_json(self) -> Path:
+        return self.registry / "features.json"
+
     def raw_source(self, source: str) -> Path:
         """The raw landing zone for one source.
 
