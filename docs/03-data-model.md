@@ -201,6 +201,7 @@ One record per station or deployment location.
 | `neighbor_refs[]` | Ordered public stations used for validation of this site |
 | `erddap_dataset_id` / `station_code` | Pinned source identifiers |
 | `sensor_depths_m` | For public stations: `{parameter: depth}`, positive down. What a fetcher writes into `depth_m` |
+| `measured_parameters` | For public stations: the controlled parameters this station carries an instrument for. A fetcher stores only these |
 | `same_platform_as[]` | Other `site_id`s that are the same physical instrument package under another provider's identifier |
 
 Each `deployments[]` record carries `tz`, `window_local` (the in-water
@@ -223,6 +224,15 @@ is what the fetcher writes into each row's `depth_m`. A parameter absent from
 that map gets a null depth — correct for a met parameter, and equally correct
 for a water parameter whose depth the provider has not published. Neither is
 guessed.
+
+`measured_parameters` is a separate field for that exact reason: absence from
+`sensor_depths_m` means "no depth published", never "no sensor", so the two
+cannot be one map. It records what the station carries an instrument for, and a
+fetcher stores only those — which is what stops a fixed-column source format
+landing rows for a sensor the station does not have (doc 02, "A station stores
+only what it has a sensor for"). An **absent** `measured_parameters` means
+undeclared, not empty: the fetcher stores everything it recognises and the run
+warns, because an unrecorded fact must not quietly become missing data.
 
 `same_platform_as` records that two site records describe one instrument
 package. `NDBC:LJAC1` and `COOPS:9410230` are the same NOS platform, NDBC

@@ -17,6 +17,15 @@ sentinels to null at parse time. Convert to UTC + SI only in the normalizer.
 Fail soft: log outages to the manifest, never crash the run. Pin station and
 dataset IDs in `data/registry/`, never in code.
 
+Store only the parameters the station declares in `measured_parameters`
+(`sites.json`). A fixed-column format carries every column for every station,
+so a station with no wave sensor still reports sentinel wave columns — and
+storing those is millions of rows that say nothing. Never infer this from the
+payload: a sensor that failed for a year looks identical to one that does not
+exist, and only the first should keep its (missing-flagged) rows. A station
+with no declaration is *undeclared*, not empty — store everything recognised
+and warn.
+
 ## NDBC
 
 - Realtime (last ~45 days): `https://www.ndbc.noaa.gov/data/realtime2/{STATION}.txt`
