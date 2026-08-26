@@ -165,10 +165,13 @@ def test_qc_runs_over_the_ingested_station(data_root, offline):
     )
     verdicts = water["qc_tests"].value_counts().to_dict()
 
-    # 390 rows get all three tests; 5 sit beside a gap, where the spike test
-    # has no pair of neighbours and correctly says nothing (docs/03).
+    # 390 rows get all three tests. The remaining 5 in-water rows sit beside a
+    # gap, and which tests reach a verdict there depends on which side they are:
+    # the spike test needs a pair of neighbours, the rate test needs a
+    # predecessor that is a measurement (docs/03).
     assert verdicts["gross_range:pass;spike:pass;rate_of_change:pass"] == 390
-    assert verdicts["gross_range:pass;rate_of_change:pass"] == 5
+    assert verdicts["gross_range:pass"] == 3  # resuming after a gap, and row 0
+    assert verdicts["gross_range:pass;rate_of_change:pass"] == 2  # running into one
 
     # The sentinel rows are judged as missing by every test rather than passed:
     # there is nothing in an absent value to evaluate, and missing outranks all.

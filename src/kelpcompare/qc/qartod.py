@@ -37,7 +37,12 @@ from ioos_qc import qartod
 
 from kelpcompare.parameters import Parameter, Parameters
 from kelpcompare.qc.flags import recorded_verdicts, summarize
-from kelpcompare.storage import OBSERVATION_COLUMNS, validate_frame
+from kelpcompare.storage import (
+    FLAG_MISSING,
+    FLAG_NOT_EVALUATED,
+    OBSERVATION_COLUMNS,
+    validate_frame,
+)
 
 #: The tests this stage runs. A verdict recorded under one of these names is
 #: owned by this stage: it is re-derived every run, so a stale result from a
@@ -185,16 +190,50 @@ def _run_tests(
         elif len(values) < 2:
             skipped.append("rate_of_change not run: a rate needs two rows")
         else:
-            verdicts["rate_of_change"] = _flags(
-                qartod.rate_of_change_test(
-                    inp=values,
-                    tinp=timestamps,
-                    threshold=rate.suspect_per_second,
-                    fail_threshold=rate.fail_per_second,
-                )
+            verdicts["rate_of_change"] = _without_unmeasured_rates(
+                _flags(
+                    qartod.rate_of_change_test(
+                        inp=values,
+                        tinp=timestamps,
+                        threshold=rate.suspect_per_second,
+                        fail_threshold=rate.fail_per_second,
+                    )
+                ),
+                values,
             )
 
     return verdicts, skipped
+
+
+def _without_unmeasured_rates(result: np.ndarray, values: np.ndarray) -> np.ndarray:
+    """Withdraw the rate verdict from rows whose rate was never measured.
+
+    `rate_of_change_test` builds its rates as `np.ma.zeros(inp.size)` and fills
+    only `roc[1:]`, so index 0 holds a rate of zero by construction. A row whose
+    predecessor is `NaN` fares no better: its first difference is masked, and
+    `roc > threshold` is then False rather than unknown. Both classes come back
+    GOOD without anything having been compared, and a pass nothing earned is
+    worth less than no verdict at all -- so say nothing, exactly as the spike
+    test already does at the ends of a series and either side of a gap (docs/03).
+
+    This suppression is not redundant with `gross_range`: that test independently
+    judges the same rows, which is why the stored flag stays plausible, but it is
+    judging the value rather than the step, and the step is what a gap conceals.
+
+    A row that is itself missing keeps its `missing` verdict. Inside a gap two or
+    more samples wide the predecessor is `NaN` too, so suppressing on the
+    predecessor alone would drop such a row to not-evaluated wherever the rate
+    test is the only one with thresholds -- an absent value that stops reading as
+    absent, which is the worse defect of the two.
+    """
+    unmeasured = np.empty(len(values), dtype=bool)
+    unmeasured[0] = True  # nothing before it: the rate is zero by construction
+    unmeasured[1:] = np.isnan(values[:-1])
+    unmeasured &= result != FLAG_MISSING
+
+    withdrawn = result.copy()
+    withdrawn[unmeasured] = FLAG_NOT_EVALUATED
+    return withdrawn
 
 
 def _flags(result) -> np.ndarray:
