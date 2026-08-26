@@ -25,8 +25,11 @@ constraint: ~100–150 usable quarterly kelp observations per polygon.
    exploratory. Carry only pre-registered relationships (analysis README)
    into inferential models; report effect sizes with uncertainty, not
    p-value collections.
-6. **Missing-data discipline.** Confirm null kelp quarters and
-   low-coverage feature quarters were excluded, not imputed or zeroed.
+6. **Missing-data discipline.** Confirm null kelp quarters were excluded, not
+   imputed or zeroed. Low-coverage environmental quarters are *flagged*
+   `usable = false` in `quarterly_env`, never dropped from the table — so
+   confirm the notebook actually filters on `usable`, and check
+   `baseline_years` before trusting an `_anom` column.
 7. **Lag sanity.** Kelp responds with a lag; a strong lag-0-only effect
    with nothing at lag 1–2 deserves suspicion (except wave removal, which
    is fast).

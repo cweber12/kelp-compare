@@ -17,12 +17,14 @@ data/
     _manifests/             # one JSON manifest per ingest run
   observations/             # partitioned: source={name}/year={yyyy}/part-{run_id}.parquet
   features/
-    quarterly_env.parquet
-    quarterly_kelp.parquet
-    comparison.parquet
+    quarterly_env.parquet     # built
+    climatology_env.parquet   # built
+    quarterly_kelp.parquet    # planned
+    comparison.parquet        # planned
   quarantine/               # files the registry gate turned away (doc 06 §5)
   registry/
-    sites.json  parameters.json  polygons.geojson  station_map.json
+    sites.json  parameters.json  features.json
+    polygons.geojson  station_map.json
 ```
 
 `quarantine/` is deliberately outside `raw/`: raw is the record of what the
@@ -244,17 +246,163 @@ plus control polygons, each with `polygon_id`, purpose (`near_site`,
 
 ## Quarterly environmental features: `quarterly_env.parquet`
 
-One row per `site_id × parameter-family × year × quarter`, wide on
-features because the feature set is fixed by doc 04:
+One row per **`source × site_id × parameter × depth_m × year × quarter`** —
+the QC series key (doc 04 §1) plus time, so every feature row traces to
+exactly one QC series. `depth_m` is in the key because a shallow and a deep
+logger at one site are not one series, and averaging them across a
+thermocline would corrupt precisely the quarterly minimum and cold-day
+counts §2 of doc 04 makes the nitrate proxy. Quarters are assigned in **UTC**
+(hard rule 2), with the consequence doc 04 §2 states.
 
-`mean`, `min`, `max`, `p05`, `p95`, `variance`,
-`days_above_20c`, `days_above_23c`, `max_spell_above_20c_days`,
-`degree_days_above_18c`, `days_below_14c` (upwelling/nitrate proxy),
-`n_obs`, `pct_coverage` (fraction of the quarter with valid data), plus
-per-family extras (waves: `n_events_hs_above_3m`, `max_event_hours`).
-Each feature also gets an `_anom` twin after climatology subtraction.
-Rows with `pct_coverage` below a threshold (default 60%, tunable) are
-flagged unusable so a half-empty quarter never poses as a mild one.
+The table is wide and sparse: one row carries whichever features its
+`feature_set` defines and null elsewhere. `feature_set` is a column rather
+than something to infer from which columns happen to be null, so
+"not applicable" is readable off the row.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `source`, `site_id`, `parameter`, `depth_m` | — | The QC series key |
+| `year`, `quarter` | INT | Kelp Watch calendar, UTC |
+| `feature_set` | VARCHAR | Which set was applied: `statistics`, `temperature` |
+| `n_obs` | BIGINT | Rows kept by the QC filter |
+| `n_days_observed` | INT | Distinct UTC days with at least one kept row |
+| `cadence_s` | DOUBLE | Median observed inter-sample interval; null under two rows |
+| `expected_obs` | DOUBLE | Quarter duration ÷ `cadence_s` |
+| `pct_coverage` | DOUBLE | `n_obs / expected_obs`, clamped to 1 |
+| `usable` | BOOLEAN | `n_obs ≥ 2` and `pct_coverage ≥` the configured floor |
+| `quarter_complete` | BOOLEAN | Whether the quarter had ended when the run happened |
+| `qc_max_flag` | TINYINT | The filter the table was built at (default 2) |
+| measured features | DOUBLE | See below; counts are doubles so null is representable |
+| `max_spell_above_{t}_gap_interrupted` | BOOLEAN | Whether a gap ended the longest spell |
+| `baseline_years` | INT | Contributing quarters behind this row's anomalies |
+| `{feature}_anom` | DOUBLE | One per measured feature |
+
+Measured features under the default configuration: `mean`, `min`, `max`,
+`p05`, `p95`, `variance` for every parameter, plus — for the `temperature`
+set — `days_above_20c`, `days_above_23c`, `max_spell_above_20c_days`,
+`degree_days_above_18c`, `days_below_14c`. **Those column names are derived
+from the configured thresholds**, so retuning one renames its column rather
+than silently changing what an existing column means; a fractional threshold
+renders its decimal point as an underscore (`20.5 → 20_5c`). Doc 04 §2
+defines what each one counts.
+
+**Coverage is measured against the series' own cadence**, so an hourly
+station and a 10-minute logger are judged on the same scale without either
+being penalised for its sampling rate. `n_obs`, `cadence_s` and
+`expected_obs` are stored beside the fraction so it is auditable rather than
+a bare number to be trusted. Two consequences are handled rather than left
+to emerge: a series whose cadence changed mid-quarter can compute above full
+coverage, so the value is clamped and the series is named in a manifest
+warning; and a quarter with fewer than two observations has no interval to
+take a median of, so its cadence is null, its coverage zero, and it is
+unusable.
+
+Coverage counts the same QC-filtered rows the features are computed from — a
+quarter that sampled perfectly and failed QC on every row scores **zero**
+coverage, not full. Quarters are enumerated from stored rows and computed
+from filtered ones, so such a quarter still gets a row, at `n_obs = 0`. A
+quarter with no stored rows at all gets no row.
+
+**A quarter below the floor is flagged, never imputed and never dropped** —
+hard rule 4's discipline applied one layer up, which also leaves the floor a
+sensitivity knob rather than a filter already applied. `usable` is the single
+gate: anomalies are computed for unusable quarters too, because two
+mechanisms expressing one warning is worse than one.
+
+`quarter_complete` exists because an in-progress quarter is otherwise
+indistinguishable from a station outage: both present as under-covered, for
+entirely different reasons. The coverage denominator stays the full quarter,
+so an unfinished quarter is honestly under-covered; incomplete quarters are
+excluded from the climatology regardless of coverage.
+
+Wave and water-level feature sets (doc 04 §2: `n_events_hs_above_3m`,
+`max_event_hours`, mean observed-minus-predicted) are not built — their
+fetchers do not exist, and the configuration parser refuses to declare them
+until they do.
+
+## Quarterly climatology: `climatology_env.parquet`
+
+The fixed baseline the `_anom` columns were taken against, written to its own
+table so that "the anomalies did not shift" is checkable by diffing two runs
+rather than a promise. One row per `source × site_id × parameter × depth_m ×
+quarter × feature` — long on features, because the table is a lookup keyed by
+feature and a wide form would need a `_mean` and `_std` column for every
+feature in `quarterly_env`.
+
+| Column | Notes |
+|--------|-------|
+| `source`, `site_id`, `parameter`, `depth_m` | The QC series key |
+| `quarter` | Quarter of the year, 1–4; **not** a year-quarter |
+| `feature` | Which measured feature this baseline is for |
+| `baseline_start_year`, `baseline_end_year` | The window applied, inclusive |
+| `n_years` | Contributing years for this feature |
+| `baseline_mean`, `baseline_std` | Sample convention; `std` null below two years |
+
+`baseline_std` is here so a standardised anomaly is a join rather than a
+second recomputation that could drift from the one that produced the
+anomalies. `n_years` is per feature and is what gates each anomaly;
+`baseline_years` on the feature row is the series-level count of contributing
+quarters, which is the same number except where a feature is null in an
+otherwise-usable quarter.
+
+Only **usable, complete** quarters inside the window contribute. A cell with
+no contributing year gets no row — an empty row would claim a baseline
+exists. Doc 04 §3 records the window and why it is what it is.
+
+## Feature configuration: `features.json`
+
+The coverage floor, the climatology baseline, and the per-parameter feature
+set and its thresholds live in `registry/features.json`, not in code and not
+in `parameters.json` (ADR-006). A parameter **declares** which feature set
+applies to it; it is never inferred from the parameter's unit, for the reason
+this document already gives for parameters themselves — `degC` is equally
+`sea_water_temperature` and `air_temperature`, and only one of them gets kelp
+stress thresholds.
+
+```json
+"policy": {
+  "coverage_floor": 0.6,
+  "baseline": {"start_year": 2007, "end_year": 2019, "min_years": 10}
+},
+"parameters": {
+  "sea_water_temperature": {
+    "feature_set": "temperature",
+    "thresholds": {
+      "days_above": [20.0, 23.0], "max_spell_above": [20.0],
+      "degree_days_above": [18.0], "days_below": [14.0]
+    }
+  },
+  "air_temperature": {"feature_set": "statistics"}
+}
+```
+
+The parser takes the same posture as the parameter registry: an unknown key,
+an empty block, thresholds on a set that takes none, or a feature set the
+builder does not implement all raise, naming the file and the key. A
+parameter with **no** entry is skipped, named in a manifest warning, and sets
+the run's exit code.
+
+### Writing the features zone
+
+One file per table, rewritten wholesale — this zone is not partitioned, the
+row count is in the thousands, and a partitioned table could not stay a pure
+function of its inputs, which is what makes `rebuild` mean anything. The file
+is written under a staging name and moved into place, exactly as a partition
+is, so an interrupted run leaves the previous table intact.
+
+A run replaces exactly the rows of the sources it built. Scoped by source
+rather than merged row by row, so a site later removed from the registry does
+not keep its feature rows forever; scoped rather than wholesale, so a
+`--source` rerun is not silent data loss for every other source. A source
+that *failed* mid-run keeps its previous rows rather than losing them to a
+run that never looked at it — the cost is that a source whose observations
+have been removed entirely keeps stale feature rows until the zone is
+rebuilt.
+
+Retained rows are reindexed onto the incoming frame's columns, so the table's
+schema always follows the current configuration: a threshold retuned since
+the last run renames its column, and a source not yet rebuilt shows null
+there rather than the old column lingering beside the new one.
 
 ## Comparison table: `comparison.parquet`
 
@@ -264,6 +412,11 @@ kelp anomaly at t against environmental feature anomalies at t−lag, plus
 event covariates for the lagged quarter (marine heatwave days, ENSO
 state, wave events). Notebooks and the dashboard read this table almost
 exclusively; it is regenerated wholesale by `kelpcompare features`.
+
+Not built, along with `quarterly_kelp.parquet`: both are blocked on a Kelp
+Watch fetcher that does not exist and on analysis polygons that have not been
+drawn, so a comparison table today would be a join against an empty one.
+`kelpcompare features` currently builds the environmental half of the zone.
 
 ## Run manifests
 
@@ -275,6 +428,12 @@ upstream gaps encountered. Each input records either an `adapter` or a
 pulled station-window has no adapter to name. Manifests are how any number in a notebook
 traces back to specific fetches — required for publication-grade
 reproducibility.
+
+The per-series entry is shared between the stages that read a zone rather than
+recorded as files, because such a run has no input files. Each fills the fields
+it has: `qc` the flag histogram and the tests it ran, `features` the quarters
+produced, the quarters usable, and the first and last quarter covered — which
+is what makes coverage attrition readable without opening the Parquet.
 
 ## Integrity rules
 
