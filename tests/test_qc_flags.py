@@ -76,9 +76,22 @@ def test_an_unknown_status_word_is_refused():
 
 
 def test_verdicts_serialize_in_a_fixed_order_whatever_order_they_arrive_in():
-    """Deterministic strings keep partition files byte-stable across reruns."""
-    text = format_tests({"spike": "pass", "deployment_window": "fail", "gross_range": "pass"})
-    assert text == "deployment_window:fail;gross_range:pass;spike:pass"
+    """Deterministic strings keep partition files byte-stable across reruns.
+
+    `rate_of_change` earns its place here: it is the one pair in the documented
+    order that alphabetical sorting would swap. Without it the assertion holds
+    just as well against an accidentally-alphabetical order, and a change that
+    rewrote every stored `qc_tests` string in the zone would go unnoticed.
+    """
+    text = format_tests(
+        {
+            "spike": "pass",
+            "rate_of_change": "suspect",
+            "deployment_window": "fail",
+            "gross_range": "pass",
+        }
+    )
+    assert text == "deployment_window:fail;gross_range:pass;spike:pass;rate_of_change:suspect"
 
 
 def test_a_test_outside_the_known_order_still_serializes_deterministically():
