@@ -46,8 +46,14 @@ RATE = {"suspect_per_hour": 18.0, "fail_per_hour": 36.0}
 
 
 def registry(tmp_path: Path, *, valid_range=(5.0, 35.0), qc: dict | None = None):
-    """A one-parameter `parameters.json`, loaded."""
-    record: dict = {"unit": "degC", "valid_range": list(valid_range)}
+    """A one-parameter `parameters.json`, loaded.
+
+    `valid_range=None` leaves the parameter with no gross-range thresholds,
+    which is the only way to watch one test's verdicts reach the roll-up alone.
+    """
+    record: dict = {"unit": "degC"}
+    if valid_range is not None:
+        record["valid_range"] = list(valid_range)
     if qc is not None:
         record["qc"] = qc
     target = tmp_path / "parameters.json"
@@ -174,6 +180,56 @@ def test_a_rate_of_change_block_with_no_suspect_threshold_is_reported_not_run(tm
     outcome = evaluate(observations([18.0, 25.0, 25.1]), parameters)
     assert verdict(outcome.frame, 1, "rate_of_change") is None
     assert any("rate_of_change" in warning for warning in outcome.warnings)
+
+
+# --------------------------------------------------------------------------
+# Rows the rate test never actually compared against anything
+# --------------------------------------------------------------------------
+
+
+def test_the_first_row_of_a_series_gets_no_rate_of_change_verdict(tmp_path):
+    """There is no earlier reading to have changed from, so there is no rate."""
+    parameters = registry(tmp_path, qc={"rate_of_change": RATE})
+    outcome = evaluate(observations([18.0, 18.1, 18.2]), parameters)
+    assert verdict(outcome.frame, 0, "rate_of_change") is None
+    assert verdict(outcome.frame, 1, "rate_of_change") == "pass"
+
+
+def test_a_row_resuming_after_a_gap_gets_no_rate_of_change_verdict(tmp_path):
+    """The step is identical either way; only the gap before it differs.
+
+    Recording the second one as a pass would be the worse of the two errors: a
+    `qc_flag <= 2` query keeps it, and it keeps it at exactly the discontinuity
+    a rate test exists to judge.
+    """
+    parameters = registry(tmp_path, qc={"rate_of_change": RATE})
+
+    adjacent = evaluate(observations([18.0, 18.1, 25.0, 25.1]), parameters).frame
+    assert verdict(adjacent, 2, "rate_of_change") == "fail"
+
+    across_a_gap = evaluate(
+        observations([18.0, 18.1, np.nan, np.nan, 25.0, 25.1]), parameters
+    ).frame
+    assert verdict(across_a_gap, 4, "rate_of_change") is None
+
+
+def test_suppressing_a_verdict_never_stops_a_missing_row_reading_as_missing(tmp_path):
+    """A row inside a gap has a missing predecessor *and* a missing value.
+
+    With no `valid_range` the rate test is the only one with thresholds, so its
+    verdicts reach the roll-up alone and nothing else is holding the flag up.
+    Suppressing by predecessor alone would drop the second gap row from 9 to 2 --
+    a missing value that stops reading as missing.
+    """
+    parameters = registry(tmp_path, valid_range=None, qc={"rate_of_change": RATE})
+    outcome = evaluate(observations([18.0, 18.1, np.nan, np.nan, 25.0], qc_tests=""), parameters)
+    assert flags(outcome.frame) == [
+        FLAG_NOT_EVALUATED,  # nothing before it to compare against
+        FLAG_PASS,
+        FLAG_MISSING,
+        FLAG_MISSING,  # missing predecessor, but still a missing value first
+        FLAG_NOT_EVALUATED,  # resumes after the gap
+    ]
 
 
 # --------------------------------------------------------------------------

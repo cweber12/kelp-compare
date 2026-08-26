@@ -113,8 +113,10 @@ two columns.
 roll-up of exactly the verdicts recorded beside it, and the two are written
 together so they cannot drift apart. Statuses are `pass`, `suspect`, `fail`,
 `missing`; a test that reached no verdict for a row is **omitted** rather than
-recorded as a non-answer, which is what a spike test does at the two ends of a
-series.
+recorded as a non-answer. Both neighbour-reading tests do this: the spike test
+at the two ends of a series and either side of a gap, the rate-of-change test at
+the first row and wherever the preceding row's value is absent. A rate compared
+against nothing is not a pass.
 
 Roll-up precedence, applied across every recorded verdict:
 

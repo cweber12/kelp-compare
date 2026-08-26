@@ -33,8 +33,18 @@ while the install transient — a reading taken in air — fails the spike test 
 comes out suspect on rate of change, having passed gross range. That is the
 predicted result, and it is what the thresholds were sized against.
 
-Three properties to keep in mind when reading flags:
+Four properties to keep in mind when reading flags:
 
+- Both neighbour-reading tests withdraw rather than guess where a neighbour is
+  missing. Spike says nothing at the ends of a series or either side of a gap;
+  rate of change says nothing at the first row, or where the preceding value is
+  absent. `ioos_qc` returns GOOD in each of those rate cases — index 0 because
+  its rate array is initialised to zeros and filled only from index 1, a
+  post-gap row because the masked difference makes `roc > threshold` False
+  rather than unknown — so this stage overrides it. The divergence is
+  deliberate: a gap is exactly where a rate test would matter most, and a pass
+  it never earned survives the default `qc_flag <= 2` filter while an omission
+  is visible in `qc_tests`.
 - The spike test judges a sample against the midpoint of its two neighbours, so
   a spike large enough to fail necessarily pushes both neighbours past the
   suspect threshold. One bad reading costs three rows from a `qc_flag <= 2`
