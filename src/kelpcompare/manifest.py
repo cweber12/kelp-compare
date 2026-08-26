@@ -92,11 +92,19 @@ class FileEntry:
 
 @dataclass
 class SeriesEntry:
-    """One evaluated series. What a `FileEntry` is to ingest, this is to qc.
+    """One series a run looked at. What a `FileEntry` is to ingest, this is to
+    the stages that read the zone.
 
-    A qc run has no input files -- it reads a zone, not a drop directory -- so
-    recording its work as files would be a fiction that made the manifest harder
-    to read, not easier.
+    A qc or features run has no input files -- it reads a zone, not a drop
+    directory -- so recording its work as files would be a fiction that made the
+    manifest harder to read, not easier.
+
+    Shared between the two stages rather than split, because a series is a
+    series whichever stage looked at it. Each fills the fields it has: qc the
+    flag histogram and the tests it ran, features the quarter counts. The
+    quarter counts are what make coverage attrition readable without opening the
+    Parquet -- how many quarters a series produced, and how many survived the
+    coverage floor.
     """
 
     source: str
@@ -106,6 +114,10 @@ class SeriesEntry:
     rows: int
     tests: list[str] = field(default_factory=list)
     qc_flags: dict[str, int] = field(default_factory=dict)
+    quarters: int | None = None
+    quarters_usable: int | None = None
+    first_quarter: str | None = None
+    last_quarter: str | None = None
 
 
 @dataclass

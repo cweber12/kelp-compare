@@ -4,7 +4,7 @@ The dependency order lives here rather than in a scheduler (ADR-002), and every
 run writes a manifest (hard rule 7): a Parquet file written outside this CLI
 cannot be traced back to a fetch, and an untraceable number cannot be published.
 
-Both commands fail soft, per the docs/02 cross-cutting rules. One unreadable
+Every command fails soft, per the docs/02 cross-cutting rules. One unreadable
 file, one unregistered serial, one source outage is recorded and stepped over --
 never allowed to abort a run and lose the inputs that were fine. Recorded, then
 reflected in the exit code: a run that quietly skipped something is worse than
@@ -18,9 +18,14 @@ import shutil
 from pathlib import Path
 
 import click
+import pandas as pd
 
 from kelpcompare.adapters import hobo_xlsx
 from kelpcompare.adapters.base import REGISTRY_GATE, Check, ValidationReport
+from kelpcompare.features.build import BuildOutcome, build_features
+from kelpcompare.features.climatology import CLIMATOLOGY_KEY
+from kelpcompare.features.config import load_feature_config
+from kelpcompare.features.quarterly import QUARTERLY_KEY
 from kelpcompare.fetchers import ndbc
 from kelpcompare.fetchers.base import SourceUnavailable, land
 from kelpcompare.manifest import RunManifest
@@ -35,7 +40,16 @@ from kelpcompare.registry import (
     find_stations,
     load_registry,
 )
-from kelpcompare.storage import Zones, read_observations, stored_sources, write_observations
+from kelpcompare.storage import (
+    FLAG_MISSING,
+    FLAG_NOT_EVALUATED,
+    FLAG_PASS,
+    Zones,
+    read_observations,
+    stored_sources,
+    write_features,
+    write_observations,
+)
 
 #: Tried in order; the first whose `sniff()` accepts the file wins. A new logger
 #: brand is one adapter module and one entry here (docs/06 s4).
@@ -272,6 +286,197 @@ def _report_qc(run: RunManifest, zones: Zones, *, dry_run: bool) -> None:
 
     total = " ".join(f"{flag}:{n}" for flag, n in sorted(run.qc_flags.items()))
     click.echo(f"\n{len(run.series)} series evaluated" + (f" -- {total}" if total else ""))
+
+    if dry_run:
+        click.echo("dry run: nothing written, no manifest")
+    else:
+        click.echo(f"manifest: {run.write(zones)}")
+
+    if run.warnings:
+        raise SystemExit(1)
+
+
+@main.command()
+@click.option(
+    "--source",
+    default=None,
+    help="Source name per docs/02. Defaults to every source with stored rows.",
+)
+@click.option(
+    "--data-root",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Root of the docs/03 data zones. Defaults to ./data.",
+)
+@click.option(
+    "--qc-max-flag",
+    type=click.IntRange(FLAG_PASS, FLAG_MISSING),
+    default=FLAG_NOT_EVALUATED,
+    show_default=True,
+    help="Keep rows at or below this QC flag. 1 is the pass-only rerun docs/04 s1 asks for.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Report what would be built; write no files, not even the manifest.",
+)
+def features(source: str | None, data_root: Path | None, qc_max_flag: int, dry_run: bool) -> None:
+    """Build the quarterly feature tables from stored observations (docs/04 s2-s3).
+
+    Writes `features/quarterly_env.parquet` -- one row per QC series per Kelp
+    Watch quarter, with the anomalies that take the seasonal cycle back out --
+    and `features/climatology_env.parquet`, the fixed baseline those anomalies
+    were taken against.
+
+    A run replaces exactly the sources it built, so `--source ndbc` after one
+    station's backfill leaves every other source's rows alone. Both tables are
+    a pure function of the observations zone and `registry/features.json`, which
+    is what makes rebuilding them meaningful.
+
+    No `--registry` option: the site registry is ingest's business. What this
+    stage reads is the feature configuration, which lives beside it in the same
+    zone (ADR-006).
+    """
+    zones = Zones.at(data_root)
+    # Not fail-soft: a configuration that cannot be parsed is a configuration
+    # nothing can be built against, so there is no per-source failure to isolate.
+    config = load_feature_config(zones.features_json)
+    sources = [source] if source else list(stored_sources(zones))
+
+    run = RunManifest.start("features", argv=_features_argv(source, qc_max_flag), sources=sources)
+    now = pd.Timestamp.now(tz="UTC")
+    outcomes: dict[str, BuildOutcome] = {}
+
+    attempted = [
+        _build_source(
+            name,
+            zones=zones,
+            config=config,
+            run=run,
+            qc_max_flag=qc_max_flag,
+            now=now,
+            outcomes=outcomes,
+        )
+        for name in sources
+    ]
+    if not any(attempted):
+        click.echo("nothing to build" + (f" for {source!r}" if source else ""))
+        return
+
+    written = () if dry_run else _write_feature_tables(outcomes, zones, run)
+    _report_features(run, zones, written, dry_run=dry_run)
+
+
+def _build_source(
+    name: str,
+    *,
+    zones: Zones,
+    config,
+    run: RunManifest,
+    qc_max_flag: int,
+    now: pd.Timestamp,
+    outcomes: dict[str, BuildOutcome],
+) -> bool:
+    """Build one source's rows. Returns whether there were any to build.
+
+    Never raises, for the reason `_qc_source` never raises: one source whose
+    stored rows cannot be read or aggregated must not cost the run the sources
+    that are fine (docs/02 fail-soft rule). It does set the exit code, because a
+    zone that silently went unbuilt is worse than a loud failure.
+    """
+    try:
+        frame = read_observations(zones, name)
+        if frame.empty:
+            return False
+
+        # Storage keeps timestamps tz-naive UTC (docs/03); the quarter calendar
+        # refuses anything that does not carry its zone, so put it back first.
+        frame["timestamp"] = frame["timestamp"].dt.tz_localize("UTC")
+        outcome = build_features(frame, config, qc_max_flag=qc_max_flag, now=now)
+
+        for warning in outcome.warnings:
+            run.note_warning(f"{name}: {warning}")
+        for series in outcome.series:
+            run.add_series(
+                source=series.source,
+                site_id=series.site_id,
+                parameter=series.parameter,
+                depth_m=series.depth_m,
+                rows=series.rows,
+                quarters=series.quarters,
+                quarters_usable=series.quarters_usable,
+                first_quarter=series.first_quarter,
+                last_quarter=series.last_quarter,
+            )
+        outcomes[name] = outcome
+    except Exception as error:  # noqa: BLE001 -- one bad source must not end the run
+        run.note_warning(f"{name}: {type(error).__name__}: {error}")
+    return True
+
+
+def _write_feature_tables(
+    outcomes: dict[str, BuildOutcome], zones: Zones, run: RunManifest
+) -> tuple[Path, ...]:
+    """Write both tables, superseding exactly the sources that built successfully.
+
+    Guarded like the build itself: a table that cannot be written is a disk
+    failure, and letting it escape would abort the run and take its manifest
+    with it (hard rule 7). A source that failed keeps its previous rows rather
+    than losing them to a run that never looked at it.
+    """
+    if not outcomes:
+        return ()
+    replacing = tuple(sorted(outcomes))
+    tables = (
+        ("quarterly_env", QUARTERLY_KEY, [o.quarterly for o in outcomes.values()]),
+        ("climatology_env", CLIMATOLOGY_KEY, [o.climatology for o in outcomes.values()]),
+    )
+    written: list[Path] = []
+    for table, key, frames in tables:
+        try:
+            written.append(
+                write_features(_stack(frames), zones, table=table, key=key, replacing=replacing)
+            )
+        except Exception as error:  # noqa: BLE001 -- report the failure, keep the manifest
+            run.note_warning(f"{table}: {type(error).__name__}: {error}")
+    return tuple(written)
+
+
+def _stack(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """Concatenate, ignoring empties so they cannot widen a column's dtype."""
+    populated = [frame for frame in frames if not frame.empty]
+    if not populated:
+        return frames[0]
+    return populated[0] if len(populated) == 1 else pd.concat(populated, ignore_index=True)
+
+
+def _quarters(count: int) -> str:
+    return f"{count} quarter" if count == 1 else f"{count} quarters"
+
+
+def _features_argv(source: str | None, qc_max_flag: int) -> list[str]:
+    """`--qc-max-flag` always recorded: two tables built at different strictness
+    are otherwise indistinguishable from the manifest."""
+    return [*_argv(source), f"--qc-max-flag={qc_max_flag}"]
+
+
+def _report_features(
+    run: RunManifest, zones: Zones, written: tuple[Path, ...], *, dry_run: bool
+) -> None:
+    for series in run.series:
+        span = f"{series.first_quarter}..{series.last_quarter}" if series.quarters else "-"
+        click.echo(
+            f"{series.site_id:>20}  {series.parameter}  {_quarters(series.quarters or 0)}  "
+            f"{series.quarters_usable} usable  {span}"
+        )
+    for warning in run.warnings:
+        click.echo(f"     warning  {warning}")
+
+    quarters = sum(series.quarters or 0 for series in run.series)
+    usable = sum(series.quarters_usable or 0 for series in run.series)
+    click.echo(f"\n{len(run.series)} series built -- {_quarters(quarters)}, {usable} usable")
+    for path in written:
+        click.echo(f"wrote: {path}")
 
     if dry_run:
         click.echo("dry run: nothing written, no manifest")

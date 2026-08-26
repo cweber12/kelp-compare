@@ -6,50 +6,111 @@ description: Definitions and rules for building quarterly environmental features
 # Quarterly Features
 
 Authoritative math: docs/04-analysis-methods.md §2–3. Schema for outputs:
-docs/03-data-model.md (`quarterly_env`, `quarterly_kelp`, `comparison`).
+docs/03-data-model.md (`quarterly_env`, `climatology_env`). Where the
+configuration lives and why: ADR-006.
+
+Built: `kelpcompare features` produces `quarterly_env.parquet` and
+`climatology_env.parquet`. Not built: `quarterly_kelp.parquet` and
+`comparison.parquet`, both blocked on a Kelp Watch fetcher.
 
 ## Calendar and alignment
 
 Kelp Watch quarters: Q1 Jan–Mar, Q2 Apr–Jun, Q3 Jul–Sep, Q4 Oct–Dec.
-All features are computed per `site_id × parameter-family × year × quarter`
-in UTC and joined to kelp per polygon at lags 0–4 quarters.
+
+Row key: **`source × site_id × parameter × depth_m × year × quarter`** — the
+QC series key plus time, so every feature row traces to one QC series. Not
+`parameter-family`: no family vocabulary exists in any registry file. Not
+without `depth_m`: that would average a shallow and a deep logger across a
+thermocline, corrupting exactly the quarterly minimum and cold-day counts.
+
+Quarters are assigned in **UTC**. A 5pm 31 December reading on the US west
+coast falls in the following Q1. DST is irrelevant rather than handled.
 
 ## Non-negotiable rules
 
-1. Missing ≠ zero, both directions: a cloud-gapped kelp quarter is null;
-   a sensor quarter with `pct_coverage < 0.60` (config: tunable) is flagged
-   unusable, not imputed. Never `fillna(0)`.
-2. Compute features only from QC-filtered rows (`qc_flag <= 2` default).
-3. Climatology baseline is FIXED (1984–2013 where available; else the
-   documented per-site baseline) and recorded in output metadata. Anomalies
-   must not shift when new data arrives.
-4. Every feature gets an `_anom` twin. Raw-value correlations against kelp
-   are almost always seasonal-cycle artifacts — analysis uses anomalies.
+1. Missing ≠ zero, both directions: a cloud-gapped kelp quarter is null; a
+   sensor quarter below the configured coverage floor (default 0.60) is
+   flagged `usable = false`, not imputed and not dropped. Never `fillna(0)`.
+2. Compute features only from QC-filtered rows (`qc_flag <= 2` default,
+   overridable per run and recorded in `qc_max_flag`). Coverage counts the
+   same filtered rows, so a quarter that failed QC on every row scores
+   **zero** coverage, not full.
+3. Climatology baseline is FIXED — **2007–2019, minimum 10 usable years** —
+   and written to its own table with its window, year count, mean and
+   standard deviation. Anomalies must not shift when new data arrives.
+   Only usable *and complete* quarters contribute.
+4. Every measured feature gets an `_anom` twin. Bookkeeping columns
+   (`n_obs`, `cadence_s`, `pct_coverage`, …) and the spell gap markers do
+   not. Raw-value correlations against kelp are almost always seasonal-cycle
+   artifacts.
+5. Thresholds, the floor and the baseline are registry values in
+   `data/registry/features.json`, never literals in code (ADR-006). Column
+   names are derived from the configured thresholds, so a retune renames the
+   column rather than redefining it.
 
 ## Temperature features (per quarter)
 
-mean, min, max, p05, p95, variance, `days_above_20c`, `days_above_23c`,
-`max_spell_above_20c_days` (longest consecutive run), 
-`degree_days_above_18c`, `days_below_14c` (upwelling/nitrate proxy — in
-Southern California nitrate is high only in cold water, so quarterly min
-and cold-day counts carry nutrient information), `n_obs`, `pct_coverage`.
-Thresholds (20/23/18/14 °C) are config values with doc-04 defaults, not
-hardcoded literals.
+`mean`, `min`, `max`, `p05`, `p95`, `variance` (universal `statistics` set),
+plus `days_above_20c`, `days_above_23c`, `max_spell_above_20c_days`,
+`max_spell_above_20c_gap_interrupted`, `degree_days_above_18c`,
+`days_below_14c` (upwelling/nitrate proxy — in Southern California nitrate is
+high only in cold water, so quarterly min and cold-day counts carry nutrient
+information).
 
-"Days above X" = count of distinct UTC days whose daily max exceeds X.
-Spell length = consecutive days meeting the condition.
+Exact definitions, all day-based, every day with ≥1 observation counting:
+
+- "Days above X" = distinct UTC days whose daily **max** exceeds X.
+- "Days below X" = distinct UTC days whose daily **min** falls below X.
+- Degree-days above X = Σ over observed days of `max(0, daily_mean − X)`,
+  in °C·day. Never a time integral: that would weight by sample spacing.
+- Spell = consecutive **calendar** days meeting the condition. **Broken by an
+  unobserved day, never bridged**, and marked `_gap_interrupted` when a gap
+  ended it, so a floor is not reported as a measurement.
+- Percentiles interpolate linearly; variance is `ddof=1`, so one observation
+  gives a null variance, not zero.
+
+Bookkeeping beside them: `n_obs`, `n_days_observed`, `cadence_s`,
+`expected_obs`, `pct_coverage`, `usable`, `quarter_complete`, `qc_max_flag`,
+`baseline_years`, `feature_set`.
+
+`pct_coverage = n_obs / expected_obs`, where `expected_obs` is the quarter's
+duration over the series' **median observed inter-sample interval** — so an
+hourly station and a 10-minute logger are judged on the same scale. Clamped
+at 1 with a manifest warning when a cadence changed mid-quarter.
+`quarter_complete` separates an unfinished quarter from a station outage.
 
 ## Other families
+
+Not implemented; the configuration parser refuses to declare them until the
+fetchers exist.
 
 - Waves (CDIP): `n_events_hs_above_3m` (event = contiguous exceedance),
   `max_event_hours`, quarterly max Hs.
 - Water level (CO-OPS): mean observed-minus-predicted anomaly.
-- Covariates: marine heatwave days (Hobday definition, fixed 1983–2012
-  SST baseline), ONI/ENSO state, BEUTI/CUTI quarterly means.
+- Covariates: marine heatwave days (Hobday definition, fixed 1983–2012 SST
+  baseline), ONI/ENSO state, BEUTI/CUTI quarterly means.
+
+A parameter that has a fetcher but no ecological feature set gets
+`statistics` — that is what `air_temperature`, `wind_speed`, `water_level`
+and the wave parameters have today.
+
+## Known biases to state, not discover
+
+- Day counts run **low** under partial coverage: a day observed only
+  overnight cannot show its daytime maximum.
+- Spell lengths are **floors** wherever `_gap_interrupted` is true.
+- The 2007–2019 baseline **contains the 2014–2016 marine heatwave**, so the
+  warm-season baseline is raised and later warm anomalies are damped.
 
 ## Testing expectations
 
-Feature functions are pure (DataFrame in, row out) and tested against
-hand-computed fixtures, including: a quarter with a gap straddling a
-threshold spell, a below-coverage quarter, and a DST-spanning quarter
-(UTC math should make DST irrelevant — the test proves it).
+Feature functions are pure (DataFrame in, DataFrame out) and tested against
+hand-computed frames whose values a reviewer can check by arithmetic; the CLI
+suite drives the same code end to end from the recorded fixtures. Cases the
+suite must keep: a quarter whose gap straddles a threshold spell (broken and
+marked); a below-coverage quarter (computed and flagged, not dropped); a
+DST-spanning quarter (UTC makes it irrelevant — the test proves that); a
+quarter where every row failed QC (zero coverage); a one-observation quarter
+(null cadence, zero coverage, null variance); observations either side of a
+UTC quarter boundary; two runs producing identical bytes; a year appended
+outside the baseline moving no existing anomaly.

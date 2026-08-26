@@ -1,0 +1,28 @@
+{
+  "_comment": "Quarterly feature configuration per docs/04 s2-s3 and ADR-006. Separate from parameters.json on purpose: that file records what a measurement means -- its canonical unit and the bounds its QC tests need -- while a kelp stress temperature is not a property of temperature at all, it is an ecological threshold about what the analysis does with temperature. policy holds what applies to every series; parameters declares, per controlled parameter, which implemented feature set applies and the thresholds that set needs. Feature column names are derived from these threshold values, so retuning one renames its column rather than silently changing what an existing column means. Thresholds here are provisional and meant to be finalised against the literature (docs/04 s2).",
+  "policy": {
+    "coverage_floor": 0.6,
+    "baseline": {
+      "_comment": "Fixed window, so an anomaly computed today still means the same thing after a backfill. 2007-2019 rather than the 1984-2013 docs/04 s3 first proposed: the NDBC LJAC1 archive begins in 2007, so the older window holds seven usable years against the ten-year minimum and would leave every anomaly null on the project's only long record. Accepted cost, documented rather than mitigated: 2007-2019 contains the 2014-2016 marine heatwave, so the warm-season baseline is raised by the event the analysis most wants to detect. The clean pre-heatwave alternative, 2007-2013, is seven years and too thin to support the word climatology.",
+      "start_year": 2007,
+      "end_year": 2019,
+      "min_years": 10
+    }
+  },
+  "parameters": {
+    "sea_water_temperature": {
+      "feature_set": "temperature",
+      "thresholds": {
+        "days_above": [20.0, 23.0],
+        "max_spell_above": [20.0],
+        "degree_days_above": [18.0],
+        "days_below": [14.0]
+      }
+    },
+    "air_temperature": {"feature_set": "statistics"},
+    "water_level": {"feature_set": "statistics"},
+    "wave_significant_height": {"feature_set": "statistics"},
+    "wave_peak_period": {"feature_set": "statistics"},
+    "wind_speed": {"feature_set": "statistics"}
+  }
+}

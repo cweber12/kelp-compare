@@ -144,3 +144,57 @@ that fall out of sync and need extra tooling.
 B. Easier: doc review = code review; single source of truth. Harder:
 non-technical stakeholders need rendered exports — mitigated by exporting
 PDF/HTML from the same markdown when needed.
+
+---
+
+## ADR-006: Feature configuration — its own registry file, declared per parameter
+
+**Status:** Proposed · **Date:** 2026-08-26
+
+### Context
+The quarterly feature builder needs values that are neither code nor
+data: the kelp stress temperatures, the coverage floor below which a
+quarter is unusable, the fixed climatology baseline window, and which
+feature set applies to which parameter. ADR-004 already established that
+tunable science belongs in a reviewable registry rather than in code.
+The open question was *which* registry.
+
+### Options
+**A — Extend `parameters.json`.** One fewer file, and the QC thresholds
+already live there. But that file's stated charter is what a measurement
+*means* — its canonical SI unit, and the bounds its QC tests need. A kelp
+stress temperature is not a property of temperature; it is an ecological
+decision about what this analysis does with temperature. Mixing them
+would make "what is this parameter" and "what does the analysis do with
+it" one question, which is the same conflation that already keeps the
+parameter registry separate from the site registry.
+**B — Its own registry file, `features.json` (chosen).** Policy that
+applies to every series, plus a per-parameter entry naming an implemented
+feature set and its thresholds. Loaded by a strict parser that refuses
+unknown keys, empty blocks, and unimplemented feature sets.
+**C — Constants in code with command-line overrides.** Puts tunable
+science in the one place ADR-004 exists to keep it out of, and makes a
+retune a code change rather than a reviewable data change.
+**D — Infer the feature set from the parameter's unit.** No configuration
+at all, and wrong: doc 03 already forbids this for parameters, because
+`degC` is equally `sea_water_temperature` and `air_temperature` — and only
+one of them gets kelp stress thresholds.
+
+### Decision & consequences
+B, with two rules that follow from it.
+
+**A parameter declares its feature set; it is never inferred.** A new
+sensor type is a registry entry rather than a code change, and D's mistake
+cannot re-enter by the back door.
+
+**Feature column names are derived from the configured thresholds**
+(`days_above_20c` from `20.0`). Retuning a threshold renames its column
+rather than silently changing what an existing column means — which is
+what makes a registry edit safe to review as data.
+
+Easier: retuning thresholds, the coverage floor or the baseline is a
+reviewable data change, and a `data(registry)` commit that never mixes
+with code. Harder: a third registry file to keep coherent, and a threshold
+change renames columns, so a notebook written against the old name breaks
+loudly rather than reading a redefined column quietly. That is the
+intended trade.

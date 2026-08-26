@@ -20,7 +20,7 @@ document in the same commit.
 | 02 | [Data Source Catalog](02-data-source-catalog.md) | Every external source: access method, format, cadence, units, quirks |
 | 03 | [Data Model](03-data-model.md) | Storage layout, common observation schema, site registry, quarterly feature tables |
 | 04 | [Analysis Methods](04-analysis-methods.md) | QA/QC plan, quarterly feature definitions, statistical methods and their assumptions |
-| 05 | [Architecture Decision Records](05-architecture-decisions.md) | Why DuckDB+Parquet, why no scheduler daemon, why Streamlit, why QARTOD |
+| 05 | [Architecture Decision Records](05-architecture-decisions.md) | Why DuckDB+Parquet, why no scheduler daemon, why Streamlit, why QARTOD, where feature configuration lives |
 | 06 | [Project Sensor Ingest Spec](06-project-sensor-ingest-spec.md) | HOBO export anatomy, vendor adapter pattern, deployment-window policy, ingest validation |
 
 ## One-paragraph summary of the design
@@ -61,7 +61,17 @@ untouched payload, maps five columns to controlled parameters, and writes
 observations that the existing QC stage evaluates with no code of its own —
 the first evidence that the doc 03 schema generalizes past one vendor file.
 
-Not built yet: the climatology and flat-line tests and neighbor validation
+Also built: the quarterly feature builder, `kelpcompare features` (doc 04
+§2–3, ADR-006). It turns a stream of 10-minute and hourly readings into one
+row per QC series per Kelp Watch quarter — the distribution, the ecological
+threshold features, and the coverage bookkeeping that says whether a quarter
+is worth believing — plus the fixed 2007–2019 climatology and the anomalies
+taken against it, both written as a pure function of the observations zone and
+`registry/features.json`. A quarter below the coverage floor is flagged
+unusable rather than dropped, the same discipline QC applies to rows.
+
+Not built yet: the climatology and flat-line QC tests and neighbor validation
 (doc 04 §1 records why each waits), the remaining public-source fetchers
-(doc 02), quarterly features and anomalies (doc 04 §2–3), the comparison table,
-the notebooks, and the dashboard.
+(doc 02), the Kelp Watch half of the features zone and the comparison table
+(blocked on a Kelp Watch fetcher and on analysis polygons that have not been
+drawn), the notebooks, and the dashboard.
