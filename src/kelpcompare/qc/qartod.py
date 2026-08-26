@@ -87,17 +87,26 @@ class QcOutcome:
 def evaluate(frame: pd.DataFrame, parameters: Parameters) -> QcOutcome:
     """Re-derive `qc_flag` and `qc_tests` for every row of a docs/03 frame.
 
-    Returns a new frame in the row order it was given; only the two QC columns
-    differ. Rows are never added, removed, or reordered (CLAUDE.md hard rule 4).
+    Returns a new frame in the row order and under the index it was given --
+    unique or not -- and only the two QC columns differ. Rows are never added,
+    removed, or reordered (CLAUDE.md hard rule 4).
 
     A parameter the registry does not know is left exactly as it was found and
     reported as a warning -- skipping is a gap for a human to close, and guessing
     what an unknown parameter should measure is not available.
     """
     validate_frame(frame)
-    flagged = frame.copy()
-    if flagged.empty:
-        return QcOutcome(frame=flagged)
+    if frame.empty:
+        return QcOutcome(frame=frame.copy())
+
+    # Each series is written back by position rather than by index label. Label
+    # assignment quietly requires a unique index, which docs/03 does not ask for
+    # and a caller who built this frame with `pd.concat` has no reason to have --
+    # duplicate labels select more rows than the verdict vector covers, and the
+    # whole source fails on a pandas message that names neither the index nor
+    # this stage. The index is the caller's, so it goes back on at the end.
+    given_index = frame.index
+    flagged = frame.reset_index(drop=True)
 
     results: list[SeriesResult] = []
     warnings: list[str] = []
@@ -138,7 +147,7 @@ def evaluate(frame: pd.DataFrame, parameters: Parameters) -> QcOutcome:
         )
 
     return QcOutcome(
-        frame=flagged[list(OBSERVATION_COLUMNS)],
+        frame=flagged[list(OBSERVATION_COLUMNS)].set_axis(given_index),
         series=tuple(results),
         warnings=tuple(warnings),
     )

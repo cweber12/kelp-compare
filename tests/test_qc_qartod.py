@@ -307,6 +307,68 @@ def test_a_series_whose_depth_is_null_is_still_tested(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# The index the caller happened to be carrying
+# --------------------------------------------------------------------------
+
+
+def test_a_duplicated_index_is_evaluated_like_a_fresh_one(tmp_path):
+    """`pd.concat` without `ignore_index=True` is the ordinary way to get one."""
+    parameters = registry(tmp_path, qc={"spike": SPIKE})
+    parts = [
+        observations([18.0, 18.0, 24.0, 18.0, 18.0], site="PROJ:ONE"),
+        observations([18.0, 41.0, 18.0, 18.0, 18.0], site="PROJ:TWO"),
+    ]
+    duplicated = pd.concat(parts)
+    assert not duplicated.index.is_unique
+
+    assert flags(evaluate(duplicated, parameters).frame) == flags(
+        evaluate(pd.concat(parts, ignore_index=True), parameters).frame
+    )
+
+
+def test_two_series_that_share_index_labels_are_still_tested_apart(tmp_path):
+    """Sharing a label must not make one site's spike the other's neighbour."""
+    parameters = registry(tmp_path, qc={"spike": SPIKE})
+    frame = pd.concat(
+        [
+            observations([18.0, 18.0, 24.0, 18.0, 18.0], site="PROJ:ONE"),
+            observations([18.0, 18.0, 18.0, 18.0, 18.0], site="PROJ:TWO"),
+        ]
+    )
+    outcome = evaluate(frame, parameters)
+    two = outcome.frame.loc[outcome.frame["site_id"] == "PROJ:TWO"]
+    assert set(two["qc_flag"]) == {FLAG_PASS}
+    assert len(outcome.series) == 2
+
+
+def test_only_the_qc_columns_change_under_a_duplicated_index(tmp_path):
+    """Series of unequal length, so the labels line up on neither side."""
+    parts = [observations([18.0, 41.0]), observations([19.0], site="PROJ:TWO")]
+    frame = pd.concat(parts)
+    outcome = evaluate(frame, registry(tmp_path))
+
+    untouched = [c for c in OBSERVATION_COLUMNS if c not in ("qc_flag", "qc_tests")]
+    pd.testing.assert_frame_equal(outcome.frame[untouched], frame[untouched])
+    assert flags(outcome.frame) == [FLAG_PASS, FLAG_FAIL, FLAG_PASS]
+
+
+@pytest.mark.parametrize(
+    "index",
+    [
+        pytest.param(pd.RangeIndex(3), id="range"),
+        pytest.param(pd.Index([7, 7, 7]), id="duplicated"),
+        pytest.param(pd.Index(["a", "b", "c"]), id="labels"),
+    ],
+)
+def test_the_frame_comes_back_with_the_index_it_was_given(tmp_path, index):
+    """docs/03 says nothing about the index, so it is the caller's to keep."""
+    frame = observations([18.0, 41.0, 18.2]).set_axis(index)
+    outcome = evaluate(frame, registry(tmp_path))
+    assert outcome.frame.index.equals(index)
+    assert flags(outcome.frame) == [FLAG_PASS, FLAG_FAIL, FLAG_PASS]
+
+
+# --------------------------------------------------------------------------
 # Edges
 # --------------------------------------------------------------------------
 
