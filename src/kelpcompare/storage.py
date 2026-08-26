@@ -1,10 +1,16 @@
-"""The three data zones and the observation writer (docs/03).
+"""The three data zones and the writers into them (docs/03).
 
-Every zone path in the project comes from `Zones`, and every write to
-`observations/` goes through `write_observations`. Both take a root, defaulting
-to `data/` under the cwd like `registry.DEFAULT_REGISTRY_PATH`, so tests drive
-the real code against a `tmp_path` instead of a mock -- and never touch the
-append-only raw zone (CLAUDE.md hard rule 1).
+Every zone path in the project comes from `Zones`; every write to
+`observations/` goes through `write_observations` and every write to `features/`
+through `write_features`. All take a root, defaulting to `data/` under the cwd
+like `registry.DEFAULT_REGISTRY_PATH`, so tests drive the real code against a
+`tmp_path` instead of a mock -- and never touch the append-only raw zone
+(CLAUDE.md hard rule 1).
+
+The features writer lives here rather than in `kelpcompare.features` so the
+staging-name-then-rename technique that makes a write atomic has exactly one
+home, and a second zone cannot drift from the first about what "never
+half-written" means.
 
 Two invariants are enforced here rather than trusted:
 
@@ -74,6 +80,12 @@ WINDOW_TEST = "deployment_window"
 #: differently, and not `qc_flag`, which is a judgement about the row.
 OBSERVATION_KEY = ("site_id", "parameter", "timestamp", "depth_m")
 
+#: The docs/03 `features/` tables this project writes, each one file rewritten
+#: wholesale. Not partitioned: docs/03 names single files, the row count is in
+#: the thousands, and a partitioned table could not stay a pure function of its
+#: inputs -- which is what makes `rebuild` mean anything.
+FEATURE_TABLES = ("quarterly_env", "climatology_env")
+
 
 @dataclass(frozen=True)
 class Zones:
@@ -136,6 +148,9 @@ class Zones:
 
     def partition(self, source: str, year: int) -> Path:
         return self.observations / f"source={source}" / f"year={year}"
+
+    def feature_table(self, table: str) -> Path:
+        return self.features / f"{table}.parquet"
 
 
 def validate_frame(frame: pd.DataFrame) -> None:
@@ -238,6 +253,72 @@ def stored_sources(zones: Zones) -> tuple[str, ...]:
             if path.is_dir()
         )
     )
+
+
+def read_features(zones: Zones, table: str) -> pd.DataFrame:
+    """Read one `features/` table back, or an empty frame if it has never been built."""
+    path = zones.feature_table(_known_table(table))
+    return pd.read_parquet(path) if path.exists() else pd.DataFrame()
+
+
+def write_features(
+    frame: pd.DataFrame,
+    zones: Zones,
+    *,
+    table: str,
+    key: tuple[str, ...],
+    replacing: tuple[str, ...],
+) -> Path:
+    """Write one `features/` table, superseding the rows of the named sources.
+
+    `replacing` is the set of sources this run rebuilt, and every existing row
+    belonging to one of them is dropped before the new rows go in. It has no
+    default on purpose: a write that superseded nothing would silently double
+    the table.
+
+    Source-scoped rather than wholesale, because a `--source ndbc` rerun after a
+    single station's backfill must not be silent data loss for every other
+    source. Scoped by *source* rather than merged row by row, because a site
+    later removed from the registry would otherwise keep its feature rows
+    forever -- rebuilding its source is what retires them.
+
+    The retained rows are reindexed onto the incoming frame's columns, so the
+    table's schema always follows the current feature configuration: a threshold
+    retuned since the last run renames its column, and a source not yet rebuilt
+    shows null there rather than the old column lingering beside the new one.
+
+    Written under a staging name and moved into place, exactly as
+    `_write_partition` does and for the same reason: an interrupted run leaves
+    the previous table intact rather than a truncated Parquet that every later
+    read raises on. The staging name deliberately does not match the table's, so
+    a leftover is invisible to a DuckDB query written against the zone.
+    """
+    path = zones.feature_table(_known_table(table))
+    retained = _retained(read_features(zones, table), replacing, frame.columns)
+    merged = pd.concat([retained, frame], ignore_index=True) if len(retained) else frame
+
+    ordered = merged.sort_values(list(key), kind="stable", na_position="last")
+    typed = ordered.reset_index(drop=True).astype(frame.dtypes.to_dict())
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staging = path.parent / f".{path.name}.writing"
+    typed.to_parquet(staging, index=False)
+    staging.replace(path)
+    return path
+
+
+def _retained(stored: pd.DataFrame, replacing: tuple[str, ...], columns) -> pd.DataFrame:
+    if stored.empty or "source" not in stored.columns:
+        return stored
+    return stored.loc[~stored["source"].isin(replacing)].reindex(columns=list(columns))
+
+
+def _known_table(table: str) -> str:
+    if table not in FEATURE_TABLES:
+        raise ValueError(
+            f"{table!r} is not a docs/03 features table; known: {list(FEATURE_TABLES)}"
+        )
+    return table
 
 
 def _write_partition(

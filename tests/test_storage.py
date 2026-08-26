@@ -305,3 +305,143 @@ def test_reading_an_empty_zone_returns_the_documented_columns(tmp_path):
     empty = storage.read_observations(Zones.at(tmp_path))
     assert empty.empty
     assert tuple(empty.columns) == OBSERVATION_COLUMNS
+
+
+# --------------------------------------------------------------------------
+# The features zone (docs/03)
+# --------------------------------------------------------------------------
+
+FEATURE_KEY = ("source", "site_id", "year", "quarter")
+
+
+def features(rows) -> pd.DataFrame:
+    """A minimal feature table: `(source, site_id, year, quarter, mean)` tuples."""
+    return pd.DataFrame(
+        [
+            {"source": s, "site_id": site, "year": y, "quarter": q, "mean": mean}
+            for s, site, y, q, mean in rows
+        ],
+        columns=["source", "site_id", "year", "quarter", "mean"],
+    ).astype({"source": "string", "site_id": "string", "year": "int32", "quarter": "int8"})
+
+
+def write(frame, zones, *, replacing, table="quarterly_env"):
+    return storage.write_features(frame, zones, table=table, key=FEATURE_KEY, replacing=replacing)
+
+
+def test_a_feature_table_is_one_file_in_the_features_zone(tmp_path):
+    zones = Zones.at(tmp_path)
+    path = write(features([("ndbc", "NDBC:LJAC1", 2007, 1, 15.0)]), zones, replacing=("ndbc",))
+    assert path == tmp_path / "features" / "quarterly_env.parquet"
+    assert path.exists()
+
+
+def test_a_written_table_reads_back_with_its_dtypes(tmp_path):
+    zones = Zones.at(tmp_path)
+    frame = features([("ndbc", "NDBC:LJAC1", 2007, 1, 15.0)])
+    write(frame, zones, replacing=("ndbc",))
+    stored = storage.read_features(zones, "quarterly_env")
+    assert stored.dtypes.to_dict() == frame.dtypes.to_dict()
+    assert stored["mean"].tolist() == [15.0]
+
+
+def test_reading_a_table_that_was_never_built_returns_an_empty_frame(tmp_path):
+    assert storage.read_features(Zones.at(tmp_path), "climatology_env").empty
+
+
+def test_a_source_restricted_write_leaves_every_other_sources_rows_intact(tmp_path):
+    """A targeted rerun must not be silent data loss for the sources it skipped."""
+    zones = Zones.at(tmp_path)
+    write(
+        features(
+            [("ndbc", "NDBC:LJAC1", 2007, 1, 15.0), ("project", "PROJ:YELLOW-BUOY", 2026, 3, 21.0)]
+        ),
+        zones,
+        replacing=("ndbc", "project"),
+    )
+
+    write(features([("ndbc", "NDBC:LJAC1", 2007, 1, 99.0)]), zones, replacing=("ndbc",))
+    stored = storage.read_features(zones, "quarterly_env")
+    assert stored.set_index("source")["mean"].to_dict() == {"ndbc": 99.0, "project": 21.0}
+
+
+def test_rebuilding_a_source_retires_the_rows_it_no_longer_produces(tmp_path):
+    """A site removed from the registry must not keep its feature rows forever."""
+    zones = Zones.at(tmp_path)
+    write(
+        features([("ndbc", "NDBC:LJAC1", 2007, 1, 15.0), ("ndbc", "NDBC:GONE", 2007, 1, 9.0)]),
+        zones,
+        replacing=("ndbc",),
+    )
+
+    write(features([("ndbc", "NDBC:LJAC1", 2007, 1, 15.0)]), zones, replacing=("ndbc",))
+    assert storage.read_features(zones, "quarterly_env")["site_id"].tolist() == ["NDBC:LJAC1"]
+
+
+def test_the_table_is_sorted_by_its_key_whatever_order_the_rows_arrive_in(tmp_path):
+    zones = Zones.at(tmp_path)
+    write(
+        features([("ndbc", "NDBC:LJAC1", 2008, 1, 16.0), ("ndbc", "NDBC:LJAC1", 2007, 3, 22.0)]),
+        zones,
+        replacing=("ndbc",),
+    )
+    write(features([("coops", "COOPS:9410230", 2007, 1, 15.0)]), zones, replacing=("coops",))
+
+    stored = storage.read_features(zones, "quarterly_env")
+    assert stored["source"].tolist() == ["coops", "ndbc", "ndbc"]
+    assert stored["year"].tolist() == [2007, 2007, 2008]
+
+
+def test_an_empty_result_writes_an_empty_table_rather_than_no_table(tmp_path):
+    """A source that produced nothing is a fact, and a missing file is not one."""
+    zones = Zones.at(tmp_path)
+    path = write(features([]), zones, replacing=("ndbc",))
+    assert path.exists()
+    assert storage.read_features(zones, "quarterly_env").empty
+
+
+def test_retained_rows_follow_the_current_configurations_columns(tmp_path):
+    """A retuned threshold renames its column; the source not yet rebuilt shows
+    null there rather than the old column lingering beside the new one."""
+    zones = Zones.at(tmp_path)
+    old = features([("project", "PROJ:YELLOW-BUOY", 2026, 3, 21.0)])
+    old["days_above_20c"] = 4.0
+    write(old, zones, replacing=("project",))
+
+    new = features([("ndbc", "NDBC:LJAC1", 2007, 1, 15.0)])
+    new["days_above_21c"] = 0.0
+    write(new, zones, replacing=("ndbc",))
+
+    stored = storage.read_features(zones, "quarterly_env")
+    retuned = stored.set_index("source")["days_above_21c"]
+    assert "days_above_20c" not in stored.columns
+    assert retuned["ndbc"] == 0.0
+    assert pd.isna(retuned["project"])
+
+
+def test_a_table_name_the_data_model_does_not_define_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="not a docs/03 features table"):
+        storage.read_features(Zones.at(tmp_path), "quarterly_vibes")
+
+
+def test_an_interrupted_feature_write_leaves_the_previous_table_intact(tmp_path, monkeypatch):
+    zones = Zones.at(tmp_path)
+    write(features([("ndbc", "NDBC:LJAC1", 2007, 1, 15.0)]), zones, replacing=("ndbc",))
+
+    def die_mid_write(self, path, **kwargs):
+        Path(path).write_bytes(b"half a parquet file")
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", die_mid_write)
+    with pytest.raises(OSError):
+        write(features([("ndbc", "NDBC:LJAC1", 2007, 1, 99.0)]), zones, replacing=("ndbc",))
+    monkeypatch.undo()
+
+    assert storage.read_features(zones, "quarterly_env")["mean"].tolist() == [15.0]
+
+
+def test_a_leftover_staging_file_is_not_the_table(tmp_path):
+    """So a DuckDB query written against the zone cannot pick one up."""
+    zones = Zones.at(tmp_path)
+    write(features([("ndbc", "NDBC:LJAC1", 2007, 1, 15.0)]), zones, replacing=("ndbc",))
+    assert [p.name for p in sorted(zones.features.glob("*.parquet"))] == ["quarterly_env.parquet"]
