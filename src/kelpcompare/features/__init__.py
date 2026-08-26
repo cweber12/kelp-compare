@@ -6,9 +6,18 @@ the Kelp Watch calendar.
 
 `config` reads what to build from the registry; `quarters` owns the UTC calendar
 that decides which quarter an instant belongs to; `quarterly` computes the
-features and the coverage bookkeeping that makes them interpretable.
+features and the coverage bookkeeping that makes them interpretable; and
+`climatology` takes the seasonal cycle back out again, which is what makes a
+kelp-vs-environment correlation a relationship rather than a picture of summer.
 """
 
+from kelpcompare.features.climatology import (
+    CLIMATOLOGY_COLUMNS,
+    CLIMATOLOGY_KEY,
+    build_climatology,
+    quarterly_env_columns,
+    with_anomalies,
+)
 from kelpcompare.features.config import (
     DEFERRED_FEATURE_SETS,
     IMPLEMENTED_FEATURE_SETS,
@@ -31,6 +40,8 @@ from kelpcompare.features.quarterly import (
 
 __all__ = [
     "BOOKKEEPING_COLUMNS",
+    "CLIMATOLOGY_COLUMNS",
+    "CLIMATOLOGY_KEY",
     "DEFERRED_FEATURE_SETS",
     "IMPLEMENTED_FEATURE_SETS",
     "QUARTERLY_KEY",
@@ -40,9 +51,12 @@ __all__ = [
     "ParameterFeatures",
     "QuarterlyOutcome",
     "SeriesQuarters",
+    "build_climatology",
     "build_quarterly",
     "feature_columns",
     "load_feature_config",
     "quarterly_columns",
+    "quarterly_env_columns",
     "threshold_label",
+    "with_anomalies",
 ]
