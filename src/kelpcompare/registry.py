@@ -74,6 +74,11 @@ class Station:
     `COOPS:9410230` are the same hardware under two identifiers -- and the
     docs/04 neighbor validation must never count them as two independent
     references for the same sensor.
+
+    `measured_parameters` records what the station carries an instrument for.
+    It is not derivable from `sensor_depths_m`: a met parameter has no depth and
+    is measured anyway, so an absence there means "no depth published", never
+    "no sensor" (docs/03).
     """
 
     site_id: str
@@ -81,6 +86,7 @@ class Station:
     operator: str
     name: str | None = None
     sensor_depths_m: dict[str, float] = field(default_factory=dict)
+    measured_parameters: tuple[str, ...] = ()
     same_platform_as: tuple[str, ...] = ()
 
     def depth_for(self, parameter: str) -> float | None:
@@ -91,6 +97,27 @@ class Station:
         whose depth the provider has not published. Neither is guessed.
         """
         return self.sensor_depths_m.get(parameter)
+
+    @property
+    def declares_parameters(self) -> bool:
+        """Whether anyone has recorded what this station carries.
+
+        Empty means undeclared, not "measures nothing": a station that measured
+        nothing would not be in the registry as something to fetch. Callers need
+        the distinction, because "we have not checked" and "it does not have one"
+        must not produce the same silence.
+        """
+        return bool(self.measured_parameters)
+
+    def measures(self, parameter: str) -> bool:
+        """Whether this station carries an instrument for one parameter.
+
+        True for everything while the station is undeclared. Fetchers store what
+        they recognise in that case and report the gap -- refusing instead would
+        turn an unrecorded fact into missing data, which is the worse of the two
+        (https://github.com/cweber12/kelp-compare/issues/21).
+        """
+        return parameter in self.measured_parameters if self.declares_parameters else True
 
 
 @dataclass(frozen=True)
@@ -165,12 +192,14 @@ def _normalize_serial(serial: object) -> str:
 def _station(site: dict) -> Station:
     depths = site.get("sensor_depths_m") or {}
     platform = site.get("same_platform_as") or ()
+    measured = site.get("measured_parameters") or ()
     return Station(
         site_id=site.get("site_id", ""),
         station_code=str(site.get("station_code", "")),
         operator=str(site.get("operator", "")),
         name=site.get("name"),
         sensor_depths_m={str(k): float(v) for k, v in depths.items()},
+        measured_parameters=tuple(str(p) for p in measured),
         same_platform_as=tuple(str(s) for s in platform),
     )
 
