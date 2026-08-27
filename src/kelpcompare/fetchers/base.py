@@ -22,6 +22,12 @@ days, so a payload not landed on the day it was retrieved is gone.
 **Fail soft.** A source that is down raises `SourceUnavailable`, which the CLI
 records as a gap in the run manifest and steps over. Any other exception is a
 bug and is allowed to look like one.
+
+**Ask before downloading.** A fetch that is handed the validators a previous run
+recorded sends them as a conditional request, and raises `NotModified` if the
+source says our copy is current -- one round trip and no payload instead of the
+whole file again (docs/02). That is what makes a re-run cheap enough to hand to
+something that retries.
 """
 
 from __future__ import annotations
@@ -32,6 +38,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from kelpcompare.storage import Zones
+
+
+class NotModified(Exception):
+    """The source says our copy is current, and sent no body to prove it.
+
+    Raised by `fetch` when a conditional request comes back `304`. Not an
+    outage and not an error: it is the fetch succeeding at zero cost, and the
+    CLI records the window as `unchanged` and moves on.
+
+    Deliberately not a subclass of `SourceUnavailable`. That exception means a
+    gap in the record and is noted as one; this means the opposite -- the record
+    is complete and up to date -- and conflating them would put a phantom hole
+    in every manifest of every re-run.
+    """
 
 
 class SourceUnavailable(Exception):
@@ -50,6 +70,12 @@ class Payload:
     `body` is bytes rather than text on purpose. Decoding is a parsing decision
     -- the archives are gzipped, and a source that changes encoding should be
     caught by the parser rather than mangled by the fetcher on the way in.
+
+    `etag` and `last_modified` are what the server said this version is called.
+    They are carried on the payload rather than recorded by the fetcher, because
+    the fetcher does not know whether the window went on to ingest -- and a
+    validator recorded before that is a validator that can skip a window whose
+    rows never landed (see `fetchers.cache`).
     """
 
     source: str
@@ -58,6 +84,8 @@ class Payload:
     url: str
     body: bytes
     retrieved_at: datetime
+    etag: str | None = None
+    last_modified: str | None = None
 
     @property
     def digest(self) -> str:
@@ -74,7 +102,16 @@ class Payload:
         return self.body.decode("latin-1")
 
 
-def new_payload(source: str, station: str, label: str, url: str, body: bytes) -> Payload:
+def new_payload(
+    source: str,
+    station: str,
+    label: str,
+    url: str,
+    body: bytes,
+    *,
+    etag: str | None = None,
+    last_modified: str | None = None,
+) -> Payload:
     """A `Payload` stamped with the retrieval time."""
     return Payload(
         source=source,
@@ -83,6 +120,8 @@ def new_payload(source: str, station: str, label: str, url: str, body: bytes) ->
         url=url,
         body=body,
         retrieved_at=datetime.now(UTC),
+        etag=etag,
+        last_modified=last_modified,
     )
 
 

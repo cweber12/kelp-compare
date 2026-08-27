@@ -25,8 +25,11 @@ from kelpcompare.adapters.base import Check
 from kelpcompare.storage import Zones
 
 #: What happened to one input file. `failed` is an unexpected error; a file the
-#: registry gate turned away is `quarantined`, which is the system working.
-Outcome = Literal["ingested", "quarantined", "skipped", "failed"]
+#: registry gate turned away is `quarantined`, which is the system working; and
+#: `unchanged` is a pulled window the source says we already hold, which is the
+#: system working at zero cost. `skipped` is neither of those -- it is an outage
+#: or a file nothing recognised, and it is the only one that also notes a gap.
+Outcome = Literal["ingested", "quarantined", "skipped", "unchanged", "failed"]
 
 _RUN_ID_FORMAT = "%Y%m%dT%H%M%S"
 

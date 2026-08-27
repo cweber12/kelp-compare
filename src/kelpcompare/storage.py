@@ -99,7 +99,7 @@ class Zones:
 
     `quarantine/` is a zone too: docs/06 s5 check 4 has to put a rejected file
     somewhere, and it must not be `raw/`, which is the record of what we chose to
-    trust.
+    trust. `cache/` is not a zone at all in the docs/03 sense -- see below.
     """
 
     root: Path = DEFAULT_ROOT
@@ -131,6 +131,21 @@ class Zones:
     @property
     def manifests(self) -> Path:
         return self.raw / "_manifests"
+
+    @property
+    def cache(self) -> Path:
+        """Scratch that speeds a run up and proves nothing.
+
+        Deliberately not a docs/03 data zone. Nothing derived reads it, deleting
+        it is always safe, and everything in it can be re-earned from the source
+        -- which is exactly why it sits outside `raw/`, whose contents are the
+        record of what the project chose to trust and keep.
+        """
+        return self.root / "cache"
+
+    @property
+    def http_validators(self) -> Path:
+        return self.cache / "http-validators.json"
 
     @property
     def sites_json(self) -> Path:

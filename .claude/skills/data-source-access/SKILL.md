@@ -26,6 +26,20 @@ exist, and only the first should keep its (missing-flagged) rows. A station
 with no declaration is *undeclared*, not empty — store everything recognised
 and warn.
 
+**Ask before downloading.** Where a source supports conditional requests, send
+back the `ETag` / `Last-Modified` a previous run recorded and treat `304` as
+`NotModified` -- one round trip, no payload, window recorded as `unchanged`
+rather than `skipped` (which means a gap). Three rules keep it safe: a stale
+validator still gets the whole file, so this can never mask an upstream
+revision; the validator is recorded only *after* the rows are written, so it
+means "fully ingested at this version" rather than "bytes landed"; and the
+tokens live in `data/cache/`, a cache and not a record, where losing them costs
+one re-download. Verified on NDBC: 933,320 bytes and 1.61 s becomes 0 bytes and
+0.27 s.
+
+**Say who is asking.** `User-Agent: kelpcompare/{version} (+{contact})`, contact
+from `KELPCOMPARE_CONTACT`, never committed -- the repo is public.
+
 ## NDBC
 
 - Realtime (last ~45 days): `https://www.ndbc.noaa.gov/data/realtime2/{STATION}.txt`

@@ -18,7 +18,7 @@ from click.testing import CliRunner
 
 from kelpcompare.cli import main
 from kelpcompare.fetchers import ndbc
-from kelpcompare.fetchers.base import SourceUnavailable, new_payload
+from kelpcompare.fetchers.base import NotModified, SourceUnavailable, new_payload
 from kelpcompare.storage import Zones, read_observations
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +42,7 @@ def offline(monkeypatch):
     """Serve the recorded payloads in place of the network, and record the asks."""
     asked: list[tuple[str, int | None]] = []
 
-    def realtime(station, *, session=None):
+    def realtime(station, *, session=None, validators=None):
         asked.append((station, None))
         return new_payload(
             "ndbc",
@@ -52,7 +52,7 @@ def offline(monkeypatch):
             REALTIME.read_bytes(),
         )
 
-    def archive(station, year, *, session=None):
+    def archive(station, year, *, session=None, validators=None):
         asked.append((station, year))
         return new_payload(
             "ndbc",
@@ -250,7 +250,7 @@ def test_the_manifest_carries_the_flag_histogram(data_root, offline):
 def test_an_outage_is_a_gap_and_does_not_fail_the_run(data_root, monkeypatch):
     """docs/01 §5: a missing NDBC year must never block the rest of a run."""
 
-    def down(station, year, *, session=None):
+    def down(station, year, *, session=None, validators=None):
         raise SourceUnavailable(f"https://example.invalid/{year}: HTTP 503")
 
     monkeypatch.setattr(ndbc, "fetch_archive", down)
@@ -267,7 +267,7 @@ def test_an_outage_is_a_gap_and_does_not_fail_the_run(data_root, monkeypatch):
 def test_a_payload_that_arrives_and_will_not_parse_fails_the_run(data_root, monkeypatch):
     """A format change is not an outage; it needs a human, so it sets the code."""
 
-    def garbage(station, year, *, session=None):
+    def garbage(station, year, *, session=None, validators=None):
         return new_payload("ndbc", station, "x.txt.gz", "file://x", b"not an NDBC file\n")
 
     monkeypatch.setattr(ndbc, "fetch_archive", garbage)
@@ -283,7 +283,7 @@ def test_a_payload_that_arrives_and_will_not_parse_fails_the_run(data_root, monk
 def test_a_payload_that_will_not_parse_is_still_landed(data_root, monkeypatch):
     """Landed before parsed: realtime holds ~45 days, so today's bytes are it."""
 
-    def garbage(station, *, session=None):
+    def garbage(station, *, session=None, validators=None):
         return new_payload("ndbc", station, "LJAC1.txt", "file://x", b"not an NDBC file\n")
 
     monkeypatch.setattr(ndbc, "fetch_realtime", garbage)
@@ -339,3 +339,180 @@ def test_year_is_refused_for_a_file_drop_source(data_root):
 
     assert result.exit_code != 0
     assert "do not apply" in str(result.exception)
+
+
+# --------------------------------------------------------------------------
+# A re-run asks instead of downloading
+# --------------------------------------------------------------------------
+
+
+def conditional(monkeypatch, *, etag: str = '"v1"', unchanged_for: str | None = None):
+    """Serve the recorded archive, honouring a conditional request.
+
+    `unchanged_for` is the validator the fake server considers current; a
+    request carrying it gets `NotModified`, anything else gets the file. That is
+    the whole of what NDBC does, and it is the only way to exercise it offline.
+    """
+    asked: list[dict | None] = []
+
+    def archive(station, year, *, session=None, validators=None):
+        asked.append(dict(validators) if validators is not None else None)
+        if unchanged_for is not None and (validators or {}).get("etag") == unchanged_for:
+            raise NotModified(f"file://{year}: HTTP 304")
+        return new_payload(
+            "ndbc",
+            station.upper(),
+            f"{station.lower()}h{year}.txt.gz",
+            f"https://example.invalid/{station.lower()}h{year}.txt.gz",
+            gzip.compress(ARCHIVE.read_bytes(), mtime=0),
+            etag=etag,
+            last_modified="Tue, 16 Feb 2016 16:31:39 GMT",
+        )
+
+    monkeypatch.setattr(ndbc, "fetch_archive", archive)
+    return asked
+
+
+def latest_manifest(data_root: Path) -> dict:
+    """The most recent run's manifest, for cases that run the command twice.
+
+    `manifest` insists on exactly one, which is the right assertion for a
+    single-run test and the wrong one here -- run ids sort chronologically by
+    construction, so the last is the newest.
+    """
+    files = sorted((data_root / "raw" / "_manifests").glob("*.json"))
+    return json.loads(files[-1].read_text())
+
+
+def validators(data_root: Path) -> dict:
+    path = data_root / "cache" / "http-validators.json"
+    return json.loads(path.read_text())["urls"] if path.exists() else {}
+
+
+def test_a_successful_ingest_records_what_the_server_called_this_version(data_root, monkeypatch):
+    conditional(monkeypatch)
+    run(data_root, "--year", "2023")
+
+    (entry,) = validators(data_root).values()
+    assert entry["etag"] == '"v1"'
+    assert entry["last_modified"] == "Tue, 16 Feb 2016 16:31:39 GMT"
+
+
+def test_the_second_run_asks_conditionally_and_is_told_nothing_changed(data_root, monkeypatch):
+    asked = conditional(monkeypatch, unchanged_for='"v1"')
+
+    run(data_root, "--year", "2023")
+    result = run(data_root, "--year", "2023")
+
+    assert asked == [{}, {"etag": '"v1"', "last_modified": "Tue, 16 Feb 2016 16:31:39 GMT"}]
+    assert result.exit_code == 0
+    assert latest_manifest(data_root)["files"][0]["outcome"] == "unchanged"
+    assert "unchanged" in result.output
+
+
+def test_an_unchanged_window_writes_no_landing_and_no_rows(data_root, monkeypatch):
+    """The bytes are already in raw/ and the rows are already in the zone, so
+    there is nothing left to do. Re-parsing landed bytes is `rebuild`'s job."""
+    conditional(monkeypatch, unchanged_for='"v1"')
+    run(data_root, "--year", "2023")
+    before = len(read_observations(Zones.at(data_root), "ndbc"))
+    landed = sorted(p.name for p in (data_root / "raw" / "ndbc" / "LJAC1").iterdir())
+
+    run(data_root, "--year", "2023")
+
+    assert len(read_observations(Zones.at(data_root), "ndbc")) == before
+    assert sorted(p.name for p in (data_root / "raw" / "ndbc" / "LJAC1").iterdir()) == landed
+
+
+def test_an_unchanged_window_is_not_a_gap(data_root, monkeypatch):
+    """`skipped` means a hole in the record and notes one; this means the record
+    is complete. A phantom gap on every re-run would make the field useless."""
+    conditional(monkeypatch, unchanged_for='"v1"')
+    run(data_root, "--year", "2023")
+    run(data_root, "--year", "2023")
+
+    payload = latest_manifest(data_root)
+    assert payload["gaps"] == []
+    assert payload["counts"] == {"unchanged": 1}
+
+
+def test_a_revised_file_upstream_is_still_picked_up(data_root, monkeypatch):
+    """The property that makes this safe. NDBC does re-issue an archive year
+    after QC, and a mechanism that could mask that would be worse than the
+    download it saves."""
+    conditional(monkeypatch, unchanged_for='"v1"')
+    run(data_root, "--year", "2023")
+
+    # The server now calls it something else -- our held validator is stale.
+    conditional(monkeypatch, etag='"v2"', unchanged_for='"v2"')
+    result = run(data_root, "--year", "2023")
+
+    assert latest_manifest(data_root)["files"][0]["outcome"] == "ingested"
+    assert result.exit_code == 0
+    assert next(iter(validators(data_root).values()))["etag"] == '"v2"'
+
+
+def test_a_window_whose_rows_never_landed_is_fetched_again(data_root, monkeypatch):
+    """The rule the whole mechanism rests on: a validator means "fully ingested
+    at this version". Recorded any earlier -- at the landing, say -- the next run
+    would step straight past a window whose rows never made it out of the parser.
+    """
+    conditional(monkeypatch)
+
+    def explode(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("kelpcompare.cli.write_observations", explode)
+    failed = run(data_root, "--year", "2023")
+
+    assert failed.exit_code == 1
+    assert validators(data_root) == {}  # nothing was remembered
+    assert (data_root / "raw" / "ndbc" / "LJAC1").exists()  # ...though it did land
+
+    monkeypatch.undo()
+    asked = conditional(monkeypatch, unchanged_for='"v1"')
+    recovered = run(data_root, "--year", "2023")
+
+    assert asked == [{}]  # asked unconditionally, because nothing was known
+    assert recovered.exit_code == 0
+    assert len(read_observations(Zones.at(data_root), "ndbc")) == 400 * 3
+
+
+def test_a_dry_run_remembers_nothing(data_root, monkeypatch):
+    """It wrote no rows, so it has no right to claim the window is ingested."""
+    conditional(monkeypatch)
+    run(data_root, "--year", "2023", "--dry-run")
+
+    assert validators(data_root) == {}
+
+
+def test_a_source_that_offers_no_validator_is_simply_fetched_every_time(data_root, offline):
+    """The recorded-payload fixture sends neither header, which is how a source
+    without them behaves: no entry, no condition, no harm."""
+    run(data_root, "--year", "2023")
+    run(data_root, "--year", "2023")
+
+    assert validators(data_root) == {}
+    assert offline == [("LJAC1", 2023), ("LJAC1", 2023)]
+
+
+def test_the_whole_run_shares_one_session(data_root, monkeypatch):
+    """A nineteen-year backfill should open one connection, not nineteen."""
+    seen: list[object] = []
+
+    def archive(station, year, *, session=None, validators=None):
+        seen.append(session)
+        return new_payload(
+            "ndbc",
+            station.upper(),
+            f"{station.lower()}h{year}.txt.gz",
+            f"https://example.invalid/{year}",
+            gzip.compress(ARCHIVE.read_bytes(), mtime=0),
+        )
+
+    monkeypatch.setattr(ndbc, "fetch_archive", archive)
+    run(data_root, "--year", "2023", "--year", "2024", "--year", "2025")
+
+    assert len(seen) == 3
+    assert all(s is seen[0] for s in seen)
+    assert seen[0] is not None

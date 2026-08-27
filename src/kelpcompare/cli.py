@@ -34,8 +34,8 @@ from kelpcompare.features.kelp import (
     build_kelp,
 )
 from kelpcompare.features.quarterly import QUARTERLY_KEY, feature_columns
-from kelpcompare.fetchers import kelpwatch, ndbc
-from kelpcompare.fetchers.base import SourceUnavailable, land
+from kelpcompare.fetchers import cache, kelpwatch, ndbc
+from kelpcompare.fetchers.base import NotModified, SourceUnavailable, land
 from kelpcompare.manifest import RunManifest
 from kelpcompare.normalize import to_observations
 from kelpcompare.parameters import load_parameters
@@ -874,6 +874,11 @@ def _ingest_pulled(
         )
 
     run = RunManifest.start("ingest", argv=_pulled_argv(source, stations, years), sources=[source])
+    # One session for the whole run rather than one per window: a nineteen-year
+    # backfill would otherwise open nineteen TLS connections to say the same
+    # thing. Built here rather than in the fetcher so the tests keep driving the
+    # same seam they already do.
+    session = _session()
     for site in wanted:
         for window in years or (None,):
             _ingest_window(
@@ -884,6 +889,7 @@ def _ingest_pulled(
                 run=run,
                 source=source,
                 fetcher=fetcher,
+                session=session,
                 dry_run=dry_run,
             )
 
@@ -899,26 +905,49 @@ def _ingest_window(
     run: RunManifest,
     source: str,
     fetcher,
+    session=None,
     dry_run: bool,
 ) -> None:
     """One station, one window. Never raises (docs/02 fail-soft rule).
 
-    Two failures, told apart deliberately. A source that did not answer is
-    `skipped` and recorded as a manifest gap -- docs/01 s5 requires a missing
-    NDBC month not to block the rest of a run, so it does not set the exit code.
-    Anything else is `failed`, which does: a payload that arrived and could not
-    be parsed is a bug or a format change, and both need a human.
+    Three outcomes besides success, told apart deliberately. A source that did
+    not answer is `skipped` and recorded as a manifest gap -- docs/01 s5 requires
+    a missing NDBC month not to block the rest of a run, so it does not set the
+    exit code. A source that says we already hold this version is `unchanged`,
+    which is not a gap and not a failure: the bytes are in `raw/` and the rows
+    are in `observations/`, so there is nothing left to do. Anything else is
+    `failed`, which does set the code: a payload that arrived and could not be
+    parsed is a bug or a format change, and both need a human.
+
+    Re-parsing landed bytes after a parser or registry change is `rebuild`'s job,
+    not this one's -- which is what makes skipping an unchanged window correct
+    rather than merely cheap.
     """
     label = f"{site.station_code} {year if year is not None else 'realtime'}"
     entry = run.add_file(label, "failed", fetcher=getattr(fetcher, "FETCHER_NAME", source))
     entry.site_id = site.site_id
 
+    url = (
+        fetcher.archive_url(site.station_code, year)
+        if year is not None
+        else fetcher.realtime_url(site.station_code)
+    )
+    entry.path = url
+
     try:
+        # What a previous run recorded about this URL, if anything. Looked up
+        # here rather than inside the fetcher, which docs/02 restricts to its own
+        # raw zone and which has no other use for storage.
+        validators = cache.validators_for(zones, url)
         payload = (
-            fetcher.fetch_archive(site.station_code, year)
+            fetcher.fetch_archive(site.station_code, year, session=session, validators=validators)
             if year is not None
-            else fetcher.fetch_realtime(site.station_code)
+            else fetcher.fetch_realtime(site.station_code, session=session, validators=validators)
         )
+    except NotModified:
+        entry.outcome = "unchanged"
+        entry.reason = "the source says this version is already ingested"
+        return
     except SourceUnavailable as outage:
         entry.outcome = "skipped"
         entry.reason = str(outage)
@@ -929,8 +958,6 @@ def _ingest_window(
         entry.reason = f"{type(error).__name__}: {error}"
         run.note_warning(f"{label}: {entry.reason}")
         return
-
-    entry.path = payload.url
     try:
         # Landed before parsing, always: NDBC realtime holds roughly 45 days, so
         # a payload not written down today cannot be fetched again tomorrow
@@ -959,10 +986,31 @@ def _ingest_window(
             entry.partitions = [str(p) for p in written]
         entry.outcome = "ingested"
 
+        # Last, and only on success. The stored validator means "this URL was
+        # fully ingested at this version", so recording it any earlier -- at the
+        # landing, say -- would let the next run step past a window whose rows
+        # never made it out of the parser.
+        if not dry_run:
+            cache.remember(zones, url, etag=payload.etag, last_modified=payload.last_modified)
+
     except Exception as error:  # noqa: BLE001 -- one window must not end the run
         entry.outcome = "failed"
         entry.reason = f"{type(error).__name__}: {error}"
         run.note_warning(f"{label}: {entry.reason}")
+
+
+def _session():
+    """One `requests.Session` for a run, or None if requests is not installed.
+
+    None is what every fetcher already treats as "make your own", so a missing
+    import costs a connection per window rather than the run -- and the offline
+    tests, which pass their own fake, never reach this.
+    """
+    try:
+        import requests
+    except ImportError:  # pragma: no cover -- requests is a declared dependency
+        return None
+    return requests.Session()
 
 
 def _select_stations(declared: tuple[Station, ...], requested: tuple[str, ...]) -> list[Station]:

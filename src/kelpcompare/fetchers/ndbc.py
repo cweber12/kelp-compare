@@ -25,6 +25,13 @@ temperature becomes a 999 °C measurement -- inside no valid range, so QC would
 catch it, but it would be counted as an observation all the way there. They
 become null here, at the boundary, which is what docs/02 requires.
 
+**A re-run asks instead of downloading.** Both endpoints serve `ETag` and
+`Last-Modified` and honour conditional requests, so a fetch handed the validators
+a previous run recorded raises `NotModified` on a `304` -- one round trip and no
+payload rather than the file again. For a completed archive year that is every
+run after the first. A *stale* validator still gets the whole file, so this
+cannot mask an upstream revision, which NDBC does occasionally issue.
+
 **No deployment record is involved.** Public stations do not go through
 `normalize.to_observations`: there is no vendor series name to map, no local
 timezone to resolve (NDBC timestamps are UTC), and no in-water window to judge,
@@ -38,12 +45,14 @@ from __future__ import annotations
 
 import gzip
 import io
+import os
 import time
 from dataclasses import dataclass, field
 
 import pandas as pd
 
-from kelpcompare.fetchers.base import Payload, SourceUnavailable, new_payload
+from kelpcompare import __version__
+from kelpcompare.fetchers.base import NotModified, Payload, SourceUnavailable, new_payload
 from kelpcompare.normalize import convert_unit
 from kelpcompare.parameters import Parameters
 from kelpcompare.storage import FLAG_MISSING, FLAG_NOT_EVALUATED, OBSERVATION_COLUMNS
@@ -65,6 +74,17 @@ TIME_COLUMNS = ("YY", "MM", "DD", "hh", "mm")
 
 #: Seconds to wait before the single retry docs/02 asks for.
 RETRY_DELAY_SECONDS = 2.0
+
+#: Who is asking. NDBC's robots.txt publishes a webmaster address, which is to
+#: say they expect to be able to reach whoever is pulling; `python-requests/2.x`
+#: gives them nobody to reach and is what gets throttled. The contact comes from
+#: the environment rather than from this file on purpose -- the repository is
+#: public, and an address committed to it is an address that has been published.
+USER_AGENT_TEMPLATE = "kelpcompare/{version} (+{contact})"
+ANONYMOUS_USER_AGENT = "kelpcompare/{version}"
+
+#: The environment variable holding a contact for the User-Agent.
+CONTACT_ENV = "KELPCOMPARE_CONTACT"
 
 #: Statuses worth asking a second time. A 404 is an answer -- the station
 #: never published that year -- and 4xx generally will not change on a retry.
@@ -129,22 +149,71 @@ class ParsedPayload:
         return {str(flag): int(n) for flag, n in sorted(counts.items())}
 
 
-def fetch_realtime(station: str, *, session=None) -> Payload:
+def realtime_url(station: str) -> str:
+    """Where the realtime feed for one station lives.
+
+    Public so the caller can look up what it already knows about this URL before
+    asking for it. The alternative -- letting the fetcher read the validator
+    cache itself -- would have it writing outside its own raw zone, which docs/02
+    forbids, and would make every fetcher carry storage knowledge it has no other
+    use for.
+    """
+    return REALTIME_URL.format(station=station.upper())
+
+
+def archive_url(station: str, year: int) -> str:
+    """Where one calendar year of standard meteorological data lives."""
+    return ARCHIVE_URL.format(station_lower=station.lower(), year=year)
+
+
+def user_agent(contact: str | None = None) -> str:
+    """How this project identifies itself to NOAA.
+
+    Falls back to a version-only string when no contact is set, rather than
+    refusing: an anonymous but identifiable client is better than a run that
+    will not start, and better than `python-requests`.
+    """
+    resolved = contact if contact is not None else os.environ.get(CONTACT_ENV, "").strip()
+    template = USER_AGENT_TEMPLATE if resolved else ANONYMOUS_USER_AGENT
+    return template.format(version=__version__, contact=resolved)
+
+
+def fetch_realtime(
+    station: str, *, session=None, validators: dict[str, str] | None = None
+) -> Payload:
     """The rolling realtime file for one station (~45 days)."""
-    url = REALTIME_URL.format(station=station.upper())
-    return new_payload(SOURCE, station.upper(), f"{station.upper()}.txt", url, _get(url, session))
+    url = realtime_url(station)
+    body, etag, last_modified = _get(url, session, validators)
+    return new_payload(
+        SOURCE,
+        station.upper(),
+        f"{station.upper()}.txt",
+        url,
+        body,
+        etag=etag,
+        last_modified=last_modified,
+    )
 
 
-def fetch_archive(station: str, year: int, *, session=None) -> Payload:
+def fetch_archive(
+    station: str, year: int, *, session=None, validators: dict[str, str] | None = None
+) -> Payload:
     """One calendar year of standard meteorological data, gzipped.
 
     A year the station did not report is an ordinary hole in a public record --
     stations are installed, retired, and go down for repair -- so a 404 is
     `SourceUnavailable`, recorded as a gap and stepped over (docs/01 §5).
+
+    `validators` are what a previous run recorded about this URL. Given them,
+    this asks conditionally and raises `NotModified` if the file has not changed
+    -- which for a completed archive year is every run after the first.
     """
     label = f"{station.lower()}h{year}.txt.gz"
-    url = ARCHIVE_URL.format(station_lower=station.lower(), year=year)
-    return new_payload(SOURCE, station.upper(), label, url, _get(url, session))
+    url = archive_url(station, year)
+    body, etag, last_modified = _get(url, session, validators)
+    return new_payload(
+        SOURCE, station.upper(), label, url, body, etag=etag, last_modified=last_modified
+    )
 
 
 def parse(
@@ -283,13 +352,16 @@ def _declaration_warnings(
     )
 
 
-def _get(url: str, session) -> bytes:
-    """Retrieve one URL, turning every upstream failure into `SourceUnavailable`.
+def _get(
+    url: str, session, validators: dict[str, str] | None = None
+) -> tuple[bytes, str | None, str | None]:
+    """Retrieve one URL, with what the server called this version of it.
 
-    Retries once, after a pause, then gives up and lets the run record a gap --
-    the "retry politely" of docs/02. Once rather than a backoff ladder: this is
-    a hand-run pipeline against a free public service, and the difference between
-    one retry and five is borne entirely by NOAA.
+    Every upstream failure becomes `SourceUnavailable`; a `304` becomes
+    `NotModified`. Retries once, after a pause, then gives up and lets the run
+    record a gap -- the "retry politely" of docs/02. Once rather than a backoff
+    ladder: this is a hand-run pipeline against a free public service, and the
+    difference between one retry and five is borne entirely by NOAA.
 
     Imported lazily so the parser -- the half that tests exercise -- does not
     need `requests` on the import path at all.
@@ -299,12 +371,13 @@ def _get(url: str, session) -> bytes:
 
         session = requests.Session()
 
+    headers = _headers(validators)
     last: str = ""
     for attempt in range(2):
         if attempt:
             time.sleep(RETRY_DELAY_SECONDS)
         try:
-            response = session.get(url, timeout=60)
+            response = session.get(url, timeout=60, headers=headers)
         # Every transport failure -- DNS, timeout, refused, malformed TLS -- is
         # one thing here: the source did not answer. Recorded and retried once,
         # then re-raised as SourceUnavailable below; never swallowed.
@@ -314,7 +387,13 @@ def _get(url: str, session) -> bytes:
 
         status = getattr(response, "status_code", None)
         if status == 200:
-            return response.content
+            served = getattr(response, "headers", None) or {}
+            return response.content, _header(served, "ETag"), _header(served, "Last-Modified")
+
+        # Our copy is current and the server sent no body to prove it. Not an
+        # outage -- the opposite -- so it does not retry and does not become a gap.
+        if status == 304:
+            raise NotModified(f"{url}: HTTP 304")
 
         last = f"HTTP {status}"
         # A 404 is an answer, not an outage: the station never published this
@@ -324,6 +403,31 @@ def _get(url: str, session) -> bytes:
             break
 
     raise SourceUnavailable(f"{url}: {last}")
+
+
+def _headers(validators: dict[str, str] | None) -> dict[str, str]:
+    """What to send: who we are, and what we already hold.
+
+    Both validators go when both are known. `If-None-Match` is the exact one --
+    an opaque token the server compares byte for byte -- and takes precedence at
+    the server when both are present; `If-Modified-Since` is second-granularity
+    and is the fallback for a server that has stopped sending ETags.
+    """
+    headers = {"User-Agent": user_agent()}
+    known = validators or {}
+    if known.get("etag"):
+        headers["If-None-Match"] = known["etag"]
+    if known.get("last_modified"):
+        headers["If-Modified-Since"] = known["last_modified"]
+    return headers
+
+
+def _header(headers, name: str) -> str | None:
+    """One response header, or None. Case-insensitive, since HTTP is."""
+    for key, value in dict(headers).items():
+        if str(key).lower() == name.lower():
+            return str(value)
+    return None
 
 
 def _text(payload: Payload) -> str:

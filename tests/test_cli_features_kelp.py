@@ -52,7 +52,7 @@ def with_environment(monkeypatch):
     suite does. The comparison needs an environmental half to join onto."""
     archive = (NDBC_FIX / "ljac1h2023_excerpt.txt").read_bytes()
 
-    def fetch_archive(station, year, *, session=None):
+    def fetch_archive(station, year, *, session=None, validators=None):
         return new_payload(
             "ndbc",
             station.upper(),
