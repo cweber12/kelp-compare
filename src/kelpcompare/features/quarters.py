@@ -45,6 +45,19 @@ def quarter_seconds(year: int, quarter: int) -> float:
     return (end - start).total_seconds()
 
 
+def shift_quarters(year: int, quarter: int, by: int) -> tuple[int, int]:
+    """The quarter `by` quarters away, crossing year boundaries.
+
+    Negative goes back, which is the direction the comparison table needs: the
+    environment at `t - lag` against kelp at `t` (docs/04 s4.1). Arithmetic on a
+    running quarter index rather than on the calendar, so 2007Q1 shifted back
+    one is 2006Q4 and not a Q0 nobody has.
+    """
+    _require_quarter(quarter)
+    index = int(year) * len(QUARTERS) + (int(quarter) - 1) + int(by)
+    return divmod(index, len(QUARTERS))[0], divmod(index, len(QUARTERS))[1] + 1
+
+
 def quarter_label(year: int, quarter: int) -> str:
     """`2007Q1` -- the compact form the run manifest reports."""
     _require_quarter(quarter)

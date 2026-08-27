@@ -113,17 +113,25 @@ class SeriesEntry:
     quarter counts are what make coverage attrition readable without opening the
     Parquet -- how many quarters a series produced, and how many survived the
     coverage floor.
+
+    A kelp series is a polygon rather than a site and has no parameter or depth,
+    so it fills `polygon_id` and leaves those empty -- the same alternative
+    `FileEntry` draws between a site and a polygon. `quarters_observed` is the
+    kelp half's: a bed can be fully observed and mostly unusable, or the
+    reverse, and one number cannot say which.
     """
 
     source: str
-    site_id: str
-    parameter: str
-    depth_m: float | None
-    rows: int
+    site_id: str | None = None
+    polygon_id: str | None = None
+    parameter: str | None = None
+    depth_m: float | None = None
+    rows: int = 0
     tests: list[str] = field(default_factory=list)
     qc_flags: dict[str, int] = field(default_factory=dict)
     quarters: int | None = None
     quarters_usable: int | None = None
+    quarters_observed: int | None = None
     first_quarter: str | None = None
     last_quarter: str | None = None
 

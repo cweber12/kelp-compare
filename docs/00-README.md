@@ -96,16 +96,41 @@ canopy measurements — in winter, where the gaps are, and worst in marginal bed
 where zero is the normal reading. Across the six San Diego county beds exported,
 that is 44 fabricated zeros avoided against 329 real ones kept.
 
+Also built: the kelp half of the features zone and the comparison table
+(doc 03, doc 04 §2–4). `kelpcompare features` now writes five tables:
+`quarterly_kelp.parquet` — one row per polygon per quarter, with the coverage
+bookkeeping that says whether to believe it — `climatology_kelp.parquet`, and
+`comparison.parquet`, the join of kelp at quarter *t* against every
+environmental feature anomaly at *t−lag* for lags 0–4. The environment leads and
+kelp responds; the lagged quarter is written on every row so the direction is
+checkable rather than assumed.
+
+**This is the first table in the project with real anomalies in it.** The Kelp
+Watch record runs 1984–2026, so every polygon clears the ten-year minimum with
+all thirteen baseline years contributing, while no environmental series yet
+spans the window at all. It is therefore also the first exercise of the shared
+climatology against a series long enough to have one.
+
+On the six exported San Diego county beds: 1,020 polygon-quarters, 961 usable,
+44 carrying null for a cloud gap, 976 anomalies computed, and 15,300 comparison
+rows.
+
 Not built yet: the climatology and flat-line QC tests and neighbor validation
 (doc 04 §1 records why each waits), the remaining public-source fetchers
-(doc 02), `quarterly_kelp.parquet` and `comparison.parquet` — the kelp half of
-the features zone, which reads the landings this ingest produces — the
-notebooks, and the dashboard.
+(doc 02), `kelpcompare rebuild`, the notebooks, and the dashboard. The analysis
+ladder (doc 04 §4) can now start: the lag screen is a query against
+`comparison.parquet` rather than a script.
+
+Not yet possible: doc 04 §4.5's spatial signal test, the project's key question.
+It needs polygon geometry, which `polygons.geojson` records as null for all six
+beds — they are Kelp Watch's own named bed selections and their outlines have
+not been recorded here — and it needs the yellow buoy's position, which
+`sites.json` records as unverified.
 
 Deferred rather than abandoned: fetching the published SBC LTER data package
 directly. It carries giant and bull kelp separately plus biomass, at per-pixel
 resolution, and could be refreshed by `rebuild` without a human in the loop —
-none of which the UI export offers. It needs an EDI account
-(issue #25). When one arrives it becomes a second route to the same product
-rather than a replacement: the schema, the polygon registry and the shared
-climatology do not care which route the numbers took.
+none of which the UI export offers. It needs an EDI account (issue #25). When
+one arrives it becomes a second route to the same product rather than a
+replacement: the schema, the polygon registry and the shared climatology do not
+care which route the numbers took.

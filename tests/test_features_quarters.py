@@ -12,11 +12,13 @@ import pandas as pd
 import pytest
 
 from kelpcompare.features.quarters import (
+    QUARTERS,
     is_complete,
     quarter_bounds,
     quarter_label,
     quarter_of,
     quarter_seconds,
+    shift_quarters,
     year_of,
 )
 
@@ -141,3 +143,38 @@ def test_the_quarter_a_run_happens_in_is_not_complete():
 def test_completeness_needs_a_timezone_aware_run_timestamp():
     with pytest.raises(ValueError, match="timezone-aware UTC"):
         is_complete(2007, 1, pd.Timestamp("2007-04-01"))
+
+
+# --------------------------------------------------------------------------
+# Shifting, for the comparison table's lags
+# --------------------------------------------------------------------------
+
+
+def test_shifting_back_crosses_the_year_boundary_rather_than_inventing_a_quarter_zero():
+    assert shift_quarters(2020, 1, -1) == (2019, 4)
+    assert shift_quarters(2020, 1, -4) == (2019, 1)
+    assert shift_quarters(2020, 1, -5) == (2018, 4)
+
+
+def test_shifting_by_nothing_is_the_quarter_itself():
+    for quarter in QUARTERS:
+        assert shift_quarters(2020, quarter, 0) == (2020, quarter)
+
+
+def test_shifting_forward_works_too_even_though_lags_only_go_back():
+    assert shift_quarters(2020, 4, 1) == (2021, 1)
+
+
+def test_shifting_is_reversible():
+    """The property the lag join depends on: t, shifted back and forward again,
+    is t -- so a recorded `env_quarter` can be checked by hand."""
+    for year in (1984, 2007, 2026):
+        for quarter in QUARTERS:
+            for lag in range(5):
+                back = shift_quarters(year, quarter, -lag)
+                assert shift_quarters(*back, lag) == (year, quarter)
+
+
+def test_a_quarter_outside_the_calendar_is_refused():
+    with pytest.raises(ValueError):
+        shift_quarters(2020, 5, -1)

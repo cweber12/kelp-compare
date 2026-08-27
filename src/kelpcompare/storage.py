@@ -84,7 +84,13 @@ OBSERVATION_KEY = ("site_id", "parameter", "timestamp", "depth_m")
 #: wholesale. Not partitioned: docs/03 names single files, the row count is in
 #: the thousands, and a partitioned table could not stay a pure function of its
 #: inputs -- which is what makes `rebuild` mean anything.
-FEATURE_TABLES = ("quarterly_env", "climatology_env")
+FEATURE_TABLES = (
+    "quarterly_env",
+    "climatology_env",
+    "quarterly_kelp",
+    "climatology_kelp",
+    "comparison",
+)
 
 
 @dataclass(frozen=True)
@@ -278,7 +284,9 @@ def write_features(
     `replacing` is the set of sources this run rebuilt, and every existing row
     belonging to one of them is dropped before the new rows go in. It has no
     default on purpose: a write that superseded nothing would silently double
-    the table.
+    the table -- and a table with no `source` column to scope by is refused here
+    for exactly that reason, rather than being allowed to grow by one build's
+    worth of rows every run.
 
     Source-scoped rather than wholesale, because a `--source ndbc` rerun after a
     single station's backfill must not be silent data loss for every other
@@ -298,17 +306,53 @@ def write_features(
     a leftover is invisible to a DuckDB query written against the zone.
     """
     path = zones.feature_table(_known_table(table))
+    if replacing and "source" not in frame.columns:
+        raise ValueError(
+            f"{table!r} has no `source` column, so a write scoped to {list(replacing)} cannot "
+            "supersede anything -- it would keep every existing row and add the new ones on "
+            "top, doubling the table on every run. Either carry `source` on the table or use "
+            "`replace_features` to write it wholesale."
+        )
     retained = _retained(read_features(zones, table), replacing, frame.columns)
     merged = pd.concat([retained, frame], ignore_index=True) if len(retained) else frame
 
     ordered = merged.sort_values(list(key), kind="stable", na_position="last")
-    typed = ordered.reset_index(drop=True).astype(frame.dtypes.to_dict())
+    _write_table(ordered.reset_index(drop=True).astype(frame.dtypes.to_dict()), path)
+    return path
 
+
+def replace_features(
+    frame: pd.DataFrame, zones: Zones, *, table: str, key: tuple[str, ...]
+) -> Path:
+    """Write one `features/` table wholesale, superseding whatever was there.
+
+    The counterpart to `write_features`, for a table that is a pure function of
+    other tables rather than of one source's rows. `comparison` is the case: it
+    is a join of both quarterly tables and the polygon registry, so there is no
+    source to scope a replacement by, and merging into it would let a pair
+    dropped from the registry keep its rows forever.
+
+    A separate function rather than a `replacing=None` mode on `write_features`,
+    because "supersede these sources" and "supersede everything" are different
+    enough that a caller should have to say which one it means -- the same
+    reason `replacing` has no default there.
+    """
+    path = zones.feature_table(_known_table(table))
+    ordered = frame.sort_values(list(key), kind="stable", na_position="last")
+    _write_table(ordered.reset_index(drop=True).astype(frame.dtypes.to_dict()), path)
+    return path
+
+
+def _write_table(typed: pd.DataFrame, path: Path) -> None:
+    """Stage, then move into place -- so a table is never seen half-written.
+
+    The staging name deliberately does not match the table's, so a leftover from
+    a crashed run is invisible to a DuckDB query written against the zone.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     staging = path.parent / f".{path.name}.writing"
     typed.to_parquet(staging, index=False)
     staging.replace(path)
-    return path
 
 
 def _retained(stored: pd.DataFrame, replacing: tuple[str, ...], columns) -> pd.DataFrame:

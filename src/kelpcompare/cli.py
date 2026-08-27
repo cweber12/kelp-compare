@@ -23,9 +23,17 @@ import pandas as pd
 from kelpcompare.adapters import hobo_xlsx
 from kelpcompare.adapters.base import REGISTRY_GATE, Check, ValidationReport
 from kelpcompare.features.build import BuildOutcome, build_features
-from kelpcompare.features.climatology import CLIMATOLOGY_KEY
+from kelpcompare.features.climatology import CLIMATOLOGY_KEY, anomaly_columns
+from kelpcompare.features.comparison import COMPARISON_KEY, build_comparison
 from kelpcompare.features.config import load_feature_config
-from kelpcompare.features.quarterly import QUARTERLY_KEY
+from kelpcompare.features.kelp import (
+    CLIMATOLOGY_KELP_KEY,
+    MEASURED,
+    QUARTERLY_KELP_KEY,
+    KelpOutcome,
+    build_kelp,
+)
+from kelpcompare.features.quarterly import QUARTERLY_KEY, feature_columns
 from kelpcompare.fetchers import kelpwatch, ndbc
 from kelpcompare.fetchers.base import SourceUnavailable, land
 from kelpcompare.manifest import RunManifest
@@ -46,7 +54,9 @@ from kelpcompare.storage import (
     FLAG_NOT_EVALUATED,
     FLAG_PASS,
     Zones,
+    read_features,
     read_observations,
+    replace_features,
     stored_sources,
     write_features,
     write_observations,
@@ -73,6 +83,12 @@ INCOMING = "incoming"
 #: Non-`pass` here means the file's local timestamps cannot be placed in UTC with
 #: confidence, and docs/06 s6 says flag for a human rather than guess.
 TIMEZONE_CHECK = "timezone_crosscheck"
+
+#: The `source` a manifest series entry carries when it describes the comparison
+#: table rather than a built series. Not a docs/03 source: the comparison is a
+#: join of two of them, and it is recorded as a series entry only because that
+#: is where a run says how much it produced.
+COMPARISON_SERIES = "comparison"
 
 
 @click.group()
@@ -332,29 +348,41 @@ def _report_qc(run: RunManifest, zones: Zones, *, dry_run: bool) -> None:
     help="Report what would be built; write no files, not even the manifest.",
 )
 def features(source: str | None, data_root: Path | None, qc_max_flag: int, dry_run: bool) -> None:
-    """Build the quarterly feature tables from stored observations (docs/04 s2-s3).
+    """Build the quarterly feature tables and the comparison (docs/04 s2-s4).
 
-    Writes `features/quarterly_env.parquet` -- one row per QC series per Kelp
-    Watch quarter, with the anomalies that take the seasonal cycle back out --
-    and `features/climatology_env.parquet`, the fixed baseline those anomalies
-    were taken against.
+    Five tables, in the order they depend on each other. `quarterly_env` and
+    `climatology_env` come from the observations zone -- one row per QC series
+    per Kelp Watch quarter, plus the fixed baseline its anomalies were taken
+    against. `quarterly_kelp` and `climatology_kelp` come from the Kelp Watch
+    landings plus `polygons.geojson`, on the same calendar and through the same
+    climatology code. `comparison` is the join of the two at lags 0-4.
 
-    A run replaces exactly the sources it built, so `--source ndbc` after one
-    station's backfill leaves every other source's rows alone. Both tables are
-    a pure function of the observations zone and `registry/features.json`, which
-    is what makes rebuilding them meaningful.
+    The environmental half replaces exactly the sources it built, so
+    `--source ndbc` after one station's backfill leaves every other source's
+    rows alone. The comparison is regenerated wholesale from the two tables as
+    they stand on disk afterwards, which is what keeps it a pure function of its
+    inputs rather than something that accumulates stale pairs.
+
+    An environment-only project is not an error, and neither is a kelp-only one:
+    each half builds if it has anything to build, and the comparison is written
+    when both exist.
 
     No `--registry` option: the site registry is ingest's business. What this
-    stage reads is the feature configuration, which lives beside it in the same
-    zone (ADR-006).
+    stage reads is the feature configuration and the polygon registry, which
+    live beside it in the same zone (ADR-006).
     """
     zones = Zones.at(data_root)
     # Not fail-soft: a configuration that cannot be parsed is a configuration
     # nothing can be built against, so there is no per-source failure to isolate.
     config = load_feature_config(zones.features_json)
-    sources = [source] if source else list(stored_sources(zones))
+    env_sources = _env_sources(zones, source)
 
-    run = RunManifest.start("features", argv=_features_argv(source, qc_max_flag), sources=sources)
+    # `sources` records what a run *built*, not what it considered, so kelp is
+    # appended below only once there was something to build. A manifest naming a
+    # source that produced no row is a false trail through the audit chain.
+    run = RunManifest.start(
+        "features", argv=_features_argv(source, qc_max_flag), sources=list(env_sources)
+    )
     now = pd.Timestamp.now(tz="UTC")
     outcomes: dict[str, BuildOutcome] = {}
 
@@ -368,14 +396,36 @@ def features(source: str | None, data_root: Path | None, qc_max_flag: int, dry_r
             now=now,
             outcomes=outcomes,
         )
-        for name in sources
+        for name in env_sources
     ]
-    if not any(attempted):
+    kelp = _build_kelp(zones, config, run, now=now) if _wants_kelp(source) else None
+    if kelp is not None:
+        run.sources.append(kelpwatch.SOURCE)
+
+    if not any(attempted) and kelp is None:
         click.echo("nothing to build" + (f" for {source!r}" if source else ""))
         return
 
-    written = () if dry_run else _write_feature_tables(outcomes, zones, run)
+    written = () if dry_run else _write_feature_tables(outcomes, kelp, zones, run)
+    if not dry_run:
+        written += _write_comparison(zones, config, run)
     _report_features(run, zones, written, dry_run=dry_run)
+
+
+def _env_sources(zones: Zones, source: str | None) -> list[str]:
+    """Which observation sources this run builds the environmental half from.
+
+    `--source kelpwatch` names a source with no observations at all -- its rows
+    live in `raw/` and are read by the kelp builder -- so it selects no
+    environmental source rather than one that would come back empty.
+    """
+    if source == kelpwatch.SOURCE:
+        return []
+    return [source] if source else list(stored_sources(zones))
+
+
+def _wants_kelp(source: str | None) -> bool:
+    return source is None or source == kelpwatch.SOURCE
 
 
 def _build_source(
@@ -425,32 +475,189 @@ def _build_source(
     return True
 
 
+def _build_kelp(zones: Zones, config, run: RunManifest, *, now: pd.Timestamp) -> KelpOutcome | None:
+    """Build both kelp tables from the landed exports, or None if there are none.
+
+    None rather than an empty outcome: an environment-only project is not an
+    error (docs/03), and writing an empty `quarterly_kelp` would replace a real
+    table with nothing the first time somebody ran `features` on a machine whose
+    exports had not been landed.
+
+    Never raises. One export that will not parse must not cost the run the ones
+    that are fine (docs/02 fail-soft rule) -- but it does set the exit code,
+    because a polygon that silently went unbuilt vanishes from a table written
+    wholesale, which is worse than a loud failure.
+    """
+    # No polygon registry at all is not a failure -- it is a project that has
+    # not drawn any, which docs/03 says must not make this command fail. A
+    # registry that exists and cannot be read is a different thing entirely.
+    if not zones.polygons_geojson.exists():
+        return None
+    try:
+        polygons = load_polygons(zones.polygons_geojson)
+    except Exception as error:  # noqa: BLE001 -- a bad registry must not lose the env half
+        run.note_warning(f"{zones.polygons_geojson.name}: {type(error).__name__}: {error}")
+        return None
+
+    landings = _kelp_landings(zones, polygons, run)
+    if not landings:
+        return None
+
+    frames = []
+    for polygon, path in landings:
+        try:
+            frames.append(kelpwatch.parse(path, polygon).frame)
+        except Exception as error:  # noqa: BLE001 -- one export must not end the run
+            run.note_warning(f"{polygon.polygon_id}: {path.name}: {type(error).__name__}: {error}")
+    if not frames:
+        return None
+
+    try:
+        outcome = build_kelp(
+            pd.concat(frames, ignore_index=True),
+            config,
+            source=kelpwatch.SOURCE,
+            revision=polygons.kelp_watch.revision,
+            now=now,
+        )
+    except Exception as error:  # noqa: BLE001 -- report it, keep the manifest
+        run.note_warning(f"{kelpwatch.SOURCE}: {type(error).__name__}: {error}")
+        return None
+
+    for warning in outcome.warnings:
+        run.note_gap(f"{kelpwatch.SOURCE}: {warning}")
+    for polygon in outcome.polygons:
+        run.add_series(
+            source=kelpwatch.SOURCE,
+            polygon_id=polygon.polygon_id,
+            rows=polygon.rows,
+            quarters=polygon.quarters,
+            quarters_usable=polygon.quarters_usable,
+            quarters_observed=polygon.quarters_observed,
+            first_quarter=polygon.first_quarter,
+            last_quarter=polygon.last_quarter,
+        )
+    return outcome
+
+
+def _kelp_landings(zones: Zones, polygons: Polygons, run: RunManifest) -> list[tuple]:
+    """The one landed export per polygon, at the revision the registry pins.
+
+    Only that revision is read. A newer revision may revise history as well as
+    extend it, so reading two as one series would silently mix them -- the
+    registry says which one is the source of record, and landings are laid out
+    so honouring it is a directory choice rather than a filter.
+
+    Two different landings for one polygon at one revision is a contradiction
+    the run cannot resolve: both claim to be that bed's record at that version.
+    The polygon is skipped and reported. Raw is append-only (hard rule 1), so
+    the fix is not to delete one but to bump the revision and re-ingest, which
+    segregates them.
+    """
+    if polygons.kelp_watch is None:
+        return []
+    root = zones.raw_source(kelpwatch.SOURCE) / polygons.kelp_watch.label
+    if not root.is_dir():
+        return []
+
+    found = []
+    for polygon in polygons:
+        directory = root / polygon.polygon_id.replace(":", "_")
+        landed = sorted(directory.glob("*")) if directory.is_dir() else []
+        if not landed:
+            continue
+        if len(landed) > 1:
+            run.note_warning(
+                f"{polygon.polygon_id}: {len(landed)} different exports landed at "
+                f"{polygons.kelp_watch.label} ({', '.join(p.name for p in landed)}); "
+                "both claim to be this bed at that revision. Bump kelp_watch.revision and "
+                "re-ingest rather than deleting one -- raw is append-only."
+            )
+            continue
+        found.append((polygon, landed[0]))
+    return found
+
+
 def _write_feature_tables(
-    outcomes: dict[str, BuildOutcome], zones: Zones, run: RunManifest
+    outcomes: dict[str, BuildOutcome], kelp: KelpOutcome | None, zones: Zones, run: RunManifest
 ) -> tuple[Path, ...]:
-    """Write both tables, superseding exactly the sources that built successfully.
+    """Write the four quarterly tables, each superseding what its build covered.
 
     Guarded like the build itself: a table that cannot be written is a disk
     failure, and letting it escape would abort the run and take its manifest
     with it (hard rule 7). A source that failed keeps its previous rows rather
     than losing them to a run that never looked at it.
+
+    The kelp tables are scoped by source like the environmental ones, so a
+    future second route to the same product -- the published data package, if an
+    account ever arrives -- would replace its own rows and not this one's.
     """
-    if not outcomes:
-        return ()
-    replacing = tuple(sorted(outcomes))
-    tables = (
-        ("quarterly_env", QUARTERLY_KEY, [o.quarterly for o in outcomes.values()]),
-        ("climatology_env", CLIMATOLOGY_KEY, [o.climatology for o in outcomes.values()]),
-    )
+    tables: list[tuple[str, tuple[str, ...], pd.DataFrame, tuple[str, ...]]] = []
+    if outcomes:
+        replacing = tuple(sorted(outcomes))
+        tables += [
+            (
+                "quarterly_env",
+                QUARTERLY_KEY,
+                _stack([o.quarterly for o in outcomes.values()]),
+                replacing,
+            ),
+            (
+                "climatology_env",
+                CLIMATOLOGY_KEY,
+                _stack([o.climatology for o in outcomes.values()]),
+                replacing,
+            ),
+        ]
+    if kelp is not None:
+        tables += [
+            ("quarterly_kelp", QUARTERLY_KELP_KEY, kelp.quarterly, (kelpwatch.SOURCE,)),
+            ("climatology_kelp", CLIMATOLOGY_KELP_KEY, kelp.climatology, (kelpwatch.SOURCE,)),
+        ]
+
     written: list[Path] = []
-    for table, key, frames in tables:
+    for table, key, frame, replacing in tables:
         try:
-            written.append(
-                write_features(_stack(frames), zones, table=table, key=key, replacing=replacing)
-            )
+            written.append(write_features(frame, zones, table=table, key=key, replacing=replacing))
         except Exception as error:  # noqa: BLE001 -- report the failure, keep the manifest
             run.note_warning(f"{table}: {type(error).__name__}: {error}")
     return tuple(written)
+
+
+def _write_comparison(zones: Zones, config, run: RunManifest) -> tuple[Path, ...]:
+    """Regenerate `comparison` from the two quarterly tables as they now stand.
+
+    Read back from disk rather than taken from this run's outcomes, and that is
+    the point: a `--source ndbc` run rebuilds one source's environmental rows,
+    and the comparison must still reflect every polygon and every other source
+    beside them. Reading the zone is what makes the table a function of the zone
+    rather than of which arguments the last run happened to carry.
+
+    Written wholesale, so a pair the registry no longer declares loses its rows
+    instead of keeping them forever.
+    """
+    try:
+        kelp = read_features(zones, "quarterly_kelp")
+        env = read_features(zones, "quarterly_env")
+        if kelp.empty or env.empty:
+            return ()
+        polygons = load_polygons(zones.polygons_geojson)
+        frame = build_comparison(
+            kelp,
+            env,
+            polygons,
+            kelp_anomalies=anomaly_columns(MEASURED)[1:],
+            env_anomalies=anomaly_columns(feature_columns(config)[0])[1:],
+        )
+        run.add_series(
+            source=COMPARISON_SERIES,
+            rows=len(frame),
+            quarters=int(frame[["polygon_id", "year", "quarter"]].drop_duplicates().shape[0]),
+        )
+        return (replace_features(frame, zones, table="comparison", key=COMPARISON_KEY),)
+    except Exception as error:  # noqa: BLE001 -- report it, keep the manifest
+        run.note_warning(f"comparison: {type(error).__name__}: {error}")
+        return ()
 
 
 def _stack(frames: list[pd.DataFrame]) -> pd.DataFrame:
@@ -474,18 +681,29 @@ def _features_argv(source: str | None, qc_max_flag: int) -> list[str]:
 def _report_features(
     run: RunManifest, zones: Zones, written: tuple[Path, ...], *, dry_run: bool
 ) -> None:
-    for series in run.series:
+    built = [series for series in run.series if series.source != COMPARISON_SERIES]
+    for series in built:
         span = f"{series.first_quarter}..{series.last_quarter}" if series.quarters else "-"
+        # A kelp series is a polygon and has no parameter. `canopy` names what it
+        # measures, so both halves line up in one column without the report
+        # having to pretend a polygon is a site.
+        what = series.polygon_id or series.site_id or "-"
+        measured = series.parameter or "canopy"
         click.echo(
-            f"{series.site_id:>20}  {series.parameter}  {_quarters(series.quarters or 0)}  "
+            f"{what:>22}  {measured:<22}  {_quarters(series.quarters or 0)}  "
             f"{series.quarters_usable} usable  {span}"
         )
     for warning in run.warnings:
         click.echo(f"     warning  {warning}")
+    for gap in run.gaps:
+        click.echo(f"         gap  {gap}")
 
-    quarters = sum(series.quarters or 0 for series in run.series)
-    usable = sum(series.quarters_usable or 0 for series in run.series)
-    click.echo(f"\n{len(run.series)} series built -- {_quarters(quarters)}, {usable} usable")
+    quarters = sum(series.quarters or 0 for series in built)
+    usable = sum(series.quarters_usable or 0 for series in built)
+    click.echo(f"\n{len(built)} series built -- {_quarters(quarters)}, {usable} usable")
+    for series in run.series:
+        if series.source == COMPARISON_SERIES:
+            click.echo(f"comparison: {series.rows} rows over {series.quarters} polygon-quarters")
     for path in written:
         click.echo(f"wrote: {path}")
 

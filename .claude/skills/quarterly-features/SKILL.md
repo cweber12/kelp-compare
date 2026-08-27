@@ -9,19 +9,23 @@ Authoritative math: docs/04-analysis-methods.md §2–3. Schema for outputs:
 docs/03-data-model.md (`quarterly_env`, `climatology_env`). Where the
 configuration lives and why: ADR-006.
 
-Built: `kelpcompare features` produces `quarterly_env.parquet` and
-`climatology_env.parquet`. Also built: the analysis polygon registry
-(`polygons.geojson`, `kelpcompare.polygons`), and the climatology generalised
-over its series key -- the caller passes which columns identify one series and
-which are measured features, so kelp (`polygon_id`) and environment
-(`source, site_id, parameter, depth_m`) share one implementation and cannot
-drift apart. Passing the wrong key for a table raises rather than coming back
-empty.
+Built: `kelpcompare features` produces all five docs/03 tables --
+`quarterly_env`, `climatology_env`, `quarterly_kelp`, `climatology_kelp` and
+`comparison`.
 
-Not built: `quarterly_kelp.parquet` and `comparison.parquet`. Blocked on
-access, not effort -- EDI requires authentication for all API calls since
-2026-07-30, so the source payload cannot be landed and its structure cannot be
-verified (docs/02 "Kelp Watch"; issue #25).
+The climatology is generic over its series key: the caller passes which columns
+identify one series and which are measured features, so kelp (`polygon_id`) and
+environment (`source, site_id, parameter, depth_m`) share one implementation and
+cannot drift apart. Passing the wrong key for a table raises rather than coming
+back empty.
+
+`quarterly_kelp` is built from the Kelp Watch landings plus `polygons.geojson`,
+never through `observations` -- a canopy value belongs to a polygon and that
+zone is keyed on `site_id`. `comparison` is regenerated wholesale from the two
+quarterly tables as they stand on disk.
+
+Deferred: the published SBC LTER data package as a second route (giant vs bull
+kelp, biomass, per-pixel), blocked on an EDI account -- issue #25.
 
 ## Calendar and alignment
 
@@ -41,6 +45,10 @@ coast falls in the following Q1. DST is irrelevant rather than handled.
 1. Missing ≠ zero, both directions: a cloud-gapped kelp quarter is null; a
    sensor quarter below the configured coverage floor (default 0.60) is
    flagged `usable = false`, not imputed and not dropped. Never `fillna(0)`.
+   **The Kelp Watch export writes `0` for an unobserved quarter**, so only
+   `count_cells_no_clouds == 0` tells a cloud gap from an empty bed (docs/02);
+   the parser applies that, and by the time a quarter reaches the table it
+   carries null.
 2. Compute features only from QC-filtered rows (`qc_flag <= 2` default,
    overridable per run and recorded in `qc_max_flag`). Coverage counts the
    same filtered rows, so a quarter that failed QC on every row scores
@@ -124,3 +132,34 @@ quarter where every row failed QC (zero coverage); a one-observation quarter
 (null cadence, zero coverage, null variance); observations either side of a
 UTC quarter boundary; two runs producing identical bytes; a year appended
 outside the baseline moving no existing anomaly.
+
+## The kelp half
+
+Row key: **`polygon_id × year × quarter`**. Two measured quantities, both with
+`_anom` twins: `kelp_area_m2` (how much canopy) and `n_cells_kelp` (how far it
+spread). No species split and no biomass — the UI export carries neither.
+
+Coverage is spatial: `pct_cells_observed = n_cells_observed / n_cells`, the
+cloud-free 30 m cells over the bed's historic footprint. Same floor as the
+environmental half, shared rather than duplicated.
+
+**Disclose, do not correct: a partially observed kelp quarter is biased low.**
+`kelp_area_m2` is a sum over the cells that were seen, so two thirds of a bed
+under cloud reports about two thirds of the canopy. Scaling by the observed
+fraction is imputation and is rejected. Flag it unusable and keep the value.
+
+Cloud gaps are seasonally biased — 9.1% of Q4 and 5.8% of Q1 unobserved against
+0.8% of Q3, across the six exported beds — so dropping nulls drops winter.
+
+## The comparison table
+
+One row per `polygon_id × env_source × site_id × parameter × depth_m × year ×
+quarter × lag`, lags 0–4. Earlier drafts keyed it without parameter and depth;
+that cannot represent a site with several parameters.
+
+- **The environment leads, kelp responds.** Lag 2 on a 2015Q3 row is kelp in
+  2015Q3 against water in 2015Q1. `env_year`/`env_quarter` are on the row.
+- **Lag 0 is included**; omitting it would make its absence look like a result.
+- **Nothing is filtered.** Rows survive where either side is unusable or where
+  the lag reaches before the environmental record. `usable` is the single gate.
+- **Pairs come from `polygons.geojson`**, never from name matching.

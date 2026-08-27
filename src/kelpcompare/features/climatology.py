@@ -292,17 +292,26 @@ def _require_columns(quarterly: pd.DataFrame, series: tuple[str, ...], *, what: 
         )
 
 
-def _lookup_key(frame: pd.DataFrame, series: tuple[str, ...]) -> pd.Series:
-    """A joinable text key, because a key column may hold nulls.
+def join_key(frame: pd.DataFrame, columns: tuple[str, ...]) -> pd.Series:
+    """A joinable text key over any set of columns, because one may hold nulls.
 
     A merge on a key column holding nulls -- `depth_m` is null for every met
     parameter -- is exactly the kind of thing that works until it does not, so
     the key is built explicitly instead. `repr` of a float round-trips exactly,
     and an absent field is empty rather than a value that might compare equal to
     something.
+
+    Public because the comparison table joins on the same series key across two
+    tables and must do it the same way this module does, or the two could
+    disagree about which rows are the same series.
     """
-    fields = [frame[name].map(_field_text).astype("string") for name in (*series, "quarter")]
+    fields = [frame[name].map(_field_text).astype("string") for name in columns]
     return fields[0].str.cat(fields[1:], sep="|", na_rep="") if len(fields) > 1 else fields[0]
+
+
+def _lookup_key(frame: pd.DataFrame, series: tuple[str, ...]) -> pd.Series:
+    """The series-and-quarter key an anomaly is looked up by."""
+    return join_key(frame, (*series, "quarter"))
 
 
 def _field_text(value) -> str:
@@ -342,6 +351,7 @@ __all__ = [
     "build_climatology",
     "climatology_columns",
     "climatology_key",
+    "join_key",
     "quarterly_env_columns",
     "with_anomalies",
 ]
