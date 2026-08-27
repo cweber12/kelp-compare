@@ -349,7 +349,7 @@ Adding a polygon is a `data(registry)` change needing no code.
 ## Quarterly kelp: `quarterly_kelp.parquet`
 
 **Implemented** — `src/kelpcompare/features/kelp.py`. One row per
-**`polygon_id × year × quarter`**, on the same UTC Kelp Watch calendar as the
+**`source × polygon_id × year × quarter`**, on the same UTC Kelp Watch calendar as the
 environmental half. There is no aggregation stage of the kind `quarterly_env`
 has: a Kelp Watch export is already one row per quarter, summed over the
 geometry selected in the UI (doc 02). What this table adds is the bookkeeping
@@ -357,6 +357,7 @@ that makes such a row interpretable and the anomalies that make it comparable.
 
 | Column | Type | Notes |
 |--------|------|-------|
+| `source` | VARCHAR | Which route the numbers took; `kelpwatch` today |
 | `polygon_id` | VARCHAR | FK to `polygons.geojson` |
 | `year`, `quarter` | INT | Kelp Watch calendar, UTC |
 | `kelp_area_m2` | DOUBLE | Emergent canopy area. **Null means no cloud-free observation, never zero** |
@@ -366,7 +367,6 @@ that makes such a row interpretable and the anomalies that make it comparable.
 | `pct_cells_observed` | DOUBLE | `n_cells_observed / n_cells` |
 | `usable` | BOOLEAN | `n_cells_observed > 0` and `pct_cells_observed ≥` the configured floor |
 | `quarter_complete` | BOOLEAN | Whether the quarter had ended when the run happened |
-| `source` | VARCHAR | Which route the numbers took; `kelpwatch` today |
 | `kelp_watch_revision` | INT | The upstream dataset revision this row came from |
 | `baseline_years` | INT | Contributing years behind this row's anomalies |
 | `kelp_area_m2_anom`, `n_cells_kelp_anom` | DOUBLE | One per measured quantity |
@@ -398,6 +398,14 @@ observed — and a second knob with no separate evidence behind it would be a kn
 nobody could tune. It stays a sensitivity knob either way, since the value
 survives the flag.
 
+**`source` is in the series key**, as it is on the environmental side. It is
+what the features zone scopes a replacement by, so a table without it cannot be
+superseded and would grow by one build's worth of rows every run — and if the
+published data package ever becomes a second route to the same polygons, the two
+must not merge into one baseline. `write_features` refuses a source-scoped write
+of a table that has no `source` column, so this cannot be got wrong quietly
+again.
+
 **No `fetch_run_id`.** On an observation row that records which *fetch* landed
 it and survives every later rewrite; on a derived table it would be the build
 run, which changes on every build and would stop two runs over unchanged inputs
@@ -410,8 +418,8 @@ incoherent input.
 
 ## Quarterly kelp climatology: `climatology_kelp.parquet`
 
-The same table `climatology_env` is, keyed on `polygon_id × quarter × feature`
-instead of on the QC series key, and produced by the same code — see "One
+The same table `climatology_env` is, keyed on `source × polygon_id × quarter ×
+feature` instead of on the QC series key, and produced by the same code — see "One
 climatology implementation, two series keys" below. Same columns, same fixed
 window, same rule that only usable and complete quarters contribute.
 
@@ -603,8 +611,8 @@ there rather than the old column lingering beside the new one.
 **Implemented** — `src/kelpcompare/features/comparison.py`. The analysis-ready
 join, and the table notebooks and the dashboard read almost exclusively.
 
-One row per **`polygon_id × env_source × site_id × parameter × depth_m × year ×
-quarter × lag`**, for lags 0–4 quarters. Earlier drafts of this document keyed
+One row per **`polygon_id × kelp_source × env_source × site_id × parameter ×
+depth_m × year × quarter × lag`**, for lags 0–4 quarters. Earlier drafts of this document keyed
 it on `polygon_id × site_id × year × quarter × lag`; that cannot represent a
 site carrying several parameters, or one parameter at two depths, and every
 station does. The key gained the environmental series key rather than the table
@@ -612,7 +620,7 @@ gaining a column per parameter.
 
 | Column | Type | Notes |
 |--------|------|-------|
-| `polygon_id` | VARCHAR | The kelp side |
+| `polygon_id`, `kelp_source` | VARCHAR | The kelp series key |
 | `env_source`, `site_id`, `parameter`, `depth_m` | — | The environmental series key |
 | `year`, `quarter` | INT | The **kelp** quarter, *t* |
 | `lag` | TINYINT | 0–4 quarters |

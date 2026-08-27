@@ -391,3 +391,29 @@ def test_the_run_reports_how_much_comparison_it_produced(data_root, with_environ
 
     assert "comparison:" in result.output
     assert "polygon-quarters" in result.output
+
+
+def test_repeated_runs_do_not_grow_the_kelp_climatology(data_root):
+    """The table has no natural `source`-free identity to dedupe on, so a write
+    that could not supersede its own rows would add a build's worth every run --
+    silently, and only visible as a row count."""
+    ingested(data_root)
+    counts = []
+    for _ in range(3):
+        run(data_root, "features")
+        counts.append(len(table(data_root, "climatology_kelp")))
+
+    assert len(set(counts)) == 1, f"climatology_kelp grew across runs: {counts}"
+
+
+def test_every_written_table_is_byte_identical_across_two_runs(data_root, with_environment):
+    """Applied to all five rather than to one: the first version of this suite
+    checked only quarterly_kelp, and the table that was doubling was a different
+    one."""
+    with_both_halves(data_root)
+    before = {p.name: p.read_bytes() for p in (data_root / "features").glob("*.parquet")}
+    assert len(before) == 5
+
+    run(data_root, "features")
+    after = {p.name: p.read_bytes() for p in (data_root / "features").glob("*.parquet")}
+    assert after == before

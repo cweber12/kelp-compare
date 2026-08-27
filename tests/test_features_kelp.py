@@ -212,8 +212,21 @@ def test_two_rows_for_one_polygon_quarter_raise_rather_than_being_averaged():
 def test_the_climatology_is_keyed_on_the_polygon_not_on_a_site():
     built = build([(2007, 1, 100.0, 1, 100), (2008, 1, 200.0, 2, 100), (2009, 1, 300.0, 3, 100)])
     assert tuple(built.climatology.columns) == climatology_columns(KELP_SERIES)
-    assert CLIMATOLOGY_KELP_KEY == ("polygon_id", "quarter", "feature")
+    assert CLIMATOLOGY_KELP_KEY == ("source", "polygon_id", "quarter", "feature")
     assert set(built.climatology.columns) != set(CLIMATOLOGY_COLUMNS)  # not the env table's
+
+
+def test_the_series_key_carries_the_source_so_the_table_can_be_superseded():
+    """Without it a source-scoped write keeps every existing row and adds the new
+    ones on top -- the climatology growing by one build's worth every run. It is
+    also what would keep two routes to the same polygon, if the published data
+    package ever becomes one, from merging into a single baseline.
+    """
+    built = build([(2007, 1, 100.0, 1, 100)])
+
+    assert KELP_SERIES == ("source", "polygon_id")
+    assert set(built.climatology["source"]) == {"kelpwatch"}
+    assert set(built.quarterly["source"]) == {"kelpwatch"}
 
 
 def test_both_measured_quantities_get_a_baseline_and_an_anomaly():

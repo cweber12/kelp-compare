@@ -52,13 +52,23 @@ from kelpcompare.features.climatology import (
 from kelpcompare.features.config import FeatureConfig
 from kelpcompare.features.quarters import is_complete, quarter_label
 
-#: What makes rows one kelp series. A polygon, and nothing else: a canopy value
-#: belongs to an area rather than to an instrument, which is the whole reason
-#: this table exists beside `quarterly_env` instead of inside it.
-KELP_SERIES = ("polygon_id",)
+#: What makes rows one kelp series: the route the numbers took, and the area
+#: they describe. A canopy value belongs to an area rather than to an instrument,
+#: which is the whole reason this table exists beside `quarterly_env` instead of
+#: inside it -- but `source` joins it for the reason it is in the environmental
+#: key too. It is what the features zone scopes a replacement by, so a table
+#: without it cannot be superseded and would double on every build; and if the
+#: published data package ever becomes a second route to the same polygons, the
+#: two must not merge into one baseline.
+KELP_SERIES = ("source", "polygon_id")
 
 #: The docs/03 `quarterly_kelp` row key: the series key plus time.
 QUARTERLY_KELP_KEY = (*KELP_SERIES, "year", "quarter")
+
+#: What one row of the *parser's* output is. `source` is not on it yet -- this
+#: stage is what stamps it -- and a parsed frame is one source's rows by
+#: construction, so the polygon and the quarter are the whole identity there.
+_PARSED_KEY = ("polygon_id", "year", "quarter")
 
 #: The `climatology_kelp` key and column order, from the shared builder.
 CLIMATOLOGY_KELP_KEY = climatology_key(KELP_SERIES)
@@ -78,16 +88,16 @@ BOOKKEEPING_COLUMNS = (
     "quarter_complete",
 )
 
-#: Provenance. `kelp_watch_revision` is on every row because the export carries
-#: no version of its own, so this is the only place a number can be traced back
-#: to a citable dataset (docs/02).
+#: Provenance beyond the key. `kelp_watch_revision` is on every row because the
+#: export carries no version of its own, so this is the only place a number can
+#: be traced back to a citable dataset (docs/02).
 #:
 #: Deliberately no `fetch_run_id`. On an observation row that records which
 #: *fetch* landed it and survives every later rewrite; on a derived table it
 #: would be the build run, which changes on every build and would make two runs
 #: over unchanged inputs write different bytes. `quarterly_env` carries none for
 #: the same reason, and the manifest already records what each run produced.
-PROVENANCE_COLUMNS = ("source", "kelp_watch_revision")
+PROVENANCE_COLUMNS = ("kelp_watch_revision",)
 
 _DTYPES = {
     "polygon_id": "string",
@@ -242,7 +252,7 @@ def _refuse_duplicates(parsed: pd.DataFrame) -> None:
     Averaging them would produce a plausible series from an incoherent input,
     and a plausible wrong number is the one failure this project cannot afford.
     """
-    duplicated = parsed.loc[parsed.duplicated(subset=list(QUARTERLY_KELP_KEY))]
+    duplicated = parsed.loc[parsed.duplicated(subset=list(_PARSED_KEY))]
     if len(duplicated):
         labels = sorted(
             {

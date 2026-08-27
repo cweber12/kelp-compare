@@ -284,7 +284,9 @@ def write_features(
     `replacing` is the set of sources this run rebuilt, and every existing row
     belonging to one of them is dropped before the new rows go in. It has no
     default on purpose: a write that superseded nothing would silently double
-    the table.
+    the table -- and a table with no `source` column to scope by is refused here
+    for exactly that reason, rather than being allowed to grow by one build's
+    worth of rows every run.
 
     Source-scoped rather than wholesale, because a `--source ndbc` rerun after a
     single station's backfill must not be silent data loss for every other
@@ -304,6 +306,13 @@ def write_features(
     a leftover is invisible to a DuckDB query written against the zone.
     """
     path = zones.feature_table(_known_table(table))
+    if replacing and "source" not in frame.columns:
+        raise ValueError(
+            f"{table!r} has no `source` column, so a write scoped to {list(replacing)} cannot "
+            "supersede anything -- it would keep every existing row and add the new ones on "
+            "top, doubling the table on every run. Either carry `source` on the table or use "
+            "`replace_features` to write it wholesale."
+        )
     retained = _retained(read_features(zones, table), replacing, frame.columns)
     merged = pd.concat([retained, frame], ignore_index=True) if len(retained) else frame
 

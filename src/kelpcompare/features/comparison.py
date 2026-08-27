@@ -51,6 +51,7 @@ LAGS = (0, 1, 2, 3, 4)
 #: is being compared against, the kelp quarter, and the lag.
 COMPARISON_KEY = (
     "polygon_id",
+    "kelp_source",
     "env_source",
     "site_id",
     "parameter",
@@ -71,6 +72,7 @@ _CONTEXT_COLUMNS = (
 
 _DTYPES = {
     "polygon_id": "string",
+    "kelp_source": "string",
     "env_source": "string",
     "site_id": "string",
     "parameter": "string",
@@ -87,10 +89,12 @@ _DTYPES = {
     "kelp_watch_revision": "int32",
 }
 
-#: The environmental series key as it is named on a comparison row. `source`
-#: becomes `env_source`, because a row carries two sources' worth of provenance
-#: and a bare `source` would not say which half it described.
+#: Each half's series key as it is named on a comparison row. `source` becomes
+#: `env_source` or `kelp_source`, because a row carries two sources' worth of
+#: provenance and a bare `source` would not say which half it described -- and
+#: because they would otherwise collide on one column name.
 _ENV_RENAMED = {"source": "env_source"}
+_KELP_RENAMED = {"source": "kelp_source", "usable": "kelp_usable"}
 
 
 def comparison_columns(
@@ -171,7 +175,7 @@ def _kelp_side(quarterly_kelp: pd.DataFrame, anomalies: tuple[str, ...]) -> pd.D
     """The response variable's half of a row: when, how anomalous, and how good."""
     wanted = [*KELP_SERIES, "year", "quarter", "usable", "kelp_watch_revision", *anomalies]
     side = quarterly_kelp.reindex(columns=wanted).copy()
-    return side.rename(columns={"usable": "kelp_usable"})
+    return side.rename(columns=_KELP_RENAMED)
 
 
 def _env_side(quarterly_env: pd.DataFrame, anomalies: tuple[str, ...]) -> pd.DataFrame:
