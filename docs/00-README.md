@@ -73,22 +73,39 @@ unusable rather than dropped, the same discipline QC applies to rows.
 Also built: the analysis polygon registry (doc 03) and the climatology
 generalised over its series key. A canopy value belongs to a polygon rather
 than to a site, so the kelp half of the features zone keys on `polygon_id`;
-`polygons.geojson` is where those areas are declared, in WGS84, refusing an
-unknown purpose or a malformed geometry rather than aggregating the wrong
-pixels quietly. The climatology and anomaly code now takes its series key from
-its caller, so kelp and environmental anomalies come from one implementation
-and cannot drift apart — the environmental tables are byte-identical across
-the change.
+`polygons.geojson` is where those areas are declared, along with the export
+each one's rows arrive in and the upstream dataset revision they came from.
+The climatology and anomaly code now takes its series key from its caller, so
+kelp and environmental anomalies come from one implementation and cannot drift
+apart — the environmental tables are byte-identical across the change.
+
+Also built: the Kelp Watch ingest, `kelpcompare ingest --source kelpwatch`
+(doc 02). The response variable finally enters the pipeline. Exports are
+downloaded by hand from kelpwatch.org and dropped in `raw/kelpwatch/incoming/`,
+because the published data package they are a view of now sits behind an
+authentication wall; the ingest lands them content-addressed under their
+revision and polygon, and writes a manifest. It is the one ingest that writes
+no observations — a canopy value belongs to a polygon, and that zone is keyed
+on `site_id`.
+
+Its parser is where the source's headline quirk is handled: **a quarter nobody
+could see is written as a zero, not as a blank**, contradicting the product's
+own published field dictionary. Only the cloud-free cell count tells a cloud gap
+from a genuinely empty bed, and reading the value column alone would fabricate
+canopy measurements — in winter, where the gaps are, and worst in marginal beds,
+where zero is the normal reading. Across the six San Diego county beds exported,
+that is 44 fabricated zeros avoided against 329 real ones kept.
 
 Not built yet: the climatology and flat-line QC tests and neighbor validation
 (doc 04 §1 records why each waits), the remaining public-source fetchers
-(doc 02), the notebooks, and the dashboard.
+(doc 02), `quarterly_kelp.parquet` and `comparison.parquet` — the kelp half of
+the features zone, which reads the landings this ingest produces — the
+notebooks, and the dashboard.
 
-**The Kelp Watch half of the features zone is blocked on access, not on
-effort.** The source of record is the published SBC LTER data package
-`knb-lter-sbc.74`, and as of 2026-07-30 the EDI repository requires
-authentication for every API call — so the payload cannot be landed, its
-internal structure cannot be verified, and there is nowhere in a public
-repository to put a credential. Doc 02 records what was verified anyway;
-issue #25 records the decision that has to be taken before
-`quarterly_kelp.parquet` and `comparison.parquet` can be built.
+Deferred rather than abandoned: fetching the published SBC LTER data package
+directly. It carries giant and bull kelp separately plus biomass, at per-pixel
+resolution, and could be refreshed by `rebuild` without a human in the loop —
+none of which the UI export offers. It needs an EDI account
+(issue #25). When one arrives it becomes a second route to the same product
+rather than a replacement: the schema, the polygon registry and the shared
+climatology do not care which route the numbers took.
