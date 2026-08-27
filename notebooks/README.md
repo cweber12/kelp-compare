@@ -12,6 +12,16 @@ side reads of `observations/` or `raw/`. A notebook that reaches around the
 comparison table is a notebook whose result cannot be reproduced from a stated
 input, and it stops being an analysis of record.
 
+*Importing from `kelpcompare` is not a side read.* The rule is about **data** —
+a second source of numbers is what makes a result untraceable. Schema facts are
+the opposite case: which columns identify one series, and which anomalies belong
+to the kelp half, are defined once in the package that wrote the table (docs/03),
+and a notebook that restates them instead of importing them is one that will
+keep screening the old schema after the table has moved on. Import the constant;
+never open a second file. A notebook doing this should check on load that the
+table still matches what it imported, so a package and a table that have drifted
+apart say so rather than quietly analysing the overlap.
+
 **Quote the digest.** Each notebook prints the SHA-256 of the comparison file it
 ran against. Put that digest in any figure caption or write-up, so a number in a
 document can be traced to the exact table that produced it — and so two
