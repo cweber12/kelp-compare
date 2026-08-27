@@ -64,6 +64,12 @@ class FileEntry:
     it was, what happened to it, how many rows came in and out -- so the entry is
     shared rather than duplicated. `adapter` and `fetcher` are how a reader tells
     which road a row travelled, and exactly one of them is ever set.
+
+    `site_id` and `polygon_id` are alternatives, not a pair: an observation
+    belongs to a site and a canopy value belongs to a polygon, and calling a
+    polygon a site to save a field would put a lie in the audit trail.
+    `dataset_revision` is the upstream version a landing came from, for the one
+    source whose file carries no version of its own (docs/02).
     """
 
     path: str
@@ -73,6 +79,8 @@ class FileEntry:
     provenance: str | None = None
     serial: str | None = None
     site_id: str | None = None
+    polygon_id: str | None = None
+    dataset_revision: int | None = None
     landed: str | None = None
     quarantined_to: str | None = None
     rows_in: int | None = None
