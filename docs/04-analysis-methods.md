@@ -110,7 +110,9 @@ Thresholds, the coverage floor and the baseline window live in
 `registry/features.json`, not in code (ADR-006); doc 03 documents the file
 and the output schema. The universal statistics set and the temperature set
 are built; the wave and water-level sets are refused until their fetchers
-exist.
+exist. The kelp family — canopy area and canopy extent — is built from the
+Kelp Watch export directly and takes no feature set, because the export
+arrives already reduced to one value per quarter.
 
 ### What each feature counts, exactly
 
@@ -188,6 +190,42 @@ rather than left to be discovered:
 - **Spell lengths are floors, not measurements**, wherever
   `..._gap_interrupted` is true.
 
+### The kelp half: coverage means something different, and biases harder
+
+`quarterly_kelp` runs the same machinery on the same calendar, but its coverage
+is spatial rather than temporal: `pct_cells_observed` is `n_cells_observed /
+n_cells`, the cloud-free 30 m cells over the bed's historic footprint. The same
+floor applies, shared rather than duplicated — it answers the same question, and
+a second knob with no separate evidence behind it would be a knob nobody could
+tune.
+
+**Three properties to state rather than let a reader discover.**
+
+- **A partially observed quarter is biased low, not merely noisier.**
+  `kelp_area_m2` is a *sum over the cells that were seen*, so a quarter with two
+  thirds of its bed under cloud reports roughly two thirds of the canopy that
+  was there. This is worse than the environmental analogue, where partial
+  coverage adds noise and misses extremes but does not systematically shrink the
+  mean. **Nothing corrects for it.** Scaling by the observed fraction was
+  rejected: it is imputation wearing a feature's clothes, and it assumes the
+  unseen part of a bed looks like the seen part, which is exactly what a patchy
+  bed does not do. The quarter is flagged `usable = false` below the floor and
+  keeps its value.
+- **Missing is written as zero upstream**, and only the cloud-free cell count
+  tells a cloud gap from a genuinely empty bed (doc 02). The parser applies that
+  rule; by the time a quarter reaches this table an unobserved one carries null.
+  The distinction matters most in a marginal bed, where zero is the normal
+  reading.
+- **Cloud gaps are seasonally biased, so the missingness is not random.** Across
+  the six exported San Diego county beds, 9.1% of Q4 and 5.8% of Q1 have no
+  cloud-free observation, against 0.8% of Q3. Any analysis that drops null
+  quarters is therefore dropping winter preferentially, which §6 already names
+  as an interpretive limit.
+
+Two measured quantities carry anomalies: `kelp_area_m2`, how much canopy there
+was, and `n_cells_kelp`, how far it spread. A bed can thin without shrinking and
+shrink without thinning; the notebook chooses which answers its question.
+
 ## 3. Climatology and anomalies
 
 For every series (kelp and environmental), compute the quarterly
@@ -232,23 +270,58 @@ table. The climatology is written to its own table with its mean, standard
 deviation, contributing-year count and window (doc 03), so the promise that
 anomalies do not shift is checkable by diffing two runs.
 
-**Every anomaly column is null on today's data.** No series in this project
-yet spans 2007–2019: the only project deployment is three weeks long, which
-is roughly a quarter of one quarter and therefore unusable by the coverage
-rule. The columns ship anyway rather than being deferred, so the schema does
-not change under downstream readers when real multi-decade history lands.
+**The environmental anomaly columns are still null on today's data.** No
+environmental series in this project yet spans 2007–2019: the only project
+deployment is three weeks long, which is roughly a quarter of one quarter and
+therefore unusable by the coverage rule. The columns ship anyway rather than
+being deferred, so the schema does not change under downstream readers when real
+multi-decade history lands.
+
+**The kelp anomalies are real.** The Kelp Watch record runs 1984–2026, so every
+polygon clears the ten-year minimum with all thirteen baseline years
+contributing, and `quarterly_kelp` is the first table in the project with a
+populated anomaly column. That also makes it the first exercise of the shared
+climatology against a series long enough to have one — the environmental half
+has only ever produced nulls, so until now the machinery was untested against
+its own purpose.
+
+One consequence follows immediately and is worth stating before anyone reads a
+number: the baseline contains the 2014–2016 marine heatwave on the kelp side
+too, so a warm-period kelp anomaly is damped by the event it is measuring, in
+the same direction and for the same reason as the environmental one.
 
 ## 4. Analysis ladder
 
 Applied in order; each rung informs whether the next is warranted.
 
 **4.1 Lagged cross-correlation screen.** Kelp anomaly at quarter t vs.
-each environmental feature anomaly at t−0…4, per polygon × site pair.
-Output is a lag–feature correlation matrix (the dashboard's "lag
+each environmental feature anomaly at t−0…4, per polygon × environmental
+series. Output is a lag–feature correlation matrix (the dashboard's "lag
 explorer"). Purpose: recover the known physics (heat stress at short
 lags, cold/nitrate association, wave removal in winter) and rank which
 project-sensor features carry signal. Screening only — no significance
 claims from this step.
+
+`comparison.parquet` (doc 03) makes this a query rather than a script. Three
+conventions it fixes, so that a result cannot depend on which of them a notebook
+assumed:
+
+- **The environment leads and kelp responds.** Lag 2 on a 2015Q3 row is kelp in
+  2015Q3 against the water in 2015Q1. `env_year` and `env_quarter` are recorded
+  on every row, so the direction is checkable by reading one rather than by
+  re-deriving it — which matters because getting it backwards produces a
+  correlation matrix that reads as kelp predicting temperature, and that looks
+  like a finding rather than a bug.
+- **Lag 0 is included.** A same-quarter association is a hypothesis like any
+  other, and omitting it would make its absence look like a result.
+- **Nothing is filtered.** Rows survive where either side is unusable, or where
+  the lag reaches before the environmental record and the environmental side is
+  null. `usable` is the single gate and the analysis applies it once, so what
+  filtering cost is visible rather than already spent.
+
+Which polygon pairs with which site is read from `polygons.geojson`, never
+matched by name — doc 03's integrity rule, at the one place that would be
+tempted to break it.
 
 **4.2 Event studies.** Define discrete events: marine heatwaves, top-decile
 wave quarters, El Niño quarters. Superposed-epoch analysis of kelp anomaly

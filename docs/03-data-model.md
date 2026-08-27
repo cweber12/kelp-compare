@@ -18,10 +18,9 @@ data/
     _manifests/             # one JSON manifest per ingest run
   observations/             # partitioned: source={name}/year={yyyy}/part-{run_id}.parquet
   features/
-    quarterly_env.parquet     # built
-    climatology_env.parquet   # built
-    quarterly_kelp.parquet    # planned
-    comparison.parquet        # planned
+    quarterly_env.parquet     climatology_env.parquet
+    quarterly_kelp.parquet    climatology_kelp.parquet
+    comparison.parquet
   quarantine/               # files the registry gate turned away (doc 06 §5)
   registry/
     sites.json  parameters.json  features.json
@@ -347,17 +346,74 @@ the state the repository ships in and it is not an error: a project with
 environmental data and no polygons drawn yet is a project mid-way through.
 Adding a polygon is a `data(registry)` change needing no code.
 
-## Kelp series
+## Quarterly kelp: `quarterly_kelp.parquet`
 
-`quarterly_kelp.parquet`:
+**Implemented** — `src/kelpcompare/features/kelp.py`. One row per
+**`polygon_id × year × quarter`**, on the same UTC Kelp Watch calendar as the
+environmental half. There is no aggregation stage of the kind `quarterly_env`
+has: a Kelp Watch export is already one row per quarter, summed over the
+geometry selected in the UI (doc 02). What this table adds is the bookkeeping
+that makes such a row interpretable and the anomalies that make it comparable.
 
-| Column | Notes |
-|--------|-------|
-| `polygon_id` | FK to polygons |
-| `year`, `quarter` | Kelp Watch calendar (Q1=Jan–Mar … Q4=Oct–Dec) |
-| `canopy_area_m2` | Null means no valid observation (clouds), **not** zero |
-| `n_valid` / coverage metric | Whatever the export provides about observation quality |
-| `canopy_anom` | Anomaly vs. that polygon's quarterly climatology |
+| Column | Type | Notes |
+|--------|------|-------|
+| `polygon_id` | VARCHAR | FK to `polygons.geojson` |
+| `year`, `quarter` | INT | Kelp Watch calendar, UTC |
+| `kelp_area_m2` | DOUBLE | Emergent canopy area. **Null means no cloud-free observation, never zero** |
+| `n_cells_kelp` | DOUBLE | 30 m cells holding canopy; null wherever the value is |
+| `n_cells_observed` | INT | Cells with a cloud-free observation this quarter |
+| `n_cells` | INT | The bed's historic footprint — cells that held canopy at least once |
+| `pct_cells_observed` | DOUBLE | `n_cells_observed / n_cells` |
+| `usable` | BOOLEAN | `n_cells_observed > 0` and `pct_cells_observed ≥` the configured floor |
+| `quarter_complete` | BOOLEAN | Whether the quarter had ended when the run happened |
+| `source` | VARCHAR | Which route the numbers took; `kelpwatch` today |
+| `kelp_watch_revision` | INT | The upstream dataset revision this row came from |
+| `baseline_years` | INT | Contributing years behind this row's anomalies |
+| `kelp_area_m2_anom`, `n_cells_kelp_anom` | DOUBLE | One per measured quantity |
+
+**Two measured quantities, both with anomalies.** Area is how much canopy there
+was; the cell count is how far it spread. A bed can thin without shrinking and
+shrink without thinning, so the notebook chooses which answers its question
+rather than this stage choosing. The UI export carries no species split and no
+biomass (doc 02), so those are absent rather than null.
+
+**Coverage is the fraction of the bed that was seen**, and it is not the same
+kind of number as `pct_coverage` on the environmental side even though it plays
+the same role. `n_cells_observed` and `n_cells` are stored beside the fraction
+so it is auditable rather than trusted, exactly as `n_obs` and `expected_obs`
+are.
+
+**A partially observed quarter is biased low, not merely noisier** — and this
+is the one place the two halves genuinely differ. `kelp_area_m2` is a *sum over
+the cells that were seen*, so a quarter with two thirds of its bed under cloud
+reports roughly two thirds of the canopy that was there. Nothing corrects for
+it: scaling by the observed fraction would assume the unseen part of a bed looks
+like the seen part, which is exactly what a patchy bed does not do. The quarter
+is flagged `usable = false` below the floor and keeps its value. Doc 04 §2
+carries the disclosure.
+
+**The coverage floor is the environmental one**, shared rather than duplicated.
+It answers the same question on both halves — how much of the thing was actually
+observed — and a second knob with no separate evidence behind it would be a knob
+nobody could tune. It stays a sensitivity knob either way, since the value
+survives the flag.
+
+**No `fetch_run_id`.** On an observation row that records which *fetch* landed
+it and survives every later rewrite; on a derived table it would be the build
+run, which changes on every build and would stop two runs over unchanged inputs
+writing the same bytes. `quarterly_env` carries none for the same reason, and
+the manifest already records what each run produced.
+
+Two rows for one polygon-quarter **raise**. That can only mean two exports were
+read as one series, and averaging them would produce a plausible number from an
+incoherent input.
+
+## Quarterly kelp climatology: `climatology_kelp.parquet`
+
+The same table `climatology_env` is, keyed on `polygon_id × quarter × feature`
+instead of on the QC series key, and produced by the same code — see "One
+climatology implementation, two series keys" below. Same columns, same fixed
+window, same rule that only usable and complete quarters contribute.
 
 ## Quarterly environmental features: `quarterly_env.parquet`
 
@@ -528,7 +584,10 @@ is, so an interrupted run leaves the previous table intact.
 A run replaces exactly the rows of the sources it built. Scoped by source
 rather than merged row by row, so a site later removed from the registry does
 not keep its feature rows forever; scoped rather than wholesale, so a
-`--source` rerun is not silent data loss for every other source. A source
+`--source` rerun is not silent data loss for every other source. `comparison`
+is the exception and is written **wholesale**: it is a pure function of the two
+quarterly tables and the polygon registry, so there is no source to scope it by,
+and merging into it would let a retired pair keep its rows. A source
 that *failed* mid-run keeps its previous rows rather than losing them to a
 run that never looked at it — the cost is that a source whose observations
 have been removed entirely keeps stale feature rows until the zone is
@@ -541,17 +600,64 @@ there rather than the old column lingering beside the new one.
 
 ## Comparison table: `comparison.parquet`
 
-The analysis-ready join, one row per
-`polygon_id × site_id × year × quarter × lag` for lags 0–4 quarters:
-kelp anomaly at t against environmental feature anomalies at t−lag, plus
-event covariates for the lagged quarter (marine heatwave days, ENSO
-state, wave events). Notebooks and the dashboard read this table almost
-exclusively; it is regenerated wholesale by `kelpcompare features`.
+**Implemented** — `src/kelpcompare/features/comparison.py`. The analysis-ready
+join, and the table notebooks and the dashboard read almost exclusively.
 
-Not built, along with `quarterly_kelp.parquet`: both are blocked on a Kelp
-Watch fetcher that does not exist and on analysis polygons that have not been
-drawn, so a comparison table today would be a join against an empty one.
-`kelpcompare features` currently builds the environmental half of the zone.
+One row per **`polygon_id × env_source × site_id × parameter × depth_m × year ×
+quarter × lag`**, for lags 0–4 quarters. Earlier drafts of this document keyed
+it on `polygon_id × site_id × year × quarter × lag`; that cannot represent a
+site carrying several parameters, or one parameter at two depths, and every
+station does. The key gained the environmental series key rather than the table
+gaining a column per parameter.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `polygon_id` | VARCHAR | The kelp side |
+| `env_source`, `site_id`, `parameter`, `depth_m` | — | The environmental series key |
+| `year`, `quarter` | INT | The **kelp** quarter, *t* |
+| `lag` | TINYINT | 0–4 quarters |
+| `env_year`, `env_quarter` | INT | *t − lag*, recorded so the lag is auditable from the row |
+| `kelp_usable`, `env_usable` | BOOLEAN | Both sides' flags; `env_usable` is null where no environmental row was found |
+| `kelp_watch_revision` | INT | Closes the provenance chain in the table figures are made from |
+| `{kelp feature}_anom` | DOUBLE | The kelp anomalies at *t* |
+| `{env feature}_anom` | DOUBLE | The environmental anomalies at *t − lag*, under the names `quarterly_env` gives them |
+
+**The lag has one direction and it is written down: the environment leads, kelp
+responds.** Lag 2 on a 2015Q3 row is kelp in 2015Q3 against the water in
+2015Q1. Getting this backwards raises nothing — it produces a correlation matrix
+that reads as kelp predicting temperature, which is a *result* rather than an
+error. `env_year` and `env_quarter` are on the row so a reviewer can check it by
+reading one, and the direction is asserted in the tests on a hand-built pair.
+
+**A row exists wherever kelp does.** The response variable defines the row and
+the environment is joined onto it, so a lag reaching back before the
+environmental record produces nulls on that side rather than a missing row. That
+is what makes "the environmental record does not reach this quarter" a queryable
+fact rather than an absence to be inferred. On today's data most of the table is
+of that kind: kelp begins in 1984 and the LJAC1 archive in 2007.
+
+**Both usability flags are carried and nothing is filtered.** `usable` stays the
+single gate, applied once by the analysis, rather than becoming a hidden
+deletion here. A reader who filters on both gets the same answer this stage
+would have given, and can see what filtering cost.
+
+**Which polygon pairs with which site comes from `polygons.geojson`**, so no
+analysis code string-matches a polygon name against a station name. The *series*
+come from `quarterly_env` rather than from the registry, because the registry
+names sites and a site carries several series — inventing a pair for a parameter
+nobody measured would fill the table with rows that can never be anything but
+null.
+
+**Regenerated wholesale** by `kelpcompare features`, from the two quarterly
+tables as they stand on disk rather than from the run's own outcomes. A
+`--source ndbc` rerun must still reflect every polygon beside it, and reading
+the zone is what makes the table a function of the zone rather than of the last
+run's arguments. Wholesale rather than source-scoped, because a pair the
+registry no longer declares must lose its rows rather than keep them forever.
+
+Event covariates for the lagged quarter — marine heatwave days, ENSO state, wave
+events (doc 04 §2) — are not present. Each needs an external source ingested
+first.
 
 ## Run manifests
 
@@ -575,10 +681,19 @@ it has: `qc` the flag histogram and the tests it ran, `features` the quarters
 produced, the quarters usable, and the first and last quarter covered — which
 is what makes coverage attrition readable without opening the Parquet.
 
+A **kelp** series is a polygon rather than a site and has no parameter or depth,
+so it fills `polygon_id` and leaves those empty — the same alternative the file
+entry draws. It also fills `quarters_observed` beside `quarters_usable`, because
+a bed can be fully observed and mostly unusable, or the reverse, and one number
+cannot say which.
+
 ## Integrity rules
 
-Raw zone is append-only. `observations` is rebuildable from raw;
-`features` and `comparison` are rebuildable from observations; a single
-`kelpcompare rebuild` regenerates derived zones from scratch. All joins go
+Raw zone is append-only. `observations` is rebuildable from raw; `features`
+and `comparison` are rebuildable from **raw and observations** — the kelp half
+is built from the Kelp Watch landings plus `polygons.geojson` and never passes
+through `observations`, because a canopy value belongs to a polygon and that
+zone is keyed on `site_id`. A single `kelpcompare rebuild` regenerates derived
+zones from scratch. All joins go
 through registry keys — no string-matching station names in analysis code.
 Timestamps UTC everywhere; local time exists only at presentation.
