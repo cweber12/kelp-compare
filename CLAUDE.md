@@ -133,6 +133,19 @@ run is never committed — that is what makes "every commit was green" a true
 statement about the history rather than an aspiration. Stage the files the
 slice is about, by name; untracked session artifacts are never swept in.
 
+**Checking that claim after the fact needs `PYTHONPATH`.** The venv installs
+`kelpcompare` as an editable pointing at this checkout, so `pytest` run inside a
+`git worktree` still imports `src/` from the main working tree — it silently
+tests each commit's *tests* against the *current* source, which is not the
+question. Point the interpreter at the worktree's own source and confirm it took:
+
+    git worktree add -q --detach /tmp/check <sha>
+    cd /tmp/check && PYTHONPATH=/tmp/check/src pytest -q
+    # sanity: python -c "import kelpcompare; print(kelpcompare.__file__)"
+
+Do not report a per-commit green run without that, or the number is about the
+working tree rather than about the history.
+
 Push once, after the last slice, so the PR arrives finished and CI runs on a
 complete branch rather than flickering red and green while work is still going
 on:
