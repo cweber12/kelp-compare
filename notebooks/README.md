@@ -55,14 +55,14 @@ drop anything the input audit flagged `low_resolution`, keep what rests on an
 effective sample of at least 30 with Pearson and Spearman agreeing to within
 0.05, and take the **three strongest by |r|**.
 
-That last step is a cut, not a criterion. 246 cells clear the conditions before
+That last step is a cut, not a criterion. 233 cells clear the conditions before
 it, so what makes these three the list is that they are the top of a ranking —
 which is exactly the kind of choice this section exists to make visible.
 
 | Polygon | Series | Feature | Lag | r | n_eff | Why it is interesting |
 |---|---|---|---|---|---|---|
-| `KELP:ENCINITAS` | LJAC1 sea water temp | `days_below_14c` | 4 | +0.42 | 50.5 | The cold-water/nitrate association docs/04 §2 predicts, at a one-year lag |
-| `KELP:SOLANA-BEACH` | LJAC1 sea water temp | `days_below_14c` | 4 | +0.35 | 49.6 | The same relationship in a neighbouring bed, at the same lag |
+| `KELP:ENCINITAS` | LJAC1 sea water temp | `days_below_14c` | 4 | +0.42 | 50.6 | The cold-water/nitrate association docs/04 §2 predicts, at a one-year lag |
+| `KELP:SOLANA-BEACH` | LJAC1 sea water temp | `days_below_14c` | 4 | +0.35 | 49.8 | The same relationship in a neighbouring bed, at the same lag |
 | `KELP:IMPERIAL-BEACH` | LJAC1 wind speed | `variance` | 2 | −0.38 | 50.0 | Not predicted by docs/04; treat with more suspicion, not less |
 
 Two things to weigh before registering any of them:
@@ -74,11 +74,15 @@ Two things to weigh before registering any of them:
   project sensor has three weeks of record, so docs/04 §4.5 — whether the
   project's own sensors beat the public station — cannot be attempted yet.
 - **`n_eff` is a ceiling, and it is loosest exactly here.** It corrects for
-  lag-1 persistence only, and the kelp anomaly is still autocorrelated at ≈0.32
-  four quarters out. Under a higher-order (Bartlett) correction the two
-  `days_below_14c` cells fall to 40.7 and 35.5. Register them on the
-  understanding that their evidence is nearer 36–41 quarters than 50.
-- **243 cells clear every condition above and were cut by the top-three rule**,
+  lag-1 persistence only — measured across calendar-adjacent quarters, so a
+  cloud gap or a missing Q2 breaks the pair instead of being counted as one —
+  and the kelp anomaly is still autocorrelated at 0.24 to 0.32 four quarters
+  out across the six beds. Under a higher-order Bartlett
+  correction — truncated at *K* = ⌊*n*/4⌋ = 17, with the (1 − *k*/*n*) taper,
+  stated so the figure can be checked — the two `days_below_14c` cells fall to
+  42.0 and 40.2. Register them on the understanding that their evidence is
+  nearer 40–42 quarters than 50.
+- **230 cells clear every condition above and were cut by the top-three rule**,
   which is the size of the choice being made here. The two strongest of them,
   named so the cut is visible rather than silent: `KELP:ENCINITAS` sea water
   temp `min` at lag 4 (r −0.31) and `KELP:IMPERIAL-BEACH` wind speed `mean` at
