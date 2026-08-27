@@ -86,9 +86,15 @@ table. This is the evidence base for the claim that non-NOAA/SCCOOS
 sensors are trustworthy — and later, for the more interesting claim that
 they capture *local* signal the public network misses.
 
-Not built: it is blocked on the public-source fetchers (doc 02), since there is
-no neighbor series to compare against until one exists. `sites.json` already
-carries the `neighbor_refs` this will read.
+Not built, and the blocker is no longer the one this section first recorded. The
+public-station half of the comparison exists: `NDBC:LJAC1` now carries 2007–2026
+in `observations/`, and `sites.json` names it in `PROJ:YELLOW-BUOY`'s
+`neighbor_refs` beside `COOPS:9410230`. What is still missing is the other
+neighbour — no satellite SST fetcher exists, and none for CO-OPS either (doc 02)
+— and, more immediately, the sensor side of it: **no project-sensor deployment
+has been ingested**, so there is nothing in `observations/` to validate. The
+three-week TidbiT record the QC thresholds above were sized against lives in
+`tests/fixtures/`, which is not a zone.
 
 ## 2. Quarterly feature definitions
 
@@ -270,20 +276,28 @@ table. The climatology is written to its own table with its mean, standard
 deviation, contributing-year count and window (doc 03), so the promise that
 anomalies do not shift is checkable by diffing two runs.
 
-**The environmental anomaly columns are still null on today's data.** No
-environmental series in this project yet spans 2007–2019: the only project
-deployment is three weeks long, which is roughly a quarter of one quarter and
-therefore unusable by the coverage rule. The columns ship anyway rather than
-being deferred, so the schema does not change under downstream readers when real
-multi-decade history lands.
+**The environmental anomaly columns are populated for the public station and
+empty for the project sensor.** `NDBC:LJAC1` spans the baseline window on every
+parameter — thirteen usable years in 2007–2019 for `sea_water_temperature`,
+eleven for `air_temperature` and `wind_speed` — so 178 of its 231 quarterly rows
+carry at least one anomaly, against baselines of ten to thirteen years. The
+exception is Q2 for the two met parameters, whose Q2 baseline holds nine years
+against the ten-year minimum and therefore produces nothing. The project sensor
+is the half still empty, and doubly so: its only deployment is three weeks long,
+which is roughly a quarter of one quarter and unusable by the coverage rule, and
+it has not been ingested at all.
 
-**The kelp anomalies are real.** The Kelp Watch record runs 1984–2026, so every
-polygon clears the ten-year minimum with all thirteen baseline years
-contributing, and `quarterly_kelp` is the first table in the project with a
-populated anomaly column. That also makes it the first exercise of the shared
-climatology against a series long enough to have one — the environmental half
-has only ever produced nulls, so until now the machinery was untested against
-its own purpose.
+The columns shipped before any of this was true, rather than being deferred, and
+that decision paid: the schema did not change under downstream readers when the
+LJAC1 history landed.
+
+**The kelp anomalies are real, and denser than the environmental ones.** The
+Kelp Watch record runs 1984–2026, so every polygon clears the ten-year minimum
+with all thirteen baseline years contributing, and 976 of 1,020 quarterly rows
+carry an anomaly. The shared climatology therefore now runs against a long
+enough series on both sides of the comparison rather than one — and because a
+single implementation produces both (doc 03), the two halves cannot drift apart
+in how they treat a baseline.
 
 One consequence follows immediately and is worth stating before anyone reads a
 number: the baseline contains the 2014–2016 marine heatwave on the kelp side
