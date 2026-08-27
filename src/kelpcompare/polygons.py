@@ -305,6 +305,7 @@ def _kelp_watch(block, *, path: Path) -> KelpWatch | None:
         raise ValueError(
             f"{path} `kelp_watch` is {block!r}; declare {sorted(_KELP_WATCH_KEYS)} or omit it"
         )
+    block = {key: value for key, value in block.items() if not key.startswith("_")}
     _reject_unknown(block, _KELP_WATCH_KEYS, where="`kelp_watch`", path=path)
 
     revision = block.get("revision")
