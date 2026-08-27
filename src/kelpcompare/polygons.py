@@ -8,10 +8,20 @@ polygon is not a site — it has no instrument, no timezone and no deployment �
 and a canopy value belongs to one of these rather than to a `site_id`, which is
 why the kelp half of the features zone is keyed on `polygon_id`.
 
-The geometry lives in the repository so that which water a number describes is a
-reviewable data change, diffable line by line, rather than a drawing made in a
-browser session nobody can reproduce (docs/01 §2 requires regenerating
-everything from raw with one command).
+The registry has two jobs. It records **which export belongs to which polygon**,
+because a Kelp Watch CSV names the geometry it describes nowhere in the file
+(docs/02) -- only in its filename. And it records **what that geometry was**, so
+that which water a number describes is diffable line by line rather than living
+only in the browser session where it was selected.
+
+Geometry is optional, and that is a change of role rather than a relaxation. The
+export arrives already summed over the selected geometry, so no number in this
+project is computed from these outlines any more; what still needs them is the
+docs/04 §4.5 distance-decay test, and the stage that runs it is the one that
+should refuse a polygon without one. A polygon whose outline has not been
+recorded yet declares `"geometry": null` and says so out loud. A polygon whose
+outline is *malformed* is still refused -- "not drawn yet" and "drawn wrong" are
+different facts and must not collapse into one.
 
 **Declared in WGS84, and said so out loud.** GeoJSON is WGS84 by definition
 (RFC 7946), so a file that names any other reference system is refused rather
@@ -21,12 +31,12 @@ pixels of the wrong ocean. The loaded frame carries `EPSG:4326` explicitly, so
 the aggregation joins against something that states its own units.
 
 The posture is the parameter and feature registries', deliberately: **refuse
-rather than ignore**. An unknown purpose, a missing id, a repeated id, a
-geometry that is null, empty, of the wrong kind, or self-intersecting — each
-raises here, naming the file and the offending feature, because a malformed
-polygon does not fail loudly downstream. It quietly aggregates the wrong pixels
-and produces a plausible series, which is the one failure mode a reviewer
-cannot catch by looking at the output.
+rather than ignore**. An unknown purpose, an unknown property, a missing or
+repeated id, an empty `site_ids`, an absent `source_file`, and a geometry that
+is present but empty, of the wrong kind, or self-intersecting — each raises
+here, naming the file and the offending feature. None of them fails loudly
+downstream: a wrong `source_file` attributes one bed's forty years to another
+polygon, and neither table nor figure would look wrong.
 
 What this module deliberately does **not** check: that each `site_ids` entry
 exists in `sites.json`. That is a cross-file claim, and no registry loader here
@@ -55,14 +65,21 @@ WGS84 = "EPSG:4326"
 #: implements reads in the output exactly like one that was applied.
 POLYGON_PURPOSES = ("control", "near_site", "regional")
 
-#: The geometry kinds an area can be. A point or a line has no interior for a
-#: pixel centroid to fall inside, so it is not an analysis polygon under another
-#: name -- it is a mistake.
+#: The geometry kinds an area can be. A point or a line has no interior and no
+#: extent, so it is not an analysis polygon under another name -- it is a mistake.
 POLYGON_GEOMETRIES = ("Polygon", "MultiPolygon")
 
 #: Properties a feature may carry. `_`-prefixed keys are comments, as in
 #: `features.json`, which is how the shipped file explains itself.
-_PROPERTY_KEYS = frozenset({"polygon_id", "purpose", "site_ids", "name", "notes"})
+_PROPERTY_KEYS = frozenset({"polygon_id", "purpose", "site_ids", "source_file", "name", "notes"})
+
+#: The top-level members the file may carry beside `type` and `features`. `bbox`
+#: is RFC 7946's; `crs` is the superseded 2008 draft's and is only ever refused;
+#: `kelp_watch` is this project's, and pins the dataset revision.
+_COLLECTION_KEYS = frozenset({"type", "features", "bbox", "crs", "kelp_watch"})
+
+#: What the `kelp_watch` member declares.
+_KELP_WATCH_KEYS = frozenset({"revision", "doi"})
 
 #: The GeoJSON member that would name a reference system other than WGS84. It is
 #: from the superseded 2008 draft; RFC 7946 removed it. Present and naming
@@ -78,6 +95,32 @@ _WGS84_NAMES = frozenset(
         "crs84",
     }
 )
+
+
+@dataclass(frozen=True)
+class KelpWatch:
+    """Which revision of the upstream dataset the exports in this registry are.
+
+    The CSV export carries no version of any kind, so this is the only place the
+    provenance chain from a figure back to a DOI can be closed, and an ingest
+    refuses to run without it (docs/02).
+
+    One revision for the whole registry rather than one per polygon, and that is
+    deliberate rather than lazy. A newer revision may revise history as well as
+    extend it -- the upstream product recalibrates between sensors and fills
+    scan-line gaps -- so two revisions must never be mixed inside one analysis.
+    Pinning it once means bumping it obsoletes every landing at the old revision
+    at the same moment, which is loud: a bed not re-exported produces no rows
+    rather than quietly contributing stale ones.
+    """
+
+    revision: int
+    doi: str | None = None
+
+    @property
+    def label(self) -> str:
+        """`ver23` -- the landing directory, so two revisions cannot interleave."""
+        return f"ver{self.revision}"
 
 
 @dataclass(frozen=True)
@@ -98,6 +141,8 @@ class Polygon:
     polygon_id: str
     purpose: str
     site_ids: tuple[str, ...]
+    source_file: str
+    has_geometry: bool = False
     name: str | None = None
     notes: str | None = None
 
@@ -113,6 +158,7 @@ class Polygons:
     path: Path
     polygons: tuple[Polygon, ...]
     frame: gpd.GeoDataFrame
+    kelp_watch: KelpWatch | None = None
 
     def __len__(self) -> int:
         return len(self.polygons)
@@ -132,6 +178,21 @@ class Polygons:
     def get(self, polygon_id: str) -> Polygon | None:
         for polygon in self.polygons:
             if polygon.polygon_id == polygon_id:
+                return polygon
+        return None
+
+    def for_file(self, filename: str) -> Polygon | None:
+        """The polygon whose export arrives under this filename, or None.
+
+        The registry gate for this source (hard rule 5, docs/02): a Kelp Watch
+        CSV carries no identifier for the geometry it describes, so an export
+        the registry does not claim is quarantined rather than attributed to a
+        polygon by guesswork. Matched case-insensitively on the name alone, so
+        moving the file between directories does not unclaim it.
+        """
+        wanted = Path(filename).name.casefold()
+        for polygon in self.polygons:
+            if polygon.source_file.casefold() == wanted:
                 return polygon
         return None
 
@@ -167,7 +228,12 @@ def load_polygons(path: Path | str | None = None) -> Polygons:
     )
     _check_unique(records, path=resolved)
 
-    return Polygons(path=resolved, polygons=records, frame=_frame(features, path=resolved))
+    return Polygons(
+        path=resolved,
+        polygons=records,
+        frame=_frame(features, path=resolved),
+        kelp_watch=_kelp_watch(payload.get("kelp_watch"), path=resolved),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -185,6 +251,13 @@ def _check_collection(payload, *, path: Path) -> None:
     features = payload.get("features", [])
     if features is not None and not isinstance(features, list):
         raise ValueError(f"{path} `features` is {type(features).__name__}, not a list of Features")
+
+    _reject_unknown(
+        {k: v for k, v in payload.items() if not k.startswith("_")},
+        _COLLECTION_KEYS,
+        where="the collection",
+        path=path,
+    )
 
 
 def _check_crs(payload, *, path: Path) -> None:
@@ -218,6 +291,32 @@ def _crs_name(declared) -> str | None:
     return None
 
 
+def _kelp_watch(block, *, path: Path) -> KelpWatch | None:
+    """The pinned dataset revision, or None if the file does not pin one.
+
+    None rather than a raise, because the registry is legitimately revision-less
+    until the first export is recorded, and a project with polygons drawn and no
+    kelp landed yet is a project mid-way through. It is the *ingest* that
+    refuses, which is the moment a revision would otherwise be invented.
+    """
+    if block is None:
+        return None
+    if not isinstance(block, dict) or not block:
+        raise ValueError(
+            f"{path} `kelp_watch` is {block!r}; declare {sorted(_KELP_WATCH_KEYS)} or omit it"
+        )
+    _reject_unknown(block, _KELP_WATCH_KEYS, where="`kelp_watch`", path=path)
+
+    revision = block.get("revision")
+    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+        raise ValueError(
+            f"{path} `kelp_watch.revision` is {revision!r}; expected the whole revision "
+            "number the export's recommended citation names, e.g. 23"
+        )
+    doi = block.get("doi")
+    return KelpWatch(revision=revision, doi=None if doi is None else str(doi))
+
+
 def _check_unique(records: tuple[Polygon, ...], *, path: Path) -> None:
     seen: set[str] = set()
     for record in records:
@@ -246,14 +345,46 @@ def _polygon(feature, *, index: int, path: Path) -> Polygon:
     polygon_id = _identifier(properties.get("polygon_id"), where=where, path=path)
     where = f"polygon {polygon_id!r}"
 
-    _check_geometry(feature.get("geometry"), where=where, path=path)
+    if "geometry" not in feature:
+        raise ValueError(
+            f"{path} {where} has no `geometry` member; every GeoJSON Feature has one "
+            '(RFC 7946). Declare `"geometry": null` to say the outline is not recorded yet'
+        )
+    drawn = _check_geometry(feature["geometry"], where=where, path=path)
+
     return Polygon(
         polygon_id=polygon_id,
         purpose=_purpose(properties.get("purpose"), where=where, path=path),
         site_ids=_site_ids(properties.get("site_ids"), where=where, path=path),
+        source_file=_source_file(properties.get("source_file"), where=where, path=path),
+        has_geometry=drawn,
         name=_optional_text(properties.get("name")),
         notes=_optional_text(properties.get("notes")),
     )
+
+
+def _source_file(value, *, where: str, path: Path) -> str:
+    """The filename this polygon's export arrives under. Required.
+
+    Required for the reason `site_ids` is: a Kelp Watch CSV names the geometry
+    it describes nowhere in the file (docs/02), so a polygon that claims no
+    export can never receive a row -- it would sit in the registry looking like
+    coverage while contributing nothing, which is a half-finished edit rather
+    than a decision.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"{path} {where} declares source_file {value!r}; name the export file this "
+            'polygon\'s rows arrive in, e.g. "kelp_lajolla.csv" -- the CSV itself carries '
+            "no identifier for the geometry it describes"
+        )
+    name = value.strip()
+    if Path(name).name != name:
+        raise ValueError(
+            f"{path} {where} declares source_file {name!r}; give the file's name alone, "
+            "not a path -- where the operator drops it is not a registry fact"
+        )
+    return name
 
 
 def _identifier(value, *, where: str, path: Path) -> str:
@@ -305,27 +436,30 @@ def _site_ids(value, *, where: str, path: Path) -> tuple[str, ...]:
     return tuple(ids)
 
 
-def _check_geometry(geometry, *, where: str, path: Path) -> None:
-    """Refuse anything a pixel centroid cannot fall inside.
+def _check_geometry(geometry, *, where: str, path: Path) -> bool:
+    """Whether an outline was recorded, refusing anything that is not an area.
+
+    A null geometry is accepted and reported as "not recorded yet": the export
+    arrives already summed over the selected geometry, so no number depends on
+    the outline, and forcing an invented one into the registry to satisfy a
+    loader would be worse than recording its absence. What is still refused is a
+    geometry that is *present and wrong* -- a point, a line, an empty ring, a
+    ring that crosses itself. "Not drawn yet" and "drawn wrong" are different
+    facts, and only one of them is a mistake.
 
     Checked before the frame is built so the message names the polygon rather
-    than an index into a batch construction, and checked at all because every
-    one of these failures produces a *series* downstream rather than an error:
-    a null or empty geometry contains no pixel and yields an all-null column,
-    and a self-intersecting one contains an area nobody drew.
+    than an index into a batch construction.
     """
     if geometry is None:
-        raise ValueError(
-            f"{path} {where} declares no geometry; a polygon with no area contains no pixel "
-            "and would produce an all-null kelp series rather than an error"
-        )
+        return False
     if not isinstance(geometry, dict) or geometry.get("type") not in POLYGON_GEOMETRIES:
         kind = geometry.get("type") if isinstance(geometry, dict) else type(geometry).__name__
         raise ValueError(
             f"{path} {where} has geometry type {kind!r}; an analysis polygon is one of "
-            f"{list(POLYGON_GEOMETRIES)} -- a point or a line has no interior for a pixel "
-            "centroid to fall inside"
+            f"{list(POLYGON_GEOMETRIES)} -- a point or a line has no extent. Use null if the "
+            "outline has simply not been recorded yet"
         )
+    return True
 
 
 def _reject_unknown(block: dict, allowed: frozenset[str], *, where: str, path: Path) -> None:
@@ -392,27 +526,35 @@ def _locate(features: list, error: Exception, *, path: Path) -> str:
 def _check_built(frame: gpd.GeoDataFrame, *, path: Path) -> None:
     """The checks that need the geometry constructed: empty, and self-intersecting.
 
-    Vectorised rather than per-feature because that is how the aggregation will
+    Vectorised rather than per-feature because that is how a spatial join will
     use the same frame, and because an invalid ring is a property of the built
     polygon rather than of the JSON it came from.
-    """
-    for polygon_id, geometry in zip(frame["polygon_id"], frame.geometry, strict=True):
-        if geometry is None:
-            raise ValueError(f"{path} polygon {polygon_id!r} built no geometry")
 
-    empty = frame.loc[frame.geometry.is_empty, "polygon_id"].tolist()
+    A polygon that declared no outline is skipped rather than judged. Both
+    predicates would condemn it -- geopandas reports a missing geometry as
+    invalid -- and "not recorded yet" is not the mistake these checks exist to
+    catch.
+    """
+    # An explicit `is not None` rather than `notna()`: geopandas has changed its
+    # mind about whether an *empty* geometry counts as missing, and this needs
+    # empties kept in -- they are the mistake the next check is looking for.
+    drawn = frame.loc[[geometry is not None for geometry in frame.geometry]]
+    if drawn.empty:
+        return
+
+    empty = drawn.loc[drawn.geometry.is_empty, "polygon_id"].tolist()
     if empty:
         raise ValueError(
-            f"{path} polygon(s) {empty} are empty; an empty polygon contains no pixel and "
-            "would produce an all-null kelp series rather than an error"
+            f"{path} polygon(s) {empty} have an empty geometry; that is an outline of no "
+            "extent rather than an absent one -- use null to say it is not recorded yet"
         )
 
-    invalid = frame.loc[~frame.geometry.is_valid, "polygon_id"].tolist()
+    invalid = drawn.loc[~drawn.geometry.is_valid, "polygon_id"].tolist()
     if invalid:
         raise ValueError(
             f"{path} polygon(s) {invalid} are not valid geometry -- a ring that crosses "
-            "itself encloses an area nobody drew, and every pixel test against it is a "
-            "guess. Fix the coordinates rather than letting the aggregation resolve it."
+            "itself encloses an area nobody drew. Fix the coordinates rather than leaving "
+            "a later spatial join to resolve it."
         )
 
 
@@ -421,6 +563,7 @@ __all__ = [
     "POLYGON_GEOMETRIES",
     "POLYGON_PURPOSES",
     "WGS84",
+    "KelpWatch",
     "Polygon",
     "Polygons",
     "load_polygons",
