@@ -55,7 +55,7 @@ drop anything the input audit flagged `low_resolution`, keep what rests on an
 effective sample of at least 30 with Pearson and Spearman agreeing to within
 0.05, and take the **three strongest by |r|**.
 
-That last step is a cut, not a criterion. 262 cells clear the conditions before
+That last step is a cut, not a criterion. 246 cells clear the conditions before
 it, so what makes these three the list is that they are the top of a ranking —
 which is exactly the kind of choice this section exists to make visible.
 
@@ -78,11 +78,12 @@ Two things to weigh before registering any of them:
   four quarters out. Under a higher-order (Bartlett) correction the two
   `days_below_14c` cells fall to 40.7 and 35.5. Register them on the
   understanding that their evidence is nearer 36–41 quarters than 50.
-- **Three cells clear every condition above and were cut by the top-three
-  rule**, named here so the cut is visible rather than silent: `KELP:ENCINITAS`
-  sea water temp `min` at lag 4 (r −0.31), `KELP:IMPERIAL-BEACH` wind speed
-  `mean` at lag 2 (r −0.34), and — dropped one step earlier, for
-  `low_resolution` — `KELP:SOLANA-BEACH` wind speed `p05` at lag 3 (r +0.35).
+- **243 cells clear every condition above and were cut by the top-three rule**,
+  which is the size of the choice being made here. The two strongest of them,
+  named so the cut is visible rather than silent: `KELP:ENCINITAS` sea water
+  temp `min` at lag 4 (r −0.31) and `KELP:IMPERIAL-BEACH` wind speed `mean` at
+  lag 2 (r −0.34); and — dropped one step earlier, for `low_resolution` rather
+  than by the cut — `KELP:SOLANA-BEACH` wind speed `p05` at lag 3 (r +0.35).
   The first is the cold-water association the two listed `days_below_14c` cells
   already carry and the second is the same station, lag and quarter-set as the
   wind speed row above it, so on this reading neither adds an independent
