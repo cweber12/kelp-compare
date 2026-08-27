@@ -54,7 +54,7 @@ def data_root(tmp_path) -> Path:
 def offline(monkeypatch):
     """Serve the recorded NDBC payloads in place of the network."""
 
-    def realtime(station, *, session=None):
+    def realtime(station, *, session=None, validators=None):
         return new_payload(
             "ndbc",
             station.upper(),
@@ -63,7 +63,7 @@ def offline(monkeypatch):
             REALTIME.read_bytes(),
         )
 
-    def archive(station, year, *, session=None):
+    def archive(station, year, *, session=None, validators=None):
         return new_payload(
             "ndbc",
             station.upper(),
