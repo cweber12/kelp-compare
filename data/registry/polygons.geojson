@@ -1,5 +1,5 @@
 {
-  "_comment": "Kelp Watch analysis polygons per docs/03. Draw near-site + control polygons on kelpwatch.org, export their quarterly CSVs, and record the geometries here.",
+  "_comment": "Kelp Watch analysis polygons per docs/03. One Feature per area the analysis compares kelp over, in WGS84 -- GeoJSON has no other reference system (RFC 7946), and a file that names one is refused rather than reprojected, because a polygon shifted by hundreds of metres is tens of 30 m Landsat pixels of the wrong ocean. Each feature declares polygon_id (the key every kelp and comparison row joins on), purpose (near_site, control or regional), and site_ids -- the stations this polygon is compared against, which is what stops analysis code string-matching a polygon name. name and notes are optional; _-prefixed keys are comments. Geometry must be a Polygon or MultiPolygon: a point has no interior for a pixel centroid to fall inside. Empty on purpose -- where the polygons go is a scientific decision, and near-site polygons in particular are blocked on the yellow buoy's unverified position (see PROJ:YELLOW-BUOY in sites.json). Adding one is a data(registry) change needing no code.",
   "type": "FeatureCollection",
   "features": []
 }

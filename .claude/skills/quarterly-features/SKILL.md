@@ -10,8 +10,18 @@ docs/03-data-model.md (`quarterly_env`, `climatology_env`). Where the
 configuration lives and why: ADR-006.
 
 Built: `kelpcompare features` produces `quarterly_env.parquet` and
-`climatology_env.parquet`. Not built: `quarterly_kelp.parquet` and
-`comparison.parquet`, both blocked on a Kelp Watch fetcher.
+`climatology_env.parquet`. Also built: the analysis polygon registry
+(`polygons.geojson`, `kelpcompare.polygons`), and the climatology generalised
+over its series key -- the caller passes which columns identify one series and
+which are measured features, so kelp (`polygon_id`) and environment
+(`source, site_id, parameter, depth_m`) share one implementation and cannot
+drift apart. Passing the wrong key for a table raises rather than coming back
+empty.
+
+Not built: `quarterly_kelp.parquet` and `comparison.parquet`. Blocked on
+access, not effort -- EDI requires authentication for all API calls since
+2026-07-30, so the source payload cannot be landed and its structure cannot be
+verified (docs/02 "Kelp Watch"; issue #25).
 
 ## Calendar and alignment
 

@@ -19,7 +19,11 @@ import pytest
 
 from kelpcompare.features.climatology import (
     CLIMATOLOGY_COLUMNS,
+    ENV_SERIES,
+    anomaly_columns,
     build_climatology,
+    climatology_columns,
+    climatology_key,
     quarterly_env_columns,
     with_anomalies,
 )
@@ -298,3 +302,140 @@ def test_a_feature_null_in_every_contributing_year_gets_no_baseline_cell():
     climatology = build_climatology(frame, config())
     assert "variance" not in set(climatology["feature"])
     assert with_anomalies(frame, climatology, config())["variance_anom"].isna().all()
+
+
+# --------------------------------------------------------------------------
+# One implementation, two series keys
+# --------------------------------------------------------------------------
+#
+# The environmental half is keyed on source/site/parameter/depth; the kelp half
+# is keyed on polygon. These cases drive the same functions with the second key,
+# because a generalisation whose only caller is the one it was generalised out
+# of proves nothing -- and "both sides of a correlation were treated the same
+# way" has to be a fact about the program rather than a claim about two of them.
+
+
+POLYGON_SERIES = ("polygon_id",)
+
+
+def polygons(rows, cfg=None) -> pd.DataFrame:
+    """A quarterly table keyed on polygon rather than on a QC series.
+
+    Carries only what the climatology contracts for -- the key, year, quarter,
+    the two usability columns and one measured feature -- so a column the
+    environmental table happens to have cannot be what makes this work.
+    """
+    built = [
+        {
+            "polygon_id": polygon_id,
+            "year": year,
+            "quarter": quarter,
+            "usable": True,
+            "quarter_complete": True,
+            "canopy_area_m2": value,
+            **(rest[0] if rest else {}),
+        }
+        for polygon_id, year, quarter, value, *rest in rows
+    ]
+    return pd.DataFrame(built).astype({"polygon_id": "string", "quarter": "int8"})
+
+
+def kelp(rows, cfg=None):
+    cfg = cfg or config()
+    frame = polygons(rows, cfg)
+    measured = ("canopy_area_m2",)
+    climatology = build_climatology(frame, cfg, series=POLYGON_SERIES, measured=measured)
+    built = with_anomalies(frame, climatology, cfg, series=POLYGON_SERIES, measured=measured)
+    return climatology, built
+
+
+def test_a_polygon_keyed_table_gets_a_polygon_keyed_climatology():
+    climatology, _ = kelp(
+        [("KELP:A", 2007, 1, 100.0), ("KELP:A", 2008, 1, 200.0), ("KELP:A", 2009, 1, 300.0)]
+    )
+    assert tuple(climatology.columns) == climatology_columns(POLYGON_SERIES)
+    assert climatology_key(POLYGON_SERIES) == ("polygon_id", "quarter", "feature")
+
+    row = climatology.iloc[0]
+    assert (row["polygon_id"], row["quarter"], row["feature"]) == ("KELP:A", 1, "canopy_area_m2")
+    assert (row["n_years"], row["baseline_mean"]) == (3, 200.0)
+    assert (row["baseline_start_year"], row["baseline_end_year"]) == (2007, 2011)
+
+
+def test_the_same_anomaly_arithmetic_applies_under_the_other_key():
+    _, built = kelp(
+        [("KELP:A", 2007, 1, 100.0), ("KELP:A", 2008, 1, 200.0), ("KELP:A", 2009, 1, 300.0)]
+    )
+    assert built["canopy_area_m2_anom"].tolist() == [-100.0, 0.0, 100.0]
+    assert built["baseline_years"].tolist() == [3, 3, 3]
+
+
+def test_two_polygons_keep_separate_baselines():
+    """The property `depth_m` gives the environmental key, under a key of one column."""
+    climatology, built = kelp(
+        [
+            ("KELP:A", 2007, 1, 100.0),
+            ("KELP:A", 2008, 1, 200.0),
+            ("KELP:A", 2009, 1, 300.0),
+            ("KELP:B", 2007, 1, 10.0),
+            ("KELP:B", 2008, 1, 20.0),
+            ("KELP:B", 2009, 1, 30.0),
+        ]
+    )
+    means = climatology.set_index("polygon_id")["baseline_mean"]
+    assert means.to_dict() == {"KELP:A": 200.0, "KELP:B": 20.0}
+    assert built["canopy_area_m2_anom"].tolist() == [-100.0, 0.0, 100.0, -10.0, 0.0, 10.0]
+
+
+def test_a_thin_baseline_produces_no_kelp_anomaly_either():
+    """The same rule, not a second copy of it: a difference against a two-year
+    mean is not an anomaly on either side of the comparison."""
+    _, built = kelp([("KELP:A", 2007, 1, 100.0), ("KELP:A", 2008, 1, 200.0)])
+    assert built["canopy_area_m2_anom"].isna().all()
+    assert built["baseline_years"].tolist() == [2, 2]
+
+
+def test_a_cloud_gapped_kelp_quarter_does_not_drag_its_own_baseline():
+    """Hard rule 3 on the kelp side, through the environmental contributor rule."""
+    rows = [
+        ("KELP:A", 2007, 1, 100.0),
+        ("KELP:A", 2008, 1, 200.0),
+        ("KELP:A", 2009, 1, 300.0),
+        ("KELP:A", 2010, 1, 5000.0, {"usable": False}),
+    ]
+    climatology, built = kelp(rows)
+    assert climatology.iloc[0]["baseline_mean"] == 200.0
+    assert climatology.iloc[0]["n_years"] == 3
+    # ...and the unusable quarter still gets its anomaly, as an unusable
+    # environmental quarter does. `usable` stays the single gate.
+    assert built["canopy_area_m2_anom"].tolist()[-1] == 4800.0
+
+
+def test_the_appended_columns_are_the_same_on_both_sides():
+    assert anomaly_columns(("canopy_area_m2",)) == ("baseline_years", "canopy_area_m2_anom")
+    _, built = kelp([("KELP:A", 2007, 1, 100.0)])
+    assert tuple(built.columns)[-2:] == anomaly_columns(("canopy_area_m2",))
+
+
+def test_a_series_key_the_table_is_not_keyed_on_raises_rather_than_coming_back_empty():
+    """Passing one half's key against the other half's table would otherwise
+    produce an empty climatology, which reads as "no baseline yet"."""
+    frame = polygons([("KELP:A", 2007, 1, 100.0)])
+
+    with pytest.raises(ValueError) as raised:
+        build_climatology(frame, config(), series=ENV_SERIES)
+    assert "site_id" in str(raised.value)
+
+    with pytest.raises(ValueError) as raised:
+        with_anomalies(frame, pd.DataFrame(), config(), series=ENV_SERIES)
+    assert "site_id" in str(raised.value)
+
+
+def test_a_quarterly_table_missing_its_usability_bookkeeping_raises():
+    """Those two columns decide who contributes to a baseline, so a table
+    without them cannot have one built -- silently or otherwise."""
+    frame = polygons([("KELP:A", 2007, 1, 100.0)]).drop(columns=["quarter_complete"])
+
+    with pytest.raises(ValueError) as raised:
+        build_climatology(frame, config(), series=POLYGON_SERIES)
+    assert "quarter_complete" in str(raised.value)
