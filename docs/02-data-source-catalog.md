@@ -12,7 +12,7 @@ implementation, since public endpoints and formats drift.
 
 | Source | Role | Access | Native cadence | Format |
 |--------|------|--------|----------------|--------|
-| Kelp Watch | Baseline response variable | EDI data package `knb-lter-sbc.74` — **authentication required** | Quarterly | NetCDF |
+| Kelp Watch | Baseline response variable | Hand-downloaded CSV export, dropped in `raw/kelpwatch/incoming/` | Quarterly | CSV |
 | Project sensors | Primary predictors under evaluation | Local files from loggers | ~minutes | Vendor CSV |
 | NDBC | Reference met/ocean observations | HTTPS text files | 6 min – 1 hr | Fixed-width text |
 | NOAA CO-OPS | Water level, coastal water temp | REST API (JSON/CSV) | 6 min / hourly | JSON, CSV |
@@ -23,103 +23,156 @@ implementation, since public endpoints and formats drift.
 
 ## Kelp Watch
 
-**Not implemented, and currently blocked on access** —
-https://github.com/cweber12/kelp-compare/issues/25.
-
 The response variable. Quarterly kelp canopy at 30 m resolution for the west
-coast since 1984.
+coast since 1984, aggregated to a selected geometry.
 
-### The source of record is the published dataset, not the website
+Everything below the next two subsections was verified against real exports on
+2026-08-26; the files are recorded whole in `tests/fixtures/kelpwatch/`.
 
-SBC LTER **`knb-lter-sbc.74`** on the Environmental Data Initiative — "Time
-series of quarterly NetCDF files of kelp biomass in the canopy from Landsat 5,
-7 and 8, since 1984 (ongoing)". It is the data the kelpwatch.org platform is
-built on, with a revision number and a DOI attached.
+### The route: a hand-downloaded CSV export
 
-The kelpwatch.org UI export was rejected as the source of record: it is
-hand-driven and unversioned, so `kelpcompare rebuild` cannot re-derive it, the
-polygon geometry lives in a browser session rather than in the repository, and
-there is no revision to cite. Doc 01 §2 requires regenerating everything from
-raw with one command, and that breaks at the first step. The undocumented
-backend API the map UI consumes was rejected too — unversioned, free to change
-without notice, and nothing to cite. Report card PDFs are methodology
-references, not a data source.
+**The operator selects a kelp bed on kelpwatch.org, exports its quarterly CSV,
+and drops the file in `raw/kelpwatch/incoming/`.** This is a file-drop source
+like the project sensors, not a pulled one — there is no fetcher and no network
+path, and `ingest --source kelpwatch` lands the file and writes a manifest
+exactly as the HOBO ingest does.
 
-The revision is pinned in the registry rather than in code, so moving to a newer
-one is a reviewable data change and "whatever is current today" can never
-quietly become the source of record.
+This is a deliberate retreat from the published data package, and the reason is
+access rather than preference. The source of record *ought* to be SBC LTER
+`knb-lter-sbc.74` on the Environmental Data Initiative, which is the dataset the
+kelpwatch.org platform is built on and which carries a revision number and a
+DOI. **Every PASTA REST method returns HTTP 403 to an anonymous caller as of
+2026-08-26** — reads and listing calls alike, and the denial is global rather
+than specific to this package — because EDI has required authentication for all
+API access since 2026-07-30, following a denial-of-service attack. The API
+documentation at `pastaplus-core.readthedocs.io` still shows anonymous examples
+and is stale on this point; do not take it as evidence the endpoint is open. A
+credential cannot live in `data/registry/`, which is committed and public.
 
-### Access requires authentication (verified 2026-08-26)
+The cost of the retreat, stated rather than discovered:
 
-**Every PASTA REST method returns HTTP 403 to an anonymous caller** — reads,
-and the calls that merely list what exists:
+| | the data package | this export |
+|---|---|---|
+| species | giant and bull kelp separately | **not distinguished** |
+| biomass | giant kelp canopy biomass | **absent** |
+| resolution | per 30 m pixel | already summed to the selected geometry |
+| refresh | one command | a human, once a quarter |
+| geometry | drawn in this repository | chosen in a browser session |
 
-| Request | Response |
-|---|---|
-| `GET https://pasta.lternet.edu/package/eml/knb-lter-sbc/74` | 403, `listDataPackageRevisions` |
-| `GET .../package/eml/knb-lter-sbc/74/18` | 403, `readDataPackage` |
-| `GET .../package/metadata/eml/knb-lter-sbc/74/18` | 403, `readMetadata` |
-| `GET .../package/data/eml/knb-lter-sbc/74/18` | 403, `listDataEntities` |
-| `GET .../package/eml` | 403, `listDataPackageScopes` |
+`quarterly_kelp` is therefore a narrower table than it would otherwise be, and
+the polygon geometry recorded in `polygons.geojson` is provenance rather than an
+input to any number. When an EDI account arrives this becomes a second route to
+the same product rather than a replacement — the schema, the polygon registry
+and the shared climatology are unchanged by which route the numbers took.
 
-The denial is global rather than specific to this package, and
-`portal.edirepository.org` serves a login page for `mapbrowse`,
-`metadataviewer` and `archiveDownload` alike. This is policy, not an outage:
-EDI requires authentication for all REST API access from **2026-07-30**, as a
-deterrent to denial-of-service attacks and scraping. The API documentation at
-`pastaplus-core.readthedocs.io` still shows anonymous examples and is stale on
-this point — do not take it as evidence the endpoint is open.
+### The revision is pinned in the registry
 
-Consequence for this repository: the pinned revision belongs in the registry as
-planned, but a credential cannot — `data/registry/` is committed and the repo is
-public. How the credential reaches the fetcher is an open decision recorded in
-issue #25.
+The CSV carries no version of any kind, so the dataset revision is recorded in
+`polygons.geojson` and an ingest refuses to run without one. It is the export's
+own recommended-citation download that names it:
 
-### What the dataset holds (from its published metadata, 2026-08-26)
+> Bell, T., K. Cavanaugh, D. Siegel. 2024. SBC LTER: Time series of quarterly
+> NetCDF files of kelp biomass in the canopy from Landsat 5, 7 and 8, since 1984
+> (ongoing) **ver 23**. Environmental Data Initiative.
+> `https://doi.org/10.6073/pasta/2c1218b7ebe6967da52000adf02f6a8b`
 
-Retrieved from DataCite for DOI `10.6073/pasta/93b47266b20bc1782c8df9c36169e372`,
-which resolves to **revision 16**:
+Note that a newer revision may revise history as well as extend it — the
+upstream product recalibrates between sensors and fills scan-line-corrector gaps
+— so bumping it is a change to numbers already published, not only an append.
+That is why it is a reviewable `data(registry)` change and why every kelp row
+carries the revision it came from.
 
-- **A single NetCDF file**, holding the quarterly area and biomass means for
-  each Landsat pixel across the three sensors.
-- **Three measured quantities**: canopy area of giant kelp (*Macrocystis
-  pyrifera*), canopy area of bull kelp (*Nereocystis luetkeana*), and canopy
-  biomass of giant kelp (wet weight, kg).
-- **Different spatial extents per quantity.** Area covers all coastal Baja
-  California, California and Oregon including offshore islands; biomass covers
-  Año Nuevo, CA south to the southern range limit in Baja — the range where
-  giant kelp is the dominant canopy former. A polygon north of Año Nuevo
-  therefore has area and no biomass, which is a property of the product, not a
-  gap in the record.
-- **Per-pixel metadata in the same file**: the number of Landsat estimates each
-  quarterly mean was derived from, the number from each sensor, the standard
-  error of the estimate, spatial coordinates, and date.
-- **Irregular temporal coverage by design.** Each instrument repeats every 16
-  days, but cloud cover, instrument failure and mission length (TM 1984–2011,
-  ETM+ 1999–present, OLI 2013–present) make the actual coverage uneven.
-  ETM+ scan-line-corrector gaps were filled by a synchrony-based method
-  upstream.
+### Layout
 
-**Not verified, and not to be guessed at:** the file's variable names, its
-dimensions and whether it is a pixel list or a raster, its time encoding, its
-missing-value encoding, its size, its licence, and which revision is current.
-All of those need the payload, and the payload needs a credential. Issue #24
-records that landing the real file and recording a fixture from it is the first
-slice of the ingest, precisely so none of this is assumed.
+One header line, LF endings, no preamble, six columns:
 
-Recorded in issue #24 from the literature but **not** verified here: the product
-treats a whole 10 × 10 km cell as missing for a quarter when more than 25% of
-its pixels lack a cloud-free acquisition.
+```
+year,quarter,kelp_area_m2,count_cells_kelp,count_cells_no_clouds,count_cells_historic_footprint
+1984,1,3663,13,8309,8309
+1984,2,44812,306,8309,8309
+1984,3,0,0,0,8309
+1984,4,112905,314,5426,8309
+1984,max,112905,314,8309,8309
+```
 
-### Quirks to encode when the parser is written
+- `kelp_area_m2` — emergent canopy area summed over the selected geometry. It is
+  fractional-cover weighted, not `cells × 900`: a cell counted as kelp averages
+  about 126 m² of the 900 m² it could hold, so the area column carries
+  information the counts do not.
+- `count_cells_kelp` — 30 m cells containing canopy this quarter.
+- `count_cells_no_clouds` — cells in the footprint with a cloud-free
+  observation. **The published field dictionary calls these cells "within the
+  unoccupied kelp habitat"**, which would exclude the kelp-bearing ones. It does
+  not: across both fixtures this count is never below `count_cells_kelp` and
+  never above the footprint. Read it as the observed fraction of the whole.
+- `count_cells_historic_footprint` — cells that held canopy at least once over
+  the whole record, i.e. the maximum historical extent. Constant within a file,
+  and the denominator every coverage fraction is taken against.
 
-Quarters with insufficient cloud-free Landsat coverage are **missing, not
-zero** — the parser must distinguish "no kelp" from "no observation", and
-winter quarters are the most affected (hard rule 3). Canopy area and biomass
-move seasonally by nature, so all analysis uses the anomaly transform (doc 04
-§3). The product does distinguish giant from bull kelp, but in the San Diego
-region it is effectively giant kelp; which quantity is the response variable is
-the notebook's choice, so all three are stored.
+**There is no identifier for the selected geometry anywhere in the file.** Which
+bed an export describes lives only in its filename, which is why
+`polygons.geojson` declares the filename each polygon's export arrives under and
+why a file the registry does not claim is quarantined rather than guessed at
+(hard rule 5).
+
+### A quarter nobody could see is written as a zero
+
+**This is the quirk the whole parser turns on, and the published field
+dictionary is wrong about it.** The dictionary says "cells with no numerical
+value correspond to instances when the scene was either obstructed by clouds
+and/or no clear observation of the area was available". There is not one blank
+cell in either fixture. An unobserved quarter is written `0,0,0,<footprint>` —
+identical to a genuine empty quarter in every column except
+`count_cells_no_clouds`.
+
+Read naively that fabricates a zero-canopy measurement, which is exactly what
+hard rule 3 exists to prevent, and it fabricates them where they do most harm:
+
+- Across the six beds exported, **44 quarters have no cloud-free observation and
+  329 are genuinely empty** — every one of the 373 written as `0`.
+- The blind quarters lean winter (9.1% of Q4 and 5.8% of Q1, against 0.8% of
+  Q3), so fabricated zeros would not scatter. They would pile into the winter
+  quarters and read as a seasonal signal, on top of the seasonal cycle doc 04 §3
+  already removes.
+- The damage is worst in a **marginal bed**. Del Mar is genuinely empty for 112
+  of its 170 quarters and unobservable for 8 more; there, zero is the normal
+  reading and eight invented ones would look like nothing at all.
+
+The rule the parser applies: **`count_cells_no_clouds == 0` means the quarter
+was not observed, and its value is null.** Checked rather than assumed — a
+quarter with zero observed cells always reports zero area and zero kelp cells in
+both fixtures, so nulling the value discards no measurement.
+
+### The `max` row is derived, and is not a quarter
+
+Every year but the last carries a fifth row whose `quarter` is the literal token
+`max`. The dictionary describes it as the growing-season maximum, useful for
+year-over-year comparison.
+
+**It is a column-wise maximum, not the peak quarter's row.** La Jolla 1984 shows
+why that matters: the `max` row reports 112,905 m² — Q4's area — beside 8,309
+observed cells, which is Q1's and Q2's figure, not the 5,426 Q4 actually had. So
+it cannot be read as "the best quarter" any more than as a fifth quarter.
+
+It is skipped at parse and the skip is reported in the run manifest, in the same
+posture the NDBC parser reports a token it read as missing. Ingesting it would
+add a fifth quarter to the Kelp Watch calendar, double-count every year's peak,
+and pull every climatology built from it upward.
+
+Two smaller consequences of the same row: the last year carries no `max` row at
+all while it is in progress, so the `max` rows cannot be used to enumerate the
+years either; and the token makes `quarter` a text column on the way in, so it
+must not be parsed as an integer before the row is dropped.
+
+### Other quirks
+
+Canopy area moves seasonally by nature; all analysis uses the anomaly transform
+(doc 04 §3). The Landsat product does distinguish giant kelp from bull kelp, but
+this export does not, and in the San Diego region it is effectively giant kelp
+either way. The record begins in 1984Q1 and runs to the last completed quarter —
+2026Q2 as recorded — so an export is a whole record every time rather than an
+increment, and re-ingesting one is a rewrite rather than an append. Report card
+PDFs are methodology references, not a data source.
 
 ## Project sensors
 
