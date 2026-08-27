@@ -13,7 +13,8 @@ rebuildable.
 ```
 data/
   raw/                      # immutable; exactly what the source sent
-    kelpwatch/  ndbc/  coops/  sccoos/  cdip/  gis/  project_sensors/
+    kelpwatch/              # incoming/ then ver{n}/{polygon_id}/{digest}__{name}
+    ndbc/  coops/  sccoos/  cdip/  gis/  project_sensors/
     _manifests/             # one JSON manifest per ingest run
   observations/             # partitioned: source={name}/year={yyyy}/part-{run_id}.parquet
   features/
@@ -260,11 +261,65 @@ One GeoJSON `Feature` per polygon. Properties:
 | `polygon_id` | Required, non-empty. The key every kelp and comparison row joins on |
 | `purpose` | Required, one of `near_site`, `control`, `regional` |
 | `site_ids[]` | Required, non-empty. The sites this polygon is compared against |
+| `source_file` | Required. The Kelp Watch export this polygon's rows arrive in |
 | `name`, `notes` | Optional human labels |
 
-Geometry must be a `Polygon` or a `MultiPolygon` — a point or a line has no
-interior for a pixel centroid to fall inside. `_`-prefixed properties are
+`source_file` is the registry gate for this source. A Kelp Watch export names
+the geometry it describes **nowhere in the file** (doc 02) — only in its
+filename — so the registry is the only thing that can say which polygon a
+dropped CSV belongs to, and one nothing claims is quarantined rather than
+attributed by guesswork (hard rule 5). It is a bare filename, matched
+case-insensitively; where the operator drops the file is not a registry fact.
+Getting it wrong is silent: it attributes one bed's forty years to another
+polygon, and nothing downstream looks wrong.
+
+`site_ids` is required and non-empty for a related reason. A polygon paired
+with no site produces no comparison row at all, so it would sit in the registry
+looking like coverage while vanishing from the analysis.
+
+**Geometry is optional and is provenance, not an input.** The export arrives
+already summed over the geometry selected in the Kelp Watch UI, so no number in
+this project is computed from these outlines. What still needs them is the doc
+04 §4.5 distance-decay test, and that is the stage that should refuse a polygon
+without one. A polygon whose outline has not been recorded declares
+`"geometry": null` and says so; the `geometry` member itself is required,
+because omitting it is an unfinished edit while null is a statement.
+
+A geometry that is *present and wrong* is still refused — a point or a line
+(no extent), an empty ring, or a ring that crosses itself. "Not drawn yet" and
+"drawn wrong" are different facts and must not collapse into one. Drawn
+geometry must be a `Polygon` or a `MultiPolygon`. `_`-prefixed properties are
 comments, as in `features.json`, and are ignored.
+
+### The pinned dataset revision
+
+The file carries one top-level `kelp_watch` member:
+
+```json
+"kelp_watch": {
+  "revision": 23,
+  "doi": "10.6073/pasta/2c1218b7ebe6967da52000adf02f6a8b"
+}
+```
+
+The CSV export carries no version of any kind, so this is the only place the
+provenance chain from a figure back to a citable dataset can be closed, and
+`kelpcompare ingest --source kelpwatch` **refuses to run without it**. That
+refusal is deliberately not fail-soft: a landing made without a revision could
+never be traced afterwards, and "whatever was current that day" would have
+become the source of record.
+
+One revision for the whole registry rather than one per polygon. A newer
+revision may revise history as well as extend it — the upstream product
+recalibrates between sensors and fills scan-line-corrector gaps — so two
+revisions must never be read as one series. Pinning it once means bumping it
+obsoletes every landing at the old revision at the same moment, which is loud:
+a bed not re-exported produces no rows rather than quietly contributing stale
+ones. Landings are segregated by revision on disk, so mixing them is impossible
+rather than merely discouraged.
+
+Absent is allowed at load time and reported; it is the ingest that refuses,
+because that is the moment a revision would otherwise be invented.
 
 **Declared in WGS84, and said so out loud.** GeoJSON is WGS84 by definition
 (RFC 7946), so a file carrying the superseded 2008-draft `crs` member naming
@@ -503,7 +558,12 @@ drawn, so a comparison table today would be a join against an empty one.
 Every ingest/QC/feature run writes
 `raw/_manifests/{run_id}.json`: command, code version (git SHA), sources
 touched, date windows, row counts in/out, QC flag histogram, warnings, and
-upstream gaps encountered. Each input records either an `adapter` or a
+upstream gaps encountered. An input records either a `site_id` or a
+`polygon_id`, never both — an observation belongs to a site and a canopy value
+belongs to a polygon, and calling a polygon a site to save a field would put a
+lie in the audit trail. `dataset_revision` records the upstream version a
+landing came from, for the one source whose file carries no version of its own.
+Each input records either an `adapter` or a
 `fetcher`, never both — how a row was obtained is part of its provenance, and a
 pulled station-window has no adapter to name. Manifests are how any number in a notebook
 traces back to specific fetches — required for publication-grade

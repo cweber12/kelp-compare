@@ -26,11 +26,12 @@ from kelpcompare.features.build import BuildOutcome, build_features
 from kelpcompare.features.climatology import CLIMATOLOGY_KEY
 from kelpcompare.features.config import load_feature_config
 from kelpcompare.features.quarterly import QUARTERLY_KEY
-from kelpcompare.fetchers import ndbc
+from kelpcompare.fetchers import kelpwatch, ndbc
 from kelpcompare.fetchers.base import SourceUnavailable, land
 from kelpcompare.manifest import RunManifest
 from kelpcompare.normalize import to_observations
 from kelpcompare.parameters import load_parameters
+from kelpcompare.polygons import Polygons, load_polygons
 from kelpcompare.qc import evaluate
 from kelpcompare.registry import (
     Deployment,
@@ -55,9 +56,10 @@ from kelpcompare.storage import (
 #: brand is one adapter module and one entry here (docs/06 s4).
 ADAPTERS = (hobo_xlsx,)
 
-#: docs/03 source vocabulary -> its raw landing directory. The names differ on
-#: purpose: the source is `project`, the directory is `project_sensors/`.
-RAW_DIRECTORY = {"project": "project_sensors"}
+#: docs/03 source vocabulary -> its raw landing directory. The names differ for
+#: project sensors on purpose: the source is `project`, the directory is
+#: `project_sensors/`.
+RAW_DIRECTORY = {"project": "project_sensors", kelpwatch.SOURCE: kelpwatch.SOURCE}
 
 #: Sources that are pulled rather than dropped. A new public source is one
 #: fetcher module and one entry here (docs/02). Keyed by the docs/03 source name,
@@ -125,15 +127,21 @@ def ingest(
     registry_path: Path | None,
     dry_run: bool,
 ) -> None:
-    """Land one source's data in raw/ and observations/ (docs/03).
+    """Land one source's data in raw/, and in observations/ where it belongs there.
 
     Two shapes of source, one command, because what an operator wants is the
-    same either way -- everything for this source, landed and normalized, with a
-    manifest. Project sensors arrive as files dropped in `incoming/`; public
-    sources are pulled over HTTP. The options that apply to only one shape say
-    so, and refuse rather than being quietly ignored: `--year 2023` silently
-    doing nothing to a HOBO ingest is how an operator comes to believe they have
-    a year of data they never fetched.
+    same either way -- everything for this source, landed, with a manifest.
+    Project sensors and Kelp Watch exports arrive as files dropped in
+    `incoming/`; public station data is pulled over HTTP. The options that apply
+    to only one shape say so, and refuse rather than being quietly ignored:
+    `--year 2023` silently doing nothing to a HOBO ingest is how an operator
+    comes to believe they have a year of data they never fetched.
+
+    Kelp Watch is the one source that lands raw and writes no observations. A
+    canopy value belongs to a polygon and `observations` is keyed on `site_id`,
+    so its rows are built by `kelpcompare features` from the landing plus
+    `polygons.geojson` -- which also means re-running the build after a registry
+    edit needs no second download (docs/02, docs/03).
     """
     if source in FETCHERS:
         if path is not None:
@@ -155,8 +163,11 @@ def ingest(
     if station or year:
         raise SystemExit(
             f"--station/--year do not apply to {source!r}, which is a file-drop source; "
-            "its deployment windows come from the registry (docs/06 §3)"
+            "its windows come from the registry, not from the command line"
         )
+
+    if source == kelpwatch.SOURCE:
+        return _ingest_kelpwatch(path=path, data_root=data_root, dry_run=dry_run)
 
     zones = Zones.at(data_root)
     registry = load_registry(registry_path or zones.sites_json)
@@ -491,6 +502,123 @@ def _report_features(
 def rebuild() -> None:
     """Regenerate all derived zones from raw/. Not yet implemented."""
     raise SystemExit("rebuild not implemented — see docs/03 integrity rules")
+
+
+# --------------------------------------------------------------------------
+# Kelp Watch exports: landed, never normalized into observations
+# --------------------------------------------------------------------------
+
+
+def _ingest_kelpwatch(*, path: Path | None, data_root: Path | None, dry_run: bool) -> None:
+    """Land every dropped export whose polygon the registry claims (docs/02).
+
+    Two things make this unlike the other file-drop source. It writes nothing
+    into `observations/`, because a canopy value belongs to a polygon and that
+    zone is keyed on `site_id`. And the file's identity is not in the file: a
+    Kelp Watch export names the geometry it describes nowhere, so which polygon
+    it belongs to comes from `polygons.geojson` by filename, and an export the
+    registry does not claim is quarantined rather than attributed by guesswork
+    (hard rule 5).
+
+    The run refuses outright if the registry pins no dataset revision. That is
+    not fail-soft, and deliberately so: the export carries no version of its own,
+    so a landing made without one could never be traced to a citable dataset
+    afterwards, and "whatever was current that day" would have become the source
+    of record (docs/02).
+    """
+    zones = Zones.at(data_root)
+    polygons = load_polygons(zones.polygons_geojson)
+    if polygons.kelp_watch is None:
+        raise SystemExit(
+            f"{zones.polygons_geojson} pins no `kelp_watch.revision`; a Kelp Watch export "
+            "carries no version of its own, so a landing without one could never be traced "
+            "to a citable dataset. Record the revision the export's citation names (docs/02)."
+        )
+
+    inputs = _discover(path or zones.raw_source(kelpwatch.SOURCE) / INCOMING)
+    if not inputs:
+        click.echo(f"nothing to ingest for {kelpwatch.SOURCE!r}")
+        return
+
+    run = RunManifest.start(
+        "ingest",
+        argv=[f"--source={kelpwatch.SOURCE}"],
+        sources=[kelpwatch.SOURCE],
+    )
+    for candidate in inputs:
+        _ingest_export(candidate, zones=zones, polygons=polygons, run=run, dry_run=dry_run)
+
+    _report(run, zones, dry_run=dry_run)
+
+
+def _ingest_export(
+    path: Path, *, zones: Zones, polygons: Polygons, run: RunManifest, dry_run: bool
+) -> None:
+    """One export, start to finish. Never raises (docs/02 fail-soft rule)."""
+    if not kelpwatch.sniff(path):
+        run.add_file(path, "skipped", reason="not a Kelp Watch export (header does not match)")
+        return
+
+    entry = run.add_file(path, "failed", fetcher=kelpwatch.FETCHER_NAME)
+    entry.dataset_revision = polygons.kelp_watch.revision
+
+    polygon = polygons.for_file(path.name)
+    if polygon is None:
+        entry.outcome = "quarantined"
+        entry.reason = (
+            f"no polygon in {polygons.path} declares source_file {path.name!r}; "
+            "the export says nothing about which geometry it describes"
+        )
+        entry.quarantined_to = _as_text(_quarantine(path, zones, dry_run=dry_run))
+        return
+    entry.polygon_id = polygon.polygon_id
+
+    try:
+        parsed = kelpwatch.parse(path, polygon)
+        entry.rows_in = parsed.rows_in
+        entry.rows_out = len(parsed.frame)
+        # Recorded on the entry but not promoted to a run-level warning. Both
+        # fire on every well-formed export -- every file has `max` rows and most
+        # have cloud gaps -- and a warning that always fires stops being read.
+        # What belongs at run level is the gap below, which is an upstream hole.
+        entry.warnings.extend(parsed.warnings)
+        if parsed.quarters_unobserved:
+            run.note_gap(
+                f"{kelpwatch.SOURCE}: {polygon.polygon_id}: {parsed.quarters_unobserved} "
+                f"quarter(s) with no cloud-free observation, stored as null"
+            )
+
+        entry.landed = _as_text(_land_export(path, zones, polygons, polygon, dry_run=dry_run))
+        entry.outcome = "ingested"
+    except Exception as error:  # noqa: BLE001 -- one bad export must not end the run
+        entry.outcome = "failed"
+        entry.reason = f"{type(error).__name__}: {error}"
+        run.note_warning(f"{path.name}: {entry.reason}")
+
+
+def _land_export(path: Path, zones: Zones, polygons: Polygons, polygon, *, dry_run: bool) -> Path:
+    """Copy the export into `raw/kelpwatch/{revision}/{polygon}/`, content-addressed.
+
+    Segregated by revision, because a newer revision may revise history as well
+    as extend it -- so two revisions must never be read as one series, and the
+    directory is what makes mixing them impossible rather than merely discouraged.
+
+    Content-addressed and never overwritten, like every other landing:
+    re-dropping identical bytes is a no-op, and two different exports of one
+    polygon at one revision cannot collide on a name.
+    """
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    target = (
+        zones.raw_source(kelpwatch.SOURCE)
+        / polygons.kelp_watch.label
+        / polygon.polygon_id.replace(":", "_")
+        / f"{digest}__{path.name}"
+    )
+    if dry_run or target.exists():
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, target)
+    return target
 
 
 # --------------------------------------------------------------------------
@@ -840,6 +968,14 @@ def _report(run: RunManifest, zones: Zones, *, dry_run: bool) -> None:
         rows = "" if entry.rows_out is None else f" {entry.rows_out} rows"
         detail = f" -- {entry.reason}" if entry.reason else ""
         click.echo(f"{entry.outcome:>12}  {Path(entry.path).name}{rows}{detail}")
+
+    # Warnings and gaps were manifest-only here, while `qc` and `features` both
+    # printed them. An upstream hole an operator has to open a JSON file to find
+    # is one they will not find -- and for Kelp Watch the hole *is* the result.
+    for warning in run.warnings:
+        click.echo(f"     warning  {warning}")
+    for gap in run.gaps:
+        click.echo(f"         gap  {gap}")
 
     summary = ", ".join(f"{n} {outcome}" for outcome, n in sorted(counts.items()))
     click.echo(f"\n{summary or 'no files'}")

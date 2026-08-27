@@ -52,7 +52,12 @@ _ABSENT = object()
 
 
 def feature(geometry=SQUARE, **properties) -> dict:
-    declared = {"polygon_id": "KELP:A", "purpose": "regional", "site_ids": ["NDBC:LJAC1"]}
+    declared = {
+        "polygon_id": "KELP:A",
+        "purpose": "regional",
+        "site_ids": ["NDBC:LJAC1"],
+        "source_file": "kelp_a.csv",
+    }
     declared.update(properties)
     return {
         "type": "Feature",
@@ -177,11 +182,39 @@ def test_an_empty_collection_loads_and_yields_nothing(tmp_path):
 
 
 def test_the_committed_registry_loads():
-    """The file the repository ships. Empty today; this is what catches the day
-    a polygon is added by hand in a shape the loader refuses."""
+    """The file the repository ships: the six San Diego county beds exported
+    from kelpwatch.org, each claiming the file its rows arrive in."""
     loaded = load_polygons(COMMITTED)
+
     assert loaded.path == COMMITTED
+    assert len(loaded) == 6
     assert all(p.purpose in POLYGON_PURPOSES for p in loaded)
+    assert all(p.source_file.endswith(".csv") for p in loaded)
+    assert all(p.site_ids for p in loaded)
+
+    # Exactly one bed holds a station; the rest are its controls.
+    assert [p.polygon_id for p in loaded if p.purpose == "regional"] == ["KELP:LA-JOLLA"]
+    assert loaded.for_file("kelp_lajolla.csv").polygon_id == "KELP:LA-JOLLA"
+
+
+def test_the_committed_registry_pins_the_revision_the_exports_came_from():
+    kelp_watch = load_polygons(COMMITTED).kelp_watch
+    assert kelp_watch.revision == 23
+    assert kelp_watch.doi == "10.6073/pasta/2c1218b7ebe6967da52000adf02f6a8b"
+
+
+def test_the_committed_registry_claims_every_recorded_fixture():
+    """The fixtures and the registry must not drift: a fixture the registry does
+    not claim would be quarantined by the ingest suite for a reason that is a
+    registry gap rather than the case under test."""
+    loaded = load_polygons(COMMITTED)
+    recorded = (REPO_ROOT / "tests" / "fixtures" / "kelpwatch").glob("*.csv")
+    assert all(loaded.for_file(path.name) is not None for path in recorded)
+
+
+def test_comment_keys_inside_the_pinned_revision_are_not_configuration():
+    loaded = load_polygons(COMMITTED)
+    assert loaded.kelp_watch.revision == 23  # the shipped block carries a _comment
 
 
 # --------------------------------------------------------------------------
@@ -245,9 +278,30 @@ def test_the_offending_polygon_is_named_in_the_message(tmp_path):
 # --------------------------------------------------------------------------
 
 
-def test_a_polygon_with_no_geometry_is_refused(tmp_path):
-    message = refuses(tmp_path, feature(geometry=None))
-    assert "no geometry" in message
+def test_a_polygon_may_declare_that_its_outline_is_not_recorded_yet(tmp_path):
+    """The export arrives already summed over the selected geometry, so no number
+    depends on the outline. Forcing an invented one in to satisfy the loader
+    would be worse than recording its absence."""
+    (polygon,) = load(tmp_path, feature(geometry=None))
+
+    assert polygon.has_geometry is False
+    assert polygon.polygon_id == "KELP:A"
+
+
+def test_a_feature_with_no_geometry_member_at_all_is_refused(tmp_path):
+    """Every GeoJSON Feature has the member (RFC 7946); null is how you say
+    "not recorded", and omitting it is an unfinished edit."""
+    bare = feature()
+    del bare["geometry"]
+
+    message = refuses(tmp_path, bare)
+    assert "geometry" in message
+    assert "null" in message
+
+
+def test_a_drawn_polygon_says_so(tmp_path):
+    (polygon,) = load(tmp_path, feature())
+    assert polygon.has_geometry is True
 
 
 def test_a_point_or_a_line_is_refused(tmp_path):
@@ -259,11 +313,13 @@ def test_a_point_or_a_line_is_refused(tmp_path):
     assert "'LineString'" in refuses(tmp_path, feature(line))
 
 
-def test_an_empty_polygon_is_refused(tmp_path):
-    """It contains no pixel, so it would produce an all-null series, not an error."""
+def test_an_empty_polygon_is_refused_even_though_a_null_one_is_not(tmp_path):
+    """An outline of no extent is a mistake; an absent one is a fact. The loader
+    must not let the two collapse into each other."""
     message = refuses(tmp_path, feature({"type": "Polygon", "coordinates": []}))
     assert "empty" in message
     assert "KELP:A" in message
+    assert "null" in message  # ...and it says which one to use instead
 
 
 def test_a_self_intersecting_ring_is_refused(tmp_path):
@@ -320,3 +376,88 @@ def test_something_that_is_not_a_feature_collection_is_refused(tmp_path):
 def test_a_feature_without_properties_is_refused(tmp_path):
     bare = {"type": "Feature", "properties": None, "geometry": SQUARE}
     assert "properties" in refuses(tmp_path, bare)
+
+
+# --------------------------------------------------------------------------
+# Which export belongs to which polygon
+# --------------------------------------------------------------------------
+#
+# A Kelp Watch CSV names the geometry it describes nowhere in the file
+# (docs/02), so the registry is the only thing that can say. Getting this wrong
+# attributes one bed's forty years to another polygon, and nothing downstream
+# looks wrong.
+
+
+def test_a_polygon_declares_the_export_its_rows_arrive_in(tmp_path):
+    (polygon,) = load(tmp_path, feature(source_file="kelp_lajolla.csv"))
+    assert polygon.source_file == "kelp_lajolla.csv"
+
+
+def test_a_file_is_matched_to_its_polygon_by_name(tmp_path):
+    loaded = load(
+        tmp_path,
+        feature(polygon_id="KELP:LAJOLLA", source_file="kelp_lajolla.csv"),
+        feature(polygon_id="KELP:DELMAR", source_file="kelp_delmar.csv"),
+    )
+    assert loaded.for_file("kelp_delmar.csv").polygon_id == "KELP:DELMAR"
+    assert loaded.for_file("kelp_nobody.csv") is None
+
+
+def test_a_file_is_matched_wherever_it_was_dropped_and_however_it_is_cased(tmp_path):
+    """Where the operator put the file is not a registry fact."""
+    loaded = load(tmp_path, feature(source_file="kelp_lajolla.csv"))
+
+    assert loaded.for_file("KELP_LAJOLLA.CSV") is not None
+    assert loaded.for_file("/somewhere/else/kelp_lajolla.csv") is not None
+    assert loaded.for_file(str(Path("C:/drop/kelp_lajolla.csv"))) is not None
+
+
+def test_a_polygon_with_no_source_file_is_refused(tmp_path):
+    """It could never receive a row, so it would sit in the registry looking
+    like coverage while contributing nothing."""
+    assert "source_file" in refuses(tmp_path, feature(source_file=_ABSENT))
+    assert "source_file" in refuses(tmp_path, feature(source_file="  "))
+
+
+def test_a_source_file_given_as_a_path_is_refused(tmp_path):
+    message = refuses(tmp_path, feature(source_file="incoming/kelp_lajolla.csv"))
+    assert "name alone" in message
+
+
+# --------------------------------------------------------------------------
+# The pinned dataset revision
+# --------------------------------------------------------------------------
+
+
+def test_the_registry_pins_the_dataset_revision_and_its_doi(tmp_path):
+    """The CSV carries no version of any kind, so this is the only place the
+    chain from a figure back to a DOI can be closed (docs/02)."""
+    loaded = load(
+        tmp_path,
+        feature(),
+        kelp_watch={"revision": 23, "doi": "10.6073/pasta/2c1218b7ebe6967da52000adf02f6a8b"},
+    )
+    assert loaded.kelp_watch.revision == 23
+    assert loaded.kelp_watch.doi.startswith("10.6073/")
+    assert loaded.kelp_watch.label == "ver23"
+
+
+def test_a_registry_that_pins_no_revision_loads_and_says_so(tmp_path):
+    """Legitimately revision-less until the first export is recorded; it is the
+    ingest that refuses, because that is the moment one would be invented."""
+    assert load(tmp_path, feature()).kelp_watch is None
+
+
+def test_a_revision_that_is_not_a_whole_number_is_refused(tmp_path):
+    for bad in ({"revision": "23"}, {"revision": 23.5}, {"revision": 0}, {"revision": True}):
+        assert "revision" in refuses(tmp_path, feature(), kelp_watch=bad)
+
+
+def test_an_empty_or_unknown_kelp_watch_block_is_refused(tmp_path):
+    assert "kelp_watch" in refuses(tmp_path, feature(), kelp_watch={})
+    assert "version" in refuses(tmp_path, feature(), kelp_watch={"revision": 23, "version": 1})
+
+
+def test_an_unknown_top_level_member_is_refused(tmp_path):
+    """A `kelpwatch` typo would otherwise leave the registry silently unpinned."""
+    assert "kelpwatch" in refuses(tmp_path, feature(), kelpwatch={"revision": 23})
