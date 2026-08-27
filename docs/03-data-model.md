@@ -409,6 +409,26 @@ Only **usable, complete** quarters inside the window contribute. A cell with
 no contributing year gets no row — an empty row would claim a baseline
 exists. Doc 04 §3 records the window and why it is what it is.
 
+### One climatology implementation, two series keys
+
+The climatology and anomaly code is **generic over the series key**. The caller
+passes which columns identify one series and which columns are measured
+features; everything else — the fixed window, the contributor rule, the
+minimum-years gate, the `_anom` twins — is shared. The environmental half passes
+`source, site_id, parameter, depth_m` and the feature set `features.json`
+declares; the kelp half passes `polygon_id` and the canopy quantities.
+
+That is a correctness requirement rather than a tidiness one. Kelp and
+environmental anomalies sit on the two sides of every correlation the project
+computes, so two implementations could diverge and the divergence would present
+as a *result*. Sharing the code makes "both sides were treated the same way" a
+fact about the program rather than a claim about two of them.
+
+The only columns the shared code requires of either table are the series key,
+`year`, `quarter`, `usable` and `quarter_complete`. A series key naming a
+column the table does not carry **raises**, rather than producing an empty
+climatology that would read as "no baseline yet".
+
 ## Feature configuration: `features.json`
 
 The coverage floor, the climatology baseline, and the per-parameter feature
