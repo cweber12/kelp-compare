@@ -138,6 +138,10 @@ class Zones:
     def features_json(self) -> Path:
         return self.registry / "features.json"
 
+    @property
+    def polygons_geojson(self) -> Path:
+        return self.registry / "polygons.geojson"
+
     def raw_source(self, source: str) -> Path:
         """The raw landing zone for one source.
 

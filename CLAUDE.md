@@ -27,6 +27,7 @@ doc in the same PR. Docs and code must not drift.
 - `src/kelpcompare/qc/` — QARTOD flags via ioos_qc; flags, never deletions
 - `src/kelpcompare/features/` — quarterly aggregation and anomalies
 - `src/kelpcompare/registry.py` — `sites.json`: which instrument was where, when, in what timezone
+- `src/kelpcompare/polygons.py` — `polygons.geojson`: the analysis polygons kelp is aggregated over, in WGS84
 - `src/kelpcompare/parameters.py` — `parameters.json`: controlled names, SI units, QC ranges
 - `src/kelpcompare/storage.py` — the docs/03 zones and the only writer into `observations/`
 - `src/kelpcompare/manifest.py` — one run manifest per pipeline run (docs/03)

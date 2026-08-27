@@ -239,11 +239,61 @@ package. `NDBC:LJAC1` and `COOPS:9410230` are the same NOS platform, NDBC
 redistributing the NOS observations, and the doc 04 neighbor validation must not
 count them as two independent references for the same sensor.
 
-## Kelp geometry and series
+## Analysis polygon registry: `polygons.geojson`
 
-`polygons.geojson` holds the analysis polygons drawn around sensor sites
-plus control polygons, each with `polygon_id`, purpose (`near_site`,
-`control`, `regional`), and the `site_id`s it is associated with.
+**Implemented** — `src/kelpcompare/polygons.py`. A fourth registry file, holding
+the areas the analysis compares kelp over: the polygons drawn around sensor
+sites, the control polygons away from them, and the wider regional beds. A
+polygon is not a site — it has no instrument, no timezone and no deployment —
+which is why the kelp half of the features zone is keyed on `polygon_id` and not
+on `site_id`.
+
+The geometry lives in the repository so that *which water a number describes* is
+a reviewable data change, diffable line by line, rather than a drawing made in a
+browser session nobody can reproduce (doc 01 §2 requires regenerating everything
+from raw with one command).
+
+One GeoJSON `Feature` per polygon. Properties:
+
+| Property | Notes |
+|----------|-------|
+| `polygon_id` | Required, non-empty. The key every kelp and comparison row joins on |
+| `purpose` | Required, one of `near_site`, `control`, `regional` |
+| `site_ids[]` | Required, non-empty. The sites this polygon is compared against |
+| `name`, `notes` | Optional human labels |
+
+Geometry must be a `Polygon` or a `MultiPolygon` — a point or a line has no
+interior for a pixel centroid to fall inside. `_`-prefixed properties are
+comments, as in `features.json`, and are ignored.
+
+**Declared in WGS84, and said so out loud.** GeoJSON is WGS84 by definition
+(RFC 7946), so a file carrying the superseded 2008-draft `crs` member naming
+anything else is **refused rather than reprojected**: a silent CRS mismatch
+shifts a polygon by hundreds of metres, which against a 30 m Landsat pixel is
+tens of pixels of the wrong ocean, and the resulting series looks exactly like a
+correct one. The loaded frame carries `EPSG:4326` explicitly.
+
+The parser takes the same posture as the parameter and feature registries:
+**refuse rather than ignore**, naming the file and the offending polygon. An
+unknown purpose, an unknown property, a missing or repeated `polygon_id`, an
+empty `site_ids`, and a geometry that is null, empty, of the wrong kind or
+self-intersecting all raise. That strictness is not stylistic — none of those
+failures is visible downstream. A malformed polygon does not produce an error;
+it aggregates the wrong pixels, or none, and produces a plausible series.
+
+What the loader deliberately does **not** check is that each `site_ids` entry
+exists in `sites.json`. No registry loader here makes a cross-file claim —
+`neighbor_refs` has the same property — and a typo there costs the comparison
+table the rows for that pair rather than producing wrong ones, so it belongs to
+the stage that builds them.
+
+An **empty** `FeatureCollection` loads cleanly and yields no polygons. That is
+the state the repository ships in and it is not an error: a project with
+environmental data and no polygons drawn yet is a project mid-way through.
+Adding a polygon is a `data(registry)` change needing no code.
+
+## Kelp series
+
 `quarterly_kelp.parquet`:
 
 | Column | Notes |
