@@ -182,11 +182,39 @@ def test_an_empty_collection_loads_and_yields_nothing(tmp_path):
 
 
 def test_the_committed_registry_loads():
-    """The file the repository ships. Empty today; this is what catches the day
-    a polygon is added by hand in a shape the loader refuses."""
+    """The file the repository ships: the six San Diego county beds exported
+    from kelpwatch.org, each claiming the file its rows arrive in."""
     loaded = load_polygons(COMMITTED)
+
     assert loaded.path == COMMITTED
+    assert len(loaded) == 6
     assert all(p.purpose in POLYGON_PURPOSES for p in loaded)
+    assert all(p.source_file.endswith(".csv") for p in loaded)
+    assert all(p.site_ids for p in loaded)
+
+    # Exactly one bed holds a station; the rest are its controls.
+    assert [p.polygon_id for p in loaded if p.purpose == "regional"] == ["KELP:LA-JOLLA"]
+    assert loaded.for_file("kelp_lajolla.csv").polygon_id == "KELP:LA-JOLLA"
+
+
+def test_the_committed_registry_pins_the_revision_the_exports_came_from():
+    kelp_watch = load_polygons(COMMITTED).kelp_watch
+    assert kelp_watch.revision == 23
+    assert kelp_watch.doi == "10.6073/pasta/2c1218b7ebe6967da52000adf02f6a8b"
+
+
+def test_the_committed_registry_claims_every_recorded_fixture():
+    """The fixtures and the registry must not drift: a fixture the registry does
+    not claim would be quarantined by the ingest suite for a reason that is a
+    registry gap rather than the case under test."""
+    loaded = load_polygons(COMMITTED)
+    recorded = (REPO_ROOT / "tests" / "fixtures" / "kelpwatch").glob("*.csv")
+    assert all(loaded.for_file(path.name) is not None for path in recorded)
+
+
+def test_comment_keys_inside_the_pinned_revision_are_not_configuration():
+    loaded = load_polygons(COMMITTED)
+    assert loaded.kelp_watch.revision == 23  # the shipped block carries a _comment
 
 
 # --------------------------------------------------------------------------
