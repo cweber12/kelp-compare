@@ -12,7 +12,7 @@ implementation, since public endpoints and formats drift.
 
 | Source | Role | Access | Native cadence | Format |
 |--------|------|--------|----------------|--------|
-| Kelp Watch | Baseline response variable | Web UI polygon export (CSV); backend API | Quarterly | CSV |
+| Kelp Watch | Baseline response variable | EDI data package `knb-lter-sbc.74` — **authentication required** | Quarterly | NetCDF |
 | Project sensors | Primary predictors under evaluation | Local files from loggers | ~minutes | Vendor CSV |
 | NDBC | Reference met/ocean observations | HTTPS text files | 6 min – 1 hr | Fixed-width text |
 | NOAA CO-OPS | Water level, coastal water temp | REST API (JSON/CSV) | 6 min / hourly | JSON, CSV |
@@ -23,22 +23,103 @@ implementation, since public endpoints and formats drift.
 
 ## Kelp Watch
 
-The response variable. Quarterly kelp canopy observations at 30 m
-resolution for the west coast since 1984, downloadable through the site by
-selecting a region and time frame; the platform exposes its data through a
-backend API that the map UI consumes. For planning purposes the workflow
-is: define one or more analysis polygons around the sensor sites (and
-control polygons farther away), export the quarterly series per polygon,
-and land the CSVs in `raw/kelpwatch/`.
+**Not implemented, and currently blocked on access** —
+https://github.com/cweber12/kelp-compare/issues/25.
 
-Quirks to encode in the fetcher/parser: quarters with insufficient
-cloud-free Landsat coverage are missing, not zero — the parser must
-distinguish "no kelp" from "no observation," and winter quarters are the
-most affected. Canopy area and biomass move seasonally by nature; all
-analysis uses the anomaly transform (doc 04). The Landsat product does not
-distinguish giant kelp from bull kelp; in the San Diego region this is
-effectively giant kelp. Report card PDFs are methodology references, not a
-data source.
+The response variable. Quarterly kelp canopy at 30 m resolution for the west
+coast since 1984.
+
+### The source of record is the published dataset, not the website
+
+SBC LTER **`knb-lter-sbc.74`** on the Environmental Data Initiative — "Time
+series of quarterly NetCDF files of kelp biomass in the canopy from Landsat 5,
+7 and 8, since 1984 (ongoing)". It is the data the kelpwatch.org platform is
+built on, with a revision number and a DOI attached.
+
+The kelpwatch.org UI export was rejected as the source of record: it is
+hand-driven and unversioned, so `kelpcompare rebuild` cannot re-derive it, the
+polygon geometry lives in a browser session rather than in the repository, and
+there is no revision to cite. Doc 01 §2 requires regenerating everything from
+raw with one command, and that breaks at the first step. The undocumented
+backend API the map UI consumes was rejected too — unversioned, free to change
+without notice, and nothing to cite. Report card PDFs are methodology
+references, not a data source.
+
+The revision is pinned in the registry rather than in code, so moving to a newer
+one is a reviewable data change and "whatever is current today" can never
+quietly become the source of record.
+
+### Access requires authentication (verified 2026-08-26)
+
+**Every PASTA REST method returns HTTP 403 to an anonymous caller** — reads,
+and the calls that merely list what exists:
+
+| Request | Response |
+|---|---|
+| `GET https://pasta.lternet.edu/package/eml/knb-lter-sbc/74` | 403, `listDataPackageRevisions` |
+| `GET .../package/eml/knb-lter-sbc/74/18` | 403, `readDataPackage` |
+| `GET .../package/metadata/eml/knb-lter-sbc/74/18` | 403, `readMetadata` |
+| `GET .../package/data/eml/knb-lter-sbc/74/18` | 403, `listDataEntities` |
+| `GET .../package/eml` | 403, `listDataPackageScopes` |
+
+The denial is global rather than specific to this package, and
+`portal.edirepository.org` serves a login page for `mapbrowse`,
+`metadataviewer` and `archiveDownload` alike. This is policy, not an outage:
+EDI requires authentication for all REST API access from **2026-07-30**, as a
+deterrent to denial-of-service attacks and scraping. The API documentation at
+`pastaplus-core.readthedocs.io` still shows anonymous examples and is stale on
+this point — do not take it as evidence the endpoint is open.
+
+Consequence for this repository: the pinned revision belongs in the registry as
+planned, but a credential cannot — `data/registry/` is committed and the repo is
+public. How the credential reaches the fetcher is an open decision recorded in
+issue #25.
+
+### What the dataset holds (from its published metadata, 2026-08-26)
+
+Retrieved from DataCite for DOI `10.6073/pasta/93b47266b20bc1782c8df9c36169e372`,
+which resolves to **revision 16**:
+
+- **A single NetCDF file**, holding the quarterly area and biomass means for
+  each Landsat pixel across the three sensors.
+- **Three measured quantities**: canopy area of giant kelp (*Macrocystis
+  pyrifera*), canopy area of bull kelp (*Nereocystis luetkeana*), and canopy
+  biomass of giant kelp (wet weight, kg).
+- **Different spatial extents per quantity.** Area covers all coastal Baja
+  California, California and Oregon including offshore islands; biomass covers
+  Año Nuevo, CA south to the southern range limit in Baja — the range where
+  giant kelp is the dominant canopy former. A polygon north of Año Nuevo
+  therefore has area and no biomass, which is a property of the product, not a
+  gap in the record.
+- **Per-pixel metadata in the same file**: the number of Landsat estimates each
+  quarterly mean was derived from, the number from each sensor, the standard
+  error of the estimate, spatial coordinates, and date.
+- **Irregular temporal coverage by design.** Each instrument repeats every 16
+  days, but cloud cover, instrument failure and mission length (TM 1984–2011,
+  ETM+ 1999–present, OLI 2013–present) make the actual coverage uneven.
+  ETM+ scan-line-corrector gaps were filled by a synchrony-based method
+  upstream.
+
+**Not verified, and not to be guessed at:** the file's variable names, its
+dimensions and whether it is a pixel list or a raster, its time encoding, its
+missing-value encoding, its size, its licence, and which revision is current.
+All of those need the payload, and the payload needs a credential. Issue #24
+records that landing the real file and recording a fixture from it is the first
+slice of the ingest, precisely so none of this is assumed.
+
+Recorded in issue #24 from the literature but **not** verified here: the product
+treats a whole 10 × 10 km cell as missing for a quarter when more than 25% of
+its pixels lack a cloud-free acquisition.
+
+### Quirks to encode when the parser is written
+
+Quarters with insufficient cloud-free Landsat coverage are **missing, not
+zero** — the parser must distinguish "no kelp" from "no observation", and
+winter quarters are the most affected (hard rule 3). Canopy area and biomass
+move seasonally by nature, so all analysis uses the anomaly transform (doc 04
+§3). The product does distinguish giant from bull kelp, but in the San Diego
+region it is effectively giant kelp; which quantity is the response variable is
+the notebook's choice, so all three are stored.
 
 ## Project sensors
 
