@@ -22,6 +22,7 @@ data/
     quarterly_kelp.parquet    climatology_kelp.parquet
     comparison.parquet
   quarantine/               # files the registry gate turned away (doc 06 §5)
+  cache/                    # NOT a zone — see below. Deleting it is always safe
   registry/
     sites.json  parameters.json  features.json
     polygons.geojson  station_map.json
@@ -34,6 +35,28 @@ so fixing the registry and re-running picks it up (doc 06 §5 check 4).
 
 `station_map.json` is planned, not yet created — the pinned source
 identifiers currently live on the site records in `sites.json`.
+
+### `cache/` is not a zone
+
+`data/cache/` holds one file, `http-validators.json`: the `ETag` and
+`Last-Modified` each pulled URL was last fully ingested at, so a re-run can ask
+whether anything changed instead of downloading it again (doc 02).
+
+**It is a cache, not a record, and nothing about the project depends on it.** No
+derived table reads it, no number traces through it, and deleting it costs
+exactly one re-download. It is excluded from the reproducibility argument
+entirely: `rebuild` neither reads nor writes it, and a `data/` directory restored
+without it produces identical output at a slightly higher bandwidth bill.
+
+That is why it is not in `raw/`. Hard rule 1 makes that zone append-only and
+reserves it for landings and manifests, and a mutable lookup table is neither.
+Nor is it in the run manifests: those are write-only audit records, and reading
+them here would make a deleted manifest change *behaviour* rather than merely
+lose history.
+
+Every failure reading it is soft — absent, truncated, unparseable, or written by
+a format this version does not know all mean "know nothing about this URL", and
+cost a download. A cache that can fail a run is worse than no cache.
 
 ### Partition files and idempotence
 
@@ -672,7 +695,11 @@ first.
 Every ingest/QC/feature run writes
 `raw/_manifests/{run_id}.json`: command, code version (git SHA), sources
 touched, date windows, row counts in/out, QC flag histogram, warnings, and
-upstream gaps encountered. An input records either a `site_id` or a
+upstream gaps encountered. An input's outcome is one of `ingested`,
+`unchanged` (a pulled window the source says we already hold — doc 02),
+`quarantined`, `skipped` (an outage or a file nothing recognised, and the only
+outcome that also notes a gap), or `failed` (the only one that sets the exit
+code). An input records either a `site_id` or a
 `polygon_id`, never both — an observation belongs to a site and a canopy value
 belongs to a polygon, and calling a polygon a site to save a field would put a
 lie in the audit trail. `dataset_revision` records the upstream version a

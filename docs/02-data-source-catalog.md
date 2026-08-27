@@ -389,3 +389,55 @@ normalizer boundary, attaches `source` and `fetch_run_id` to every row, and
 fails soft — a source outage is logged in the run manifest and skipped, not
 fatal. No fetcher writes anything except its own raw zone and the
 observations zone.
+
+### Ask before downloading
+
+**A pulled window is re-fetched conditionally.** Landing is content-addressed,
+so re-running on identical bytes has always been a no-op on disk — but the
+bytes had to arrive first, which meant every re-run paid for the whole file
+again. That is the wrong shape for a pipeline anything might retry.
+
+Where a source supports it, the fetcher sends back the `ETag` and
+`Last-Modified` a previous run recorded, and a `304 Not Modified` becomes
+`NotModified` — one round trip, no payload, and the window is recorded as
+`unchanged`. Verified against NDBC on 2026-08-27: a plain `GET` of the 2015
+archive is 933,320 bytes; the same request carrying either validator is `304`
+and zero bytes. End to end, that run went from 1.61 s to 0.27 s.
+
+Three rules make this safe rather than merely fast:
+
+- **A stale validator still gets the whole file.** This is a cache check, never
+  a promise not to look. NDBC does re-issue an archive year after QC, and a
+  mechanism that could hide that would be worse than the download it saves.
+- **A validator is recorded only after the window's rows are written**, so it
+  means "fully ingested at this version". Recorded at landing time it would let
+  the next run step past a window whose parse or write had failed — bytes on
+  disk, no rows in the zone.
+- **`unchanged` is not `skipped`.** Skipped means a hole in the record and is
+  noted as a gap; unchanged means the record is complete and current. Neither
+  sets the exit code, but conflating them would put a phantom gap in the
+  manifest of every re-run.
+
+Skipping an unchanged window is correct, not just cheap: the bytes are in
+`raw/` and the rows are in `observations/`. Re-parsing landed bytes after a
+parser or registry change is `rebuild`'s job, not ingest's.
+
+The tokens live in `data/cache/` (doc 03), which is a cache and not a record —
+deleting it costs one re-download and nothing else.
+
+### Saying who is asking
+
+Every request carries `User-Agent: kelpcompare/{version} (+{contact})`. NDBC's
+`robots.txt` publishes a webmaster address, which is to say they expect to be
+able to reach whoever is pulling; `python-requests/2.x` gives them nobody to
+reach and is what gets throttled.
+
+The contact comes from the `KELPCOMPARE_CONTACT` environment variable, never
+from a source file — **this repository is public, and an address committed to
+it is an address that has been published.** With none set the header still
+names the project and version, which beats being anonymous and beats a run
+that will not start.
+
+NDBC publishes no crawl delay and no disallow for `/data/`, and the whole
+2007–2025 LJAC1 archive is about 15 MB. Volume was never the concern; the
+re-download was.
