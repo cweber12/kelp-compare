@@ -115,11 +115,25 @@ On the six exported San Diego county beds: 1,020 polygon-quarters, 961 usable,
 44 carrying null for a cloud gap, 976 anomalies computed, and 15,300 comparison
 rows.
 
+Also built: the first analysis of record. `notebooks/01-lag-screen.ipynb` is
+the doc 04 §4.1 lagged cross-correlation screen — kelp anomaly at quarter *t*
+against every environmental feature anomaly at *t−0…4*, per polygon ×
+environmental series, 660 cells over six polygons. It reports coefficients,
+sample sizes and an autocorrelation-adjusted effective sample size, and
+deliberately no p-values: §4.1 is exploratory by decision, and a p-value column
+on a grid of several hundred coefficients invites the reading §5 forbids.
+
+It audits its own inputs first, which is not decoration. Quarterly *minimum*
+wind speed at LJAC1 takes two values across the whole record — the anemometer's
+resolution floor — so its anomaly is a disguised binary flag, and it produced
+the largest coefficients in the entire grid before being excluded.
+`notebooks/README.md` carries the conventions and the §5 pre-registration list,
+which is deliberately still empty.
+
 Not built yet: the climatology and flat-line QC tests and neighbor validation
 (doc 04 §1 records why each waits), the remaining public-source fetchers
-(doc 02), `kelpcompare rebuild`, the notebooks, and the dashboard. The analysis
-ladder (doc 04 §4) can now start: the lag screen is a query against
-`comparison.parquet` rather than a script.
+(doc 02), `kelpcompare rebuild`, the rest of the doc 04 §4 ladder, and the
+dashboard.
 
 Not yet possible: doc 04 §4.5's spatial signal test, the project's key question.
 It needs polygon geometry, which `polygons.geojson` records as null for all six
