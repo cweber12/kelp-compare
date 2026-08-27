@@ -337,3 +337,60 @@ def test_a_persistent_outage_gives_up_after_the_retry(monkeypatch):
         ndbc.fetch_realtime("LJAC1", session=session)
 
     assert len(session.urls) == 2
+
+
+# --------------------------------------------------------------------------
+# What the station actually measures -- issue #21
+# --------------------------------------------------------------------------
+
+LJAC1_MEASURES = ("sea_water_temperature", "air_temperature", "wind_speed")
+
+
+def test_a_declared_station_stores_only_the_parameters_it_has_sensors_for(parameters):
+    """The stdmet format has fixed columns, so WVHT and DPD are in every file
+    holding the sentinel. The registry is what says they mean nothing here."""
+    parsed = _parse(ARCHIVE, parameters, measured_parameters=LJAC1_MEASURES)
+
+    assert set(parsed.frame["parameter"]) == set(LJAC1_MEASURES)
+    assert parsed.undeclared_parameters == ("wave_significant_height", "wave_peak_period")
+    assert parsed.warnings == ()
+
+
+def test_a_declared_sensor_reporting_the_sentinel_still_gets_its_rows(parameters):
+    """The distinction a declaration buys: an outage is recorded, an absent
+    instrument is not. A per-payload "this column looked empty" rule could not
+    tell the two apart."""
+    parsed = _parse(ARCHIVE, parameters, measured_parameters=LJAC1_MEASURES)
+    air = parsed.frame.loc[parsed.frame["parameter"] == "air_temperature"]
+
+    assert len(air) == parsed.rows_in
+    assert air["value"].isna().any()
+    assert parsed.missing_counts["air_temperature"] > 0
+
+
+def test_an_undeclared_station_stores_everything_and_says_the_registry_is_silent(parameters):
+    """An unrecorded fact must not quietly become missing data."""
+    parsed = _parse(ARCHIVE, parameters)
+
+    assert len(set(parsed.frame["parameter"])) == 5
+    assert parsed.undeclared_parameters == ()
+    assert any("declares no measured_parameters" in w for w in parsed.warnings)
+
+
+def test_a_declaration_the_parameter_vocabulary_does_not_know_is_reported(parameters):
+    """A typo here subtracts a real series rather than adding a fictional one,
+    so it cannot be allowed to pass silently."""
+    parsed = _parse(ARCHIVE, parameters, measured_parameters=("sea_water_temp",))
+
+    assert parsed.frame.empty
+    assert any("sea_water_temp" in w and "not in" in w for w in parsed.warnings)
+
+
+def test_declaring_one_parameter_leaves_the_others_out_without_extra_warnings(parameters):
+    """A station with no such sensor must not also collect a warning about the
+    column being absent from a file it was never going to be read from."""
+    parsed = _parse(ARCHIVE, parameters, measured_parameters=("sea_water_temperature",))
+
+    assert set(parsed.frame["parameter"]) == {"sea_water_temperature"}
+    assert parsed.warnings == ()
+    assert len(parsed.undeclared_parameters) == 4

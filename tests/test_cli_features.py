@@ -193,18 +193,33 @@ def test_a_quarter_that_ended_years_ago_is_marked_complete(data_root, offline):
     assert ndbc_rows["quarter_complete"].all()
 
 
-def test_a_station_with_no_wave_sensor_reports_zero_coverage_not_full(data_root, offline):
-    """LJAC1's wave columns are 100% sentinel, so qc flags every row missing and
-    the quarter is honestly empty rather than honestly full (issue #21)."""
+def test_a_station_with_no_wave_sensor_produces_no_wave_feature_rows(data_root, offline):
+    """`sites.json` says LJAC1 has no wave sensor, so nothing reaches this stage
+    to be aggregated — no quarterly rows at zero coverage for a reader to learn
+    to ignore (https://github.com/cweber12/kelp-compare/issues/21)."""
     ljac1(data_root)
     run(data_root, "features", expect=0)
 
-    waves = series_row(quarterly(data_root), "wave_significant_height")
-    assert waves["n_obs"] == 0
-    assert waves["pct_coverage"] == 0.0
-    assert not waves["usable"]
-    assert pd.isna(waves["mean"])
-    assert waves["feature_set"] == "statistics"
+    built = quarterly(data_root)
+    assert set(built["parameter"]) == {
+        "sea_water_temperature",
+        "air_temperature",
+        "wind_speed",
+    }
+
+
+def test_a_declared_sensor_that_reported_sentinel_keeps_its_row(data_root, offline):
+    """The other half of the same distinction. Air temperature *is* declared, and
+    part of the 2023 excerpt is sentinel; those rows land flagged missing, drop
+    out of `n_obs`, and the quarter still exists to say so."""
+    ljac1(data_root)
+    run(data_root, "features", expect=0)
+
+    air = series_row(quarterly(data_root), "air_temperature")
+    assert air["feature_set"] == "statistics"
+    assert 0 < air["n_obs"] < 400  # 400 rows landed; the sentinel ones are not observations
+    assert air["pct_coverage"] == pytest.approx(air["n_obs"] / air["expected_obs"])
+    assert not air["usable"]
 
 
 def test_air_temperature_gets_the_statistics_set_not_the_kelp_thresholds(data_root, offline):

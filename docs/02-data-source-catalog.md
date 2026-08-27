@@ -122,11 +122,47 @@ Two columns are read and stored by nobody, on purpose:
   afterwards. Water level comes from CO-OPS, which states its datum on every
   request.
 
-A station that does not measure something still stores rows for it — LJAC1's
-wave columns are sentinel from end to end, and land as missing rows rather than
-as nothing. "This station reported no wave height" and "nobody asked this
-station for wave height" are different facts, and only the first survives in a
-row that exists.
+### A station stores only what it has a sensor for
+
+The stdmet format has fixed columns, so a shore station with no wave sensor
+still has `WVHT` and `DPD` in every file, filled with the sentinel. **The
+fetcher stores only the parameters `sites.json` declares in
+`measured_parameters` for that station.**
+
+This reverses an earlier decision recorded here, which stored those rows so that
+"this station reported no wave height" and "nobody asked this station for wave
+height" would stay distinguishable. Both facts are still distinguishable; the
+second one has simply moved to a better home. Across the 2007–2025 LJAC1 archive
+plus realtime, storing them meant 3,289,004 rows that carry no measurement — 40%
+of the zone for that station — and would have put roughly 76 quarterly feature
+rows per wave parameter, every one at zero coverage, into `quarterly_env` for a
+station that has never had a wave sensor.
+
+The declaration is what keeps the two facts apart, and it is why this is a
+registry statement rather than a per-payload judgement:
+
+| | `measured_parameters` | file holds | stored |
+|---|---|---|---|
+| No instrument | omits the parameter | sentinel | nothing |
+| Instrument, outage | includes it | sentinel | rows, flagged missing |
+| Nobody has checked | absent entirely | either | everything recognised, plus a warning |
+
+Skipping any column that is entirely sentinel in a payload was rejected for
+exactly this reason: a sensor that failed for one whole year would look
+identical to a sensor that does not exist, and the rows recording the outage
+would vanish. A station with no `measured_parameters` at all is *undeclared*
+rather than empty — everything recognised is stored and the run warns, because
+an unrecorded fact must not quietly become missing data. A declared parameter
+that is not in `parameters.json` is reported too: it matches no column, so the
+typo subtracts a real series rather than adding a fictional one.
+
+LJAC1 declares `sea_water_temperature`, `air_temperature` and `wind_speed`, so
+its ingest lands three parameters per timestamp rather than five.
+
+Rows already stored under the old behaviour stay where they are — re-ingesting
+merges and dedupes, it does not delete. Retiring them means deleting
+`observations/source=ndbc/` and re-ingesting, which the zone is designed to
+support.
 
 ### Other quirks
 

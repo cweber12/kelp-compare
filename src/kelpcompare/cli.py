@@ -597,6 +597,7 @@ def _ingest_window(
             parameters,
             site_id=site.site_id,
             depths_m=site.sensor_depths_m,
+            measured_parameters=site.measured_parameters,
             run_id=run.run_id,
         )
         entry.rows_in = parsed.rows_in

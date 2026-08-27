@@ -115,6 +115,7 @@ class ParsedPayload:
     rows_in: int
     warnings: tuple[str, ...] = ()
     unmapped_columns: tuple[str, ...] = ()
+    undeclared_parameters: tuple[str, ...] = ()
     missing_counts: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -152,6 +153,7 @@ def parse(
     *,
     site_id: str,
     depths_m: dict[str, float] | None = None,
+    measured_parameters: tuple[str, ...] = (),
     run_id: str,
 ) -> ParsedPayload:
     """One NDBC payload -> docs/03 observation rows, UTC and SI.
@@ -160,6 +162,21 @@ def parse(
     are cases where the honest answer is that we do not know what the numbers
     mean, and docs/02 puts format surprises in front of a human rather than
     through a default.
+
+    `measured_parameters` is the registry's list of what this station carries an
+    instrument for; only those are stored. The stdmet format has fixed columns,
+    so a shore station with no wave sensor still has `WVHT` and `DPD` in every
+    file, filled with the sentinel -- and storing those was landing millions of
+    rows that say nothing (https://github.com/cweber12/kelp-compare/issues/21).
+    Empty means the registry has not recorded it, in which case everything
+    recognised is stored and the gap is reported: an unrecorded fact must not
+    become missing data.
+
+    Note what this does *not* do. A station that declares a sensor and reports
+    the sentinel still gets its rows, flagged missing -- that is an outage, and
+    it stays in the record. The registry is what tells the two apart, which is
+    why this is a declaration rather than a per-payload judgement about whether
+    a column looked empty.
     """
     text = _text(payload)
     names, units, body = _split_header(text, payload)
@@ -177,10 +194,16 @@ def parse(
 
     declared = dict(zip(names, units, strict=False))
     frames: list[pd.DataFrame] = []
-    warnings: list[str] = []
+    warnings = list(_declaration_warnings(measured_parameters, parameters, payload))
+    undeclared: list[str] = []
     missing_counts: dict[str, int] = {}
 
     for spec in COLUMNS:
+        # Asked first, so a station that has no such sensor does not also collect
+        # a warning about the column being absent from a file it was never in.
+        if measured_parameters and spec.parameter not in measured_parameters:
+            undeclared.append(spec.parameter)
+            continue
         if spec.column not in table.columns:
             warnings.append(f"{payload.station}: no {spec.column} column in this {layout} file")
             continue
@@ -230,7 +253,33 @@ def parse(
         unmapped_columns=tuple(
             n for n in names if n not in TIME_COLUMNS and n not in MAPPED_COLUMNS
         ),
+        undeclared_parameters=tuple(undeclared),
         missing_counts=missing_counts,
+    )
+
+
+def _declaration_warnings(
+    measured_parameters: tuple[str, ...], parameters: Parameters, payload: Payload
+) -> tuple[str, ...]:
+    """What is wrong with the station's declaration, before a row is built.
+
+    Two gaps, and both are the registry's rather than the file's. An undeclared
+    station is reported every run, because the rows it lands are the ones this
+    field exists to stop. A declared parameter the vocabulary does not know is
+    worse than it looks: it matches no column, so the typo silently subtracts a
+    real series rather than adding a fictional one.
+    """
+    if not measured_parameters:
+        undeclared = (
+            f"{payload.station}: the site registry declares no measured_parameters, so every "
+            f"recognised column is stored -- including any this station has no sensor for"
+        )
+        return (undeclared,)
+    unknown = [name for name in measured_parameters if name not in parameters]
+    return tuple(
+        f"{payload.station}: the site registry declares measured_parameters {name!r}, which is "
+        f"not in {parameters.path}; no column can match it"
+        for name in unknown
     )
 
 
