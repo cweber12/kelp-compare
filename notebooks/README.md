@@ -49,14 +49,21 @@ looked good, and the resulting p-values would mean nothing.
 **Nothing is pre-registered yet.** The list below is what `01-lag-screen.ipynb`
 surfaced, for the operator to choose from — being on it is not registration.
 
-Candidates from the screen at `sha256:7d2c62503276e7be`, restricted to those
-resting on an effective sample of at least 30 where Pearson and Spearman agree:
+Candidates from the screen at `sha256:7d2c62503276e7be`. The rule, written out
+so the table can be checked against the notebook rather than taken on trust:
+drop anything the input audit flagged `low_resolution`, keep what rests on an
+effective sample of at least 30 with Pearson and Spearman agreeing to within
+0.05, and take the **three strongest by |r|**.
+
+That last step is a cut, not a criterion. 262 cells clear the conditions before
+it, so what makes these three the list is that they are the top of a ranking —
+which is exactly the kind of choice this section exists to make visible.
 
 | Polygon | Series | Feature | Lag | r | n_eff | Why it is interesting |
 |---|---|---|---|---|---|---|
 | `KELP:ENCINITAS` | LJAC1 sea water temp | `days_below_14c` | 4 | +0.42 | 50.5 | The cold-water/nitrate association docs/04 §2 predicts, at a one-year lag |
 | `KELP:SOLANA-BEACH` | LJAC1 sea water temp | `days_below_14c` | 4 | +0.35 | 49.6 | The same relationship in a neighbouring bed, at the same lag |
-| `KELP:IMPERIAL-BEACH` | LJAC1 wind speed | `variance` | 2 | −0.38 | 50.2 | Not predicted by docs/04; treat with more suspicion, not less |
+| `KELP:IMPERIAL-BEACH` | LJAC1 wind speed | `variance` | 2 | −0.38 | 50.0 | Not predicted by docs/04; treat with more suspicion, not less |
 
 Two things to weigh before registering any of them:
 
@@ -66,6 +73,20 @@ Two things to weigh before registering any of them:
 - **Every candidate here is against `NDBC:LJAC1`**, the public station. The
   project sensor has three weeks of record, so docs/04 §4.5 — whether the
   project's own sensors beat the public station — cannot be attempted yet.
+- **`n_eff` is a ceiling, and it is loosest exactly here.** It corrects for
+  lag-1 persistence only, and the kelp anomaly is still autocorrelated at ≈0.32
+  four quarters out. Under a higher-order (Bartlett) correction the two
+  `days_below_14c` cells fall to 40.7 and 35.5. Register them on the
+  understanding that their evidence is nearer 36–41 quarters than 50.
+- **Three cells clear every condition above and were cut by the top-three
+  rule**, named here so the cut is visible rather than silent: `KELP:ENCINITAS`
+  sea water temp `min` at lag 4 (r −0.31), `KELP:IMPERIAL-BEACH` wind speed
+  `mean` at lag 2 (r −0.34), and — dropped one step earlier, for
+  `low_resolution` — `KELP:SOLANA-BEACH` wind speed `p05` at lag 3 (r +0.35).
+  The first is the cold-water association the two listed `days_below_14c` cells
+  already carry and the second is the same station, lag and quarter-set as the
+  wind speed row above it, so on this reading neither adds an independent
+  candidate. That is a judgement, and it is the operator's to overturn.
 
 Excluded from consideration on inspection rather than on their coefficients:
 
