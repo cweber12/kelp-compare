@@ -59,11 +59,11 @@ looked good, and the resulting p-values would mean nothing.
 **Nothing is pre-registered yet.** The list below is what `01-lag-screen.ipynb`
 surfaced, for the operator to choose from — being on it is not registration.
 
-Candidates from the screen at `sha256:7d2c62503276e7be`. The rule, written out
-so the table can be checked against the notebook rather than taken on trust:
-drop anything the input audit flagged `low_resolution`, keep what rests on an
-effective sample of at least 30 with Pearson and Spearman agreeing to within
-0.05, and take the **three strongest by |r|**.
+Candidates from the screen at `sha256:7d2c62503276e7be`. The rule, which
+`01-lag-screen.ipynb` §6 now applies rather than leaving to be re-derived by
+hand: drop anything the input audit flagged `low_resolution`, keep what rests
+on an effective sample of at least 30 with Pearson and Spearman agreeing to
+within 0.05, and take the **three strongest by |r|**.
 
 That last step is a cut, not a criterion. 233 cells clear the conditions before
 it, so what makes these three the list is that they are the top of a ranking —
@@ -73,9 +73,9 @@ which is exactly the kind of choice this section exists to make visible.
 |---|---|---|---|---|---|---|
 | `KELP:ENCINITAS` | LJAC1 sea water temp | `days_below_14c` | 4 | +0.42 | 50.6 | The cold-water/nitrate association docs/04 §2 predicts, at a one-year lag |
 | `KELP:SOLANA-BEACH` | LJAC1 sea water temp | `days_below_14c` | 4 | +0.35 | 49.8 | The same relationship in a neighbouring bed, at the same lag |
-| `KELP:IMPERIAL-BEACH` | LJAC1 wind speed | `variance` | 2 | −0.38 | 50.0 | Not predicted by docs/04; treat with more suspicion, not less |
+| `KELP:IMPERIAL-BEACH` | LJAC1 wind speed | `variance` | 2 | −0.38 | 50.0 † | Not predicted by docs/04; treat with more suspicion, not less |
 
-Two things to weigh before registering any of them:
+What to weigh before registering any of them:
 
 - **The two `days_below_14c` cells are the same station against two adjacent
   beds**, so they are not independent evidence. They agreeing is mild
@@ -86,12 +86,26 @@ Two things to weigh before registering any of them:
 - **`n_eff` is a ceiling, and it is loosest exactly here.** It corrects for
   lag-1 persistence only — measured across calendar-adjacent quarters, so a
   cloud gap or a missing Q2 breaks the pair instead of being counted as one —
-  and the kelp anomaly is still autocorrelated at 0.24 to 0.32 four quarters
-  out across the six beds. Under a higher-order Bartlett
-  correction — truncated at *K* = ⌊*n*/4⌋ = 17, with the (1 − *k*/*n*) taper,
-  stated so the figure can be checked — the two `days_below_14c` cells fall to
-  42.0 and 40.2. Register them on the understanding that their evidence is
-  nearer 40–42 quarters than 50.
+  and the kelp anomaly is still autocorrelated at 0.26 to 0.35 four quarters
+  out across the six beds. Under a higher-order Bartlett correction, truncated
+  at *K* = ⌊*n*/4⌋ with the (1 − *k*/*n*) taper, the three rows above fall to
+  **41.7, 41.1 and 36.7**. Register them on the understanding that their
+  evidence is nearer 37–42 quarters than 50.
+- **Read that as a range, not as three numbers.** `01-lag-screen.ipynb` §6
+  computes the figures above rather than restating them, and prints them across
+  other truncations too, because they move with *K*: Solana Beach spans 48.7 at
+  *K* = 4 down to 36.7 at *K* = 17, and Imperial Beach is not even monotonic in
+  *K*. That is a noise-dominated tail, not a precise effective sample size. The
+  correction is a note on these cells and deliberately not a column across the
+  grid — over all 660 cells it exceeds `n` in 152 of them and is undefined in 6
+  ([#35](https://github.com/cweber12/kelp-compare/issues/35)).
+- **† The wind speed candidate was never discounted at all.** Its lag-1 product
+  came out at or below zero, so `effective_n` handed back the raw quarter
+  count: that 50.0 is 50, not a corrected 50, and it sits in the table beside a
+  genuinely discounted 50.6 with only the marker separating them. It is the row
+  where "ceiling, not an estimate" is doing the most work. The screen's
+  `discounted` column carries this, for these three and for the 130 of 660
+  cells in the same position.
 - **230 cells clear every condition above and were cut by the top-three rule**,
   which is the size of the choice being made here. The two strongest of them,
   named so the cut is visible rather than silent: `KELP:ENCINITAS` sea water
