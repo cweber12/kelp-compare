@@ -262,17 +262,27 @@ def test_columns_the_project_does_not_store_are_reported(parameters):
 
 
 class _Response:
-    def __init__(self, status_code, content=b""):
+    def __init__(self, status_code, content=b"", headers=None):
         self.status_code = status_code
         self.content = content
+        self.headers = headers or {}
 
 
 class _Session:
+    """A stand-in for `requests.Session`, recording what was asked and how.
+
+    `sent` keeps the request headers, which is the only way to check a
+    conditional request offline -- the whole mechanism is invisible in the
+    response when it works.
+    """
+
     def __init__(self, response=None, error=None):
         self.response, self.error, self.urls = response, error, []
+        self.sent: list[dict] = []
 
-    def get(self, url, timeout=None):
+    def get(self, url, timeout=None, headers=None):
         self.urls.append(url)
+        self.sent.append(dict(headers or {}))
         if self.error:
             raise self.error
         return self.response
@@ -302,8 +312,9 @@ def test_a_transient_failure_is_retried_once(monkeypatch):
     monkeypatch.setattr(ndbc.time, "sleep", slept.append)
 
     class _Flaky(_Session):
-        def get(self, url, timeout=None):
+        def get(self, url, timeout=None, headers=None):
             self.urls.append(url)
+            self.sent.append(dict(headers or {}))
             return _Response(200, b"ok") if len(self.urls) > 1 else _Response(503)
 
     session = _Flaky()
@@ -394,3 +405,154 @@ def test_declaring_one_parameter_leaves_the_others_out_without_extra_warnings(pa
     assert set(parsed.frame["parameter"]) == {"sea_water_temperature"}
     assert parsed.warnings == ()
     assert len(parsed.undeclared_parameters) == 4
+
+
+# --------------------------------------------------------------------------
+# Asking instead of downloading
+# --------------------------------------------------------------------------
+#
+# Both NDBC endpoints serve ETag and Last-Modified and honour conditional
+# requests, so a re-run of an unchanged window can cost one round trip and no
+# payload. The whole mechanism is invisible in a successful response, which is
+# why these assert on what was *sent*.
+
+
+HEADERS = {"ETag": '"e3dc8-52be5aaf150c0"', "Last-Modified": "Tue, 16 Feb 2016 16:31:39 GMT"}
+
+
+def test_the_validators_the_server_sent_are_carried_on_the_payload():
+    """Carried rather than recorded here: the fetcher does not know whether the
+    window went on to ingest, and a validator stored before that could skip a
+    window whose rows never landed."""
+    session = _Session(_Response(200, b"body", HEADERS))
+    payload = ndbc.fetch_archive("LJAC1", 2023, session=session)
+
+    assert payload.etag == '"e3dc8-52be5aaf150c0"'
+    assert payload.last_modified == "Tue, 16 Feb 2016 16:31:39 GMT"
+
+
+def test_response_headers_are_read_case_insensitively():
+    """HTTP header names are case-insensitive and servers differ."""
+    session = _Session(_Response(200, b"body", {"etag": '"lower"', "LAST-MODIFIED": "Tue"}))
+    payload = ndbc.fetch_realtime("LJAC1", session=session)
+
+    assert (payload.etag, payload.last_modified) == ('"lower"', "Tue")
+
+
+def test_a_server_that_offers_no_validator_leaves_them_null():
+    session = _Session(_Response(200, b"body"))
+    payload = ndbc.fetch_realtime("LJAC1", session=session)
+
+    assert (payload.etag, payload.last_modified) is not None
+    assert payload.etag is None and payload.last_modified is None
+
+
+def test_known_validators_are_sent_as_a_conditional_request():
+    session = _Session(_Response(200, b"body", HEADERS))
+    ndbc.fetch_archive(
+        "LJAC1",
+        2023,
+        session=session,
+        validators={"etag": '"held"', "last_modified": "Mon, 01 Jan 2024 00:00:00 GMT"},
+    )
+
+    sent = session.sent[0]
+    assert sent["If-None-Match"] == '"held"'
+    assert sent["If-Modified-Since"] == "Mon, 01 Jan 2024 00:00:00 GMT"
+
+
+def test_only_the_validator_we_hold_is_sent():
+    """A server may have offered one and not the other."""
+    session = _Session(_Response(200, b"body"))
+    ndbc.fetch_archive("LJAC1", 2023, session=session, validators={"etag": '"held"'})
+
+    assert session.sent[0]["If-None-Match"] == '"held"'
+    assert "If-Modified-Since" not in session.sent[0]
+
+
+def test_knowing_nothing_sends_no_condition():
+    session = _Session(_Response(200, b"body"))
+    ndbc.fetch_archive("LJAC1", 2023, session=session)
+
+    assert "If-None-Match" not in session.sent[0]
+    assert "If-Modified-Since" not in session.sent[0]
+
+
+def test_a_304_is_not_modified_and_not_an_outage():
+    """`SourceUnavailable` means a hole in the record and is noted as a gap;
+    this means the opposite, and conflating them would put a phantom gap in the
+    manifest of every re-run."""
+    session = _Session(_Response(304))
+
+    with pytest.raises(ndbc.NotModified):
+        ndbc.fetch_archive("LJAC1", 2023, session=session, validators={"etag": '"held"'})
+
+    assert not issubclass(ndbc.NotModified, SourceUnavailable)
+
+
+def test_a_304_is_not_retried():
+    """It is an answer, and the fastest possible one. Asking again would be the
+    impoliteness this whole mechanism exists to avoid."""
+    session = _Session(_Response(304))
+
+    with pytest.raises(ndbc.NotModified):
+        ndbc.fetch_realtime("LJAC1", session=session, validators={"etag": '"held"'})
+
+    assert len(session.urls) == 1
+
+
+def test_a_stale_validator_still_gets_the_whole_file():
+    """The property that makes this safe: it is a cache check, never a promise
+    not to look. NDBC does occasionally re-issue an archive year after QC."""
+    session = _Session(_Response(200, b"the revised file", HEADERS))
+    payload = ndbc.fetch_archive("LJAC1", 2023, session=session, validators={"etag": '"stale"'})
+
+    assert payload.body == b"the revised file"
+    assert payload.etag == HEADERS["ETag"]
+
+
+# --------------------------------------------------------------------------
+# Saying who is asking
+# --------------------------------------------------------------------------
+
+
+def test_every_request_identifies_the_project():
+    session = _Session(_Response(200, b"body"))
+    ndbc.fetch_realtime("LJAC1", session=session)
+
+    assert session.sent[0]["User-Agent"].startswith("kelpcompare/")
+
+
+def test_a_contact_from_the_environment_reaches_the_header(monkeypatch):
+    """From the environment rather than from the source file, because the
+    repository is public and an address committed to it is published."""
+    monkeypatch.setenv(ndbc.CONTACT_ENV, "someone@example.org")
+    assert ndbc.user_agent() == f"kelpcompare/{ndbc.__version__} (+someone@example.org)"
+
+
+def test_no_contact_still_identifies_the_project(monkeypatch):
+    """An anonymous but identifiable client beats `python-requests`, and beats a
+    run that will not start."""
+    monkeypatch.delenv(ndbc.CONTACT_ENV, raising=False)
+    assert ndbc.user_agent() == f"kelpcompare/{ndbc.__version__}"
+
+
+def test_a_blank_contact_is_treated_as_none(monkeypatch):
+    monkeypatch.setenv(ndbc.CONTACT_ENV, "   ")
+    assert "(+" not in ndbc.user_agent()
+
+
+# --------------------------------------------------------------------------
+# The URLs a caller needs before it can ask about them
+# --------------------------------------------------------------------------
+
+
+def test_the_url_helpers_agree_with_what_the_fetchers_request():
+    """The caller looks a validator up by URL, so it has to be able to build the
+    same string the fetch will use."""
+    session = _Session(_Response(200, b"body"))
+
+    ndbc.fetch_realtime("ljac1", session=session)
+    ndbc.fetch_archive("LJAC1", 2023, session=session)
+
+    assert session.urls == [ndbc.realtime_url("LJAC1"), ndbc.archive_url("ljac1", 2023)]
