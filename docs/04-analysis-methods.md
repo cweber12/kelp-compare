@@ -86,15 +86,39 @@ table. This is the evidence base for the claim that non-NOAA/SCCOOS
 sensors are trustworthy — and later, for the more interesting claim that
 they capture *local* signal the public network misses.
 
+**A reference is only comparable at a comparable depth, and the constraint is
+per-statistic.** `sensor_depths_m` records where a public station's instrument
+actually sits, and the gap between that and a deployment's `depth_m` is not an
+offset that can be corrected out afterwards — below the thermocline it is most
+of the signal. So, against a reference at another depth:
+
+- **Bias is not reportable.** It measures stratification and prints it as
+  instrument error, which inverts what this table is evidence for.
+- **RMSE is not reportable.** It inherits the same offset.
+- **Correlation is**, because both series still track the same synoptic
+  forcing — but it degrades as the gap grows and must be reported labelled
+  with the gap rather than presented as agreement.
+
+`NDBC:LJAC1`'s only sea-water-temperature sensor is 3.4 m below MLLW (doc 02).
+That is comparable to `PROJ:TIDBIT-1` at 8.23 m and **not** to `PROJ:TIDBIT-2`
+at 16.76 m, which sits below the summer thermocline — its site note records the
+gap and the evidence for it. Both sites name the station in `neighbor_refs` all
+the same, because it is genuinely the nearest one; being nearest and being
+depth-comparable are different questions and the registry answers only the
+first. It cannot answer the second as a field, because the gap is a property of
+the pair rather than of either station, so this table's code has to read
+`sensor_depths_m` against each deployment's `depth_m` and decide per statistic.
+
 Not built, and the blocker is no longer the one this section first recorded. The
 public-station half of the comparison exists: `NDBC:LJAC1` now carries 2007–2026
 in `observations/`, and `sites.json` names it in both project sites'
-`neighbor_refs` beside `COOPS:9410230`. What is still missing is the other
-neighbour — no satellite SST fetcher exists, and none for CO-OPS either (doc 02)
-— and, more immediately, the sensor side of it: **no project-sensor deployment
-has been ingested**, so there is nothing in `observations/` to validate. The
-three-week TidbiT record the QC thresholds above were sized against lives in
-`tests/fixtures/`, which is not a zone.
+`neighbor_refs` beside `COOPS:9410230` — which are one platform (doc 02), and
+depth-comparable to only one of the two deployments. What is still missing is
+the other neighbour — no satellite SST fetcher exists, and none for CO-OPS
+either (doc 02) — and, more immediately, the sensor side of it: **no
+project-sensor deployment has been ingested**, so there is nothing in
+`observations/` to validate. The three-week TidbiT record the QC thresholds
+above were sized against lives in `tests/fixtures/`, which is not a zone.
 
 ## 2. Quarterly feature definitions
 
