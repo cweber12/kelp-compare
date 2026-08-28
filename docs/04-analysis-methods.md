@@ -88,7 +88,7 @@ they capture *local* signal the public network misses.
 
 Not built, and the blocker is no longer the one this section first recorded. The
 public-station half of the comparison exists: `NDBC:LJAC1` now carries 2007–2026
-in `observations/`, and `sites.json` names it in `PROJ:YELLOW-BUOY`'s
+in `observations/`, and `sites.json` names it in both project sites'
 `neighbor_refs` beside `COOPS:9410230`. What is still missing is the other
 neighbour — no satellite SST fetcher exists, and none for CO-OPS either (doc 02)
 — and, more immediately, the sensor side of it: **no project-sensor deployment

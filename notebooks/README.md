@@ -135,8 +135,9 @@ Excluded from consideration on inspection rather than on their coefficients:
 - **Every environmental anomaly is against `NDBC:LJAC1` alone.** No other
   public-source fetcher exists (docs/02), so there is no second reference.
 - **docs/04 §4.5, the project's key question, cannot run.** It needs polygon
-  geometry, which `polygons.geojson` records as `null` for all six beds, and the
-  yellow buoy's position, which `sites.json` records as unverified.
+  geometry, which `polygons.geojson` records as `null` for all six beds. The
+  sensor positions it also needs were surveyed and recorded in `sites.json` on
+  2026-08-27, so geometry is now the only blocker.
 - **The 2007–2019 baseline contains the 2014–2016 marine heatwave** on both
   sides of every comparison, damping the anomalies the analysis most wants to
   detect (docs/04 §3).
