@@ -55,7 +55,12 @@ from kelpcompare import __version__
 from kelpcompare.fetchers.base import NotModified, Payload, SourceUnavailable, new_payload
 from kelpcompare.normalize import convert_unit
 from kelpcompare.parameters import Parameters
-from kelpcompare.storage import FLAG_MISSING, FLAG_NOT_EVALUATED, OBSERVATION_COLUMNS
+from kelpcompare.storage import (
+    FLAG_MISSING,
+    FLAG_NOT_EVALUATED,
+    OBSERVATION_COLUMNS,
+    empty_observations,
+)
 
 #: The docs/03 source vocabulary name for this fetcher's rows.
 SOURCE = "ndbc"
@@ -305,11 +310,7 @@ def parse(
             )
         )
 
-    frame = (
-        pd.concat(frames, ignore_index=True)
-        if frames
-        else pd.DataFrame(columns=list(OBSERVATION_COLUMNS))
-    )
+    frame = pd.concat(frames, ignore_index=True) if frames else empty_observations()
     if not frame.empty:
         frame = frame.sort_values(["timestamp", "parameter"], kind="stable").reset_index(drop=True)
 

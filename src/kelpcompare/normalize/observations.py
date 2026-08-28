@@ -48,6 +48,7 @@ from kelpcompare.storage import (
     FLAG_NOT_EVALUATED,
     OBSERVATION_COLUMNS,
     WINDOW_TEST,
+    empty_observations,
 )
 
 #: Header units seen in the wild, canonicalized. Extended deliberately, one
@@ -154,11 +155,7 @@ def to_observations(
             )
         )
 
-    frame = (
-        pd.concat(frames, ignore_index=True)
-        if frames
-        else pd.DataFrame(columns=list(OBSERVATION_COLUMNS))
-    )
+    frame = pd.concat(frames, ignore_index=True) if frames else empty_observations()
     return NormalizedBatch(
         frame=frame[list(OBSERVATION_COLUMNS)],
         warnings=tuple(warnings),

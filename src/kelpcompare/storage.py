@@ -178,6 +178,40 @@ class Zones:
         return self.features / f"{table}.parquet"
 
 
+def empty_observations(*, stored: bool = False) -> pd.DataFrame:
+    """An empty docs/03 frame carrying the schema's dtypes, not object columns.
+
+    `pd.DataFrame(columns=OBSERVATION_COLUMNS)` types every column `object`,
+    `timestamp` included -- so `validate_frame` rejected it as not
+    timezone-aware UTC, and "no rows this run", which `write_observations`
+    documents as normal, raised a hard rule 2 violation on a frame with no
+    timestamp to get wrong. It raised only for the branch that happened to
+    build the frame that way, so whether a zero-row run was refused or written
+    was decided by a dtype rather than by anyone (#51).
+
+    `stored` picks which side of the writer the caller is on. In memory the
+    column is timezone-aware UTC, which is what `validate_frame` enforces; on
+    disk it is naive, for the DuckDB reason in this module's docstring. An
+    empty read has to have the dtypes a non-empty read has, so
+    `read_observations` asks for the stored form.
+
+    The stored resolution is microseconds, not the nanoseconds pandas gives a
+    fresh datetime column: that is what these Parquet files round-trip to, and
+    it is asserted rather than assumed -- `test_an_empty_read_has_the_dtypes_of_
+    a_non_empty_one` compares this frame against a real read, so a change in
+    what pyarrow returns fails a test instead of silently splitting the two
+    shapes apart again.
+    """
+    timestamp = "datetime64[us]" if stored else "datetime64[ns, UTC]"
+    frame = pd.DataFrame(
+        {
+            "timestamp": pd.Series(dtype=timestamp),
+            **{name: pd.Series(dtype=dtype) for name, dtype in OBSERVATION_DTYPES.items()},
+        }
+    )
+    return frame[list(OBSERVATION_COLUMNS)]
+
+
 def validate_frame(frame: pd.DataFrame) -> None:
     """Refuse anything that is not the docs/03 schema. Raises, never coerces."""
     columns = tuple(frame.columns)
@@ -246,7 +280,7 @@ def read_observations(zones: Zones, source: str | None = None) -> pd.DataFrame:
     pattern = f"source={source}" if source else "source=*"
     files = sorted(zones.observations.glob(f"{pattern}/year=*/part-*.parquet"))
     if not files:
-        return pd.DataFrame(columns=list(OBSERVATION_COLUMNS))
+        return empty_observations(stored=True)
 
     # `sorted` puts each partition's files in run-id order, which is chronological
     # by construction (`manifest.new_run_id`), so `_dedupe` keeping the last of an

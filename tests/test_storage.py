@@ -13,7 +13,13 @@ import pandas as pd
 import pytest
 
 from kelpcompare import storage
-from kelpcompare.storage import OBSERVATION_COLUMNS, Zones, write_observations
+from kelpcompare.storage import (
+    OBSERVATION_COLUMNS,
+    Zones,
+    empty_observations,
+    validate_frame,
+    write_observations,
+)
 
 RUN_A = "20260824T120000000Z-ingest"
 RUN_B = "20260824T130000000Z-ingest"
@@ -123,6 +129,36 @@ def test_an_empty_frame_writes_nothing(tmp_path):
     zones = Zones.at(tmp_path)
     assert write_observations(observations([]), zones, source="project", run_id=RUN_A) == ()
     assert not zones.observations.exists()
+
+
+def test_the_empty_frame_the_pipeline_builds_is_also_accepted(tmp_path):
+    """The case above passes a hand-typed frame, which was never the failing one.
+
+    `pd.DataFrame(columns=OBSERVATION_COLUMNS)` -- what the parsers built for
+    "no rows" -- types every column `object`, so `validate_frame` rejected it as
+    not timezone-aware UTC and the documented "writes nothing" path raised
+    instead. `empty_observations` is now the single definition of that frame.
+    """
+    zones = Zones.at(tmp_path)
+    validate_frame(empty_observations())
+    assert write_observations(empty_observations(), zones, source="project", run_id=RUN_A) == ()
+    assert not zones.observations.exists()
+
+
+def test_the_untyped_empty_frame_is_still_refused(tmp_path):
+    """Accepting the schema is not the same as accepting anything empty.
+
+    Hard rule 2 is enforced on the dtype, not on the row count: a frame with no
+    rows and an `object` timestamp is not the docs/03 schema, and a caller that
+    builds one by hand should still hear about it.
+    """
+    with pytest.raises(ValueError, match="timezone-aware UTC"):
+        write_observations(
+            pd.DataFrame(columns=list(OBSERVATION_COLUMNS)),
+            Zones.at(tmp_path),
+            source="project",
+            run_id=RUN_A,
+        )
 
 
 def test_rows_are_stored_in_time_order(tmp_path):
@@ -305,6 +341,21 @@ def test_reading_an_empty_zone_returns_the_documented_columns(tmp_path):
     empty = storage.read_observations(Zones.at(tmp_path))
     assert empty.empty
     assert tuple(empty.columns) == OBSERVATION_COLUMNS
+
+
+def test_an_empty_read_has_the_dtypes_of_a_non_empty_one(tmp_path):
+    """Same columns is not enough: a caller reaching for `.dt` needs the dtype.
+
+    An empty zone used to come back all `object`, so the shape of the answer
+    depended on whether anything had been ingested yet.
+    """
+    zones = Zones.at(tmp_path)
+    before = storage.read_observations(zones)
+    write_observations(observations(["2026-07-11 14:00"]), zones, source="project", run_id=RUN_A)
+    after = storage.read_observations(zones)
+
+    assert before.dtypes.astype(str).to_dict() == after.dtypes.astype(str).to_dict()
+    assert before["timestamp"].dtype.kind == "M"
 
 
 # --------------------------------------------------------------------------
