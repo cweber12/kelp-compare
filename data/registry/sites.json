@@ -23,6 +23,27 @@
       "notes": "Position surveyed and supplied by the placer 2026-08-27, superseding the conflicting reports ~1-2 km apart this record previously carried and the null it held while they stood. WGS84, converted from 32 deg 51' 08.2\" N, 117 deg 16' 10.1\" W. Position is a site fact, not a deployment one: a redeployment of this logger at another spot is a new site record, not another deployments[] entry here."
     },
     {
+      "site_id": "PROJ:TIDBIT-2",
+      "name": "TidbiT 2 site",
+      "operator": "project",
+      "lat": 32.855095,
+      "lon": -117.273006,
+      "neighbor_refs": ["NDBC:LJAC1", "COOPS:9410230"],
+      "deployments": [
+        {
+          "instrument": "HOBO TidbiT MX2204",
+          "serial": "22506633",
+          "deployment_number": 3,
+          "depth_m": 16.76,
+          "tz": "America/Los_Angeles",
+          "window_local": ["2026-07-11 07:40", "2026-08-23 08:30"],
+          "series_map": {"Temperature": "sea_water_temperature"},
+          "notes": "series_map key is 'Temperature', the name in this file's column header - the logger's series name was left at the factory default, so it is NOT 'Tidbit 2'. window_local is PROVISIONAL and derived from the record itself, not from a dive log: the first four samples read 21.2-22.2 degC on deck, 07:40 reads 14.8 degC and it stays down, settling only 0.4 degC over the next 20 minutes, so the logger was in and near-equilibrated by 07:40. At the other end there is nothing to exclude - Host Connected and End of File share 08:36:48, so it was stopped the instant it was connected and never warmed; the last sample is 08:30 at 15.6 degC. Confirm against the dive log and correct here: a corrected window is a registry edit plus a rebuild, and excluded rows are flagged (qc_flag 4), never deleted. Do not trust the same derivation on a shallow logger: PROJ:TIDBIT-1's window came from the placer's own hand-edited file, and a first-cold-reading rule would have picked its 07:40 dunk and been wrong by two samples. Cost if this window is wrong by a sample: min/mean/max do not move (13.12/16.50/23.02 degC either way), but threshold and spell features do - all four on-deck rows are >= 20 degC and they set 11 Jul's daily maximum to 22.18 degC where the water reached 20.36 degC. depth_m is the logger depth, reported by the placer as 55 fsw and converted at 0.3048 m/ft; the 1/33 atm pressure definition would give 16.85 m."
+        }
+      ],
+      "notes": "Position surveyed and supplied by the placer 2026-08-27. WGS84, as given in decimal degrees. Its own site rather than a second deployments[] entry on PROJ:TIDBIT-1: it sits 455 m from that logger and 8.5 m deeper, and position is a site fact that Deployment cannot carry by construction. Corroborated by the data - over the span the two records share (11 Jul 08:00 to 1 Aug 07:30 local, 3,022 samples each) this logger averaged 17.42 degC against 21.58 degC at PROJ:TIDBIT-1, which is what sitting below the thermocline looks like and is why the two cannot share a record."
+    },
+    {
       "site_id": "NDBC:LJAC1",
       "name": "La Jolla shore station (NDBC)",
       "operator": "ndbc",
