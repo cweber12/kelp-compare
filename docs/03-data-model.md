@@ -744,7 +744,11 @@ Raw zone is append-only. `observations` is rebuildable from raw; `features`
 and `comparison` are rebuildable from **raw and observations** — the kelp half
 is built from the Kelp Watch landings plus `polygons.geojson` and never passes
 through `observations`, because a canopy value belongs to a polygon and that
-zone is keyed on `site_id`. A single `kelpcompare rebuild` regenerates derived
-zones from scratch. All joins go
+zone is keyed on `site_id`. A single `kelpcompare rebuild` is meant to regenerate
+derived zones from scratch, and **is not implemented yet** — the command exits
+with a message
+(https://github.com/cweber12/kelp-compare/issues/54). Until it is, the rebuildability
+above is a property of the design rather than an available operation, which is what
+makes a landed `site_id` or `depth_m` one-way. All joins go
 through registry keys — no string-matching station names in analysis code.
 Timestamps UTC everywhere; local time exists only at presentation.
