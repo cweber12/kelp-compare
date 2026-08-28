@@ -356,6 +356,33 @@ def test_different_depths_at_one_instant_are_distinct_observations(tmp_path):
     assert len(storage.read_observations(zones)) == 2
 
 
+def test_a_string_depth_cannot_leave_two_rows_where_one_belongs(tmp_path):
+    """The silent half of #57, asserted on the file rather than through the reader.
+
+    `_dedupe` runs before the writer's `astype`, so `"8.23"` and `8.23` were two
+    keys: re-ingesting two already-stored readings left four rows in the part file
+    where two belong. Nothing read them back doubled -- the writer normalises the
+    depth before the file is written and the reader dedupes again on the way out --
+    so the raw Parquet is the one place the duplication was ever visible, and the
+    case docs/03 "Partition files and idempotence" flags for a glob reader.
+    """
+    zones = Zones.at(tmp_path)
+    stamps = ["2026-07-11 14:00", "2026-07-11 14:10"]
+    write_observations(observations(stamps, depth_m=8.23), zones, source="project", run_id=RUN_A)
+
+    with pytest.raises(ValueError, match="depth_m"):
+        write_observations(
+            observations(stamps, depth_m="8.23", run_id=RUN_B),
+            zones,
+            source="project",
+            run_id=RUN_B,
+        )
+
+    files = sorted(zones.partition("project", 2026).glob("part-*.parquet"))
+    assert [path.name for path in files] == [f"part-{RUN_A}.parquet"]
+    assert len(pd.read_parquet(files[0])) == 2
+
+
 def test_sources_are_stored_separately(tmp_path):
     zones = Zones.at(tmp_path)
     project = observations(["2026-07-11 14:00"])
@@ -480,6 +507,25 @@ def test_an_empty_read_has_the_dtypes_of_a_non_empty_one(tmp_path):
 
     assert before.dtypes.astype(str).to_dict() == after.dtypes.astype(str).to_dict()
     assert before["timestamp"].dtype.kind == "M"
+
+
+def test_a_frame_read_back_out_of_the_zone_still_passes_the_guard(tmp_path):
+    """The round trip is closed: what storage hands back, storage would accept.
+
+    The stored timestamp is naive by design (the DuckDB reason in the storage
+    module docstring), so this localizes it exactly as the `qc` and `features`
+    commands do after a read. Both then pass the frame to `validate_frame`, so a
+    `string` column or a `float64` depth coming back as something the dtype
+    checks refuse would take those two commands down with it.
+    """
+    zones = Zones.at(tmp_path)
+    write_observations(
+        observations(["2026-07-11 14:00"], depth_m=8.23), zones, source="project", run_id=RUN_A
+    )
+
+    stored = storage.read_observations(zones)
+    stored["timestamp"] = stored["timestamp"].dt.tz_localize("UTC")
+    validate_frame(stored)
 
 
 # --------------------------------------------------------------------------
