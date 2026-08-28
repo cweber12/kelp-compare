@@ -17,6 +17,7 @@ implementation, since public endpoints and formats drift.
 | NDBC | Reference met/ocean observations | HTTPS text files | 6 min – 1 hr | Fixed-width text |
 | NOAA CO-OPS | Water level, coastal water temp | REST API (JSON/CSV) | 6 min / hourly | JSON, CSV |
 | SCCOOS / CalOOS | Shore stations, HABs, currents | ERDDAP (tabledap/griddap) | Varies | CSV, NetCDF, JSON |
+| City of San Diego RTOMS | Depth-resolved reference temperature | CeNCOOS ERDDAP (tabledap) | 10 min | CSV |
 | CDIP | Wave climate | THREDDS/ERDDAP NetCDF | 30 min | NetCDF |
 | CDFW / marineBIOS | GIS context, historical kelp surveys | Downloaded shapefiles/services | Static / annual | Shapefile, GeoJSON |
 | Supplementary (SST, indices) | Gap-filling, regional drivers | ERDDAP / flat files | Daily / monthly | NetCDF, text |
@@ -346,6 +347,152 @@ into our flag scheme rather than discard; HAB counts are discrete sampling
 (roughly weekly), not continuous, and are treated as event/covariate data;
 HF-radar surface currents are gridded and only pulled if the analysis
 reaches transport questions (deferred).
+
+## City of San Diego RTOMS
+
+Two moored strings run by the City of San Diego Public Utilities Department
+with Scripps, near the terminal ends of the Point Loma and South Bay ocean
+outfalls, carrying `sea_water_temperature` at many depths on one string at a
+10-minute cadence. **This is the only depth-resolved temperature in the study
+region**, and that is the whole reason it is here: every other environmental
+series in this project comes from `NDBC:LJAC1`, a single sensor 3.4 m below
+MLLW, and `sites.json` already declines to report bias for `PROJ:TIDBIT-2`
+against it because that reference sits 13.4 m above the logger and above the
+summer thermocline.
+
+Reached through the **CeNCOOS ERDDAP** (`erddap.cencoos.org`), not through the
+City's open data portal, and the choice is deliberate — see "The portal CSVs
+are the same data, worse" below.
+
+| Site | Dataset ID | Position | Temperature depths |
+|---|---|---|---|
+| `SDRTOMS:PLOO` | `point-loma-ocean-outfall-real-ti` | 32.66996, -117.32676 | 11: 1, 9, 10, 20, 30, 45, 60, 75, 85, 87, 90 m |
+| `SDRTOMS:SBOO` | `south-bay-ocean-outfall` | 32.53171, -117.18631 | 6: 1, 10, 18, 20, 25, 26 m |
+
+Both were verified on 2026-08-28 as internally consistent — the dataset's
+`geospatial_lat/lon` attributes agree with the `latitude`/`longitude` columns
+of the rows themselves — and both agree with the depth each mooring reaches,
+which is the independent check that matters: Point Loma's string runs to 90 m
+off a 94 m outfall terminus, South Bay's to 26 m off a much shallower one.
+
+### The QARTOD vocabulary is already ours
+
+Each parameter arrives with a `_qc_agg` aggregate flag and a `_qc_tests`
+per-test flag, both declaring
+`flag_values: 1, 2, 3, 4, 9` and
+`flag_meanings: PASS NOT_EVALUATED SUSPECT FAIL MISSING`.
+
+That is the doc 03 `qc_flag` vocabulary exactly, value for value, so this is a
+pass-through and not a mapping — there is no translation table to get wrong.
+`_qc_agg` becomes `qc_flag` and `_qc_tests` becomes the `qc_tests` record.
+Ingest does not overwrite these with its own verdict: the provider ran QARTOD
+with knowledge of its own instruments, and doc 03's rule that flags are
+attached rather than rows deleted applies to a flag that arrived just as much
+as to one this project computed.
+
+### Depth is on the payload, not in the registry
+
+A mooring measures one parameter at many depths at once, so `sensor_depths_m`
+declares a **list** for these sites and the fetcher reads `depth_m` per row
+(doc 03, "A source may be self-describing on depth"). The list is not a value
+the fetcher consumes; it is what a payload depth is checked against, so a
+mooring back from a refit with a sensor at a new depth is reported rather than
+landed silently as a series nobody has seen.
+
+**A nominal depth that drifts between deployments is two depths, not one.** The
+string reports 9 m on one deployment and 10 m on the next for what is
+physically the same position, and both are declared and both land. Rounding
+them together would write a depth the mooring never reported into `depth_m`,
+which is part of `OBSERVATION_KEY` and therefore permanent. The cost is real
+and accepted: the record for that position splits at the deployment boundary,
+so per-series quarterly coverage is thinner than the raw row count suggests.
+
+### `z` is altitude, and the sign flips
+
+ERDDAP serves the vertical coordinate as `z`, positive **up** from the surface,
+so every value is negative or zero. Doc 03 `depth_m` is positive **down**. The
+fetcher negates. A sign error here is not subtle in its consequences — it puts
+every reading above the water — but it is entirely silent in a Parquet file, so
+it is checked at the boundary rather than trusted.
+
+### Temperature lives only on the discrete mooring depths
+
+`z` takes 41 distinct values on the South Bay feed, most of them 1 m apart.
+Those are ADCP velocity bins: the datasets are `TimeSeriesProfile` and flatten
+every instrument on the string into one vertical axis, so `eastward_sea_water_velocity`
+contributes a bin every metre while temperature sits on a handful of fixed
+positions. Filtering to rows where the temperature is not null recovers the 11
+and 6 depths tabled above. A fetcher that took the depth axis at face value
+would land dozens of series per station, nearly all of them empty.
+
+### What is deliberately not read
+
+The feeds also carry salinity, dissolved oxygen, pH, chlorophyll, CDOM,
+turbidity, xCO2, BOD and current velocity. Only `sea_water_temperature` is
+stored, because it is the only one of those with a `parameters.json` entry, and
+adding one is a registry decision about SI units and QC bounds rather than a
+parsing convenience.
+
+**`mole_concentration_of_nitrate_in_sea_water` is the interesting omission.**
+Doc 04 records that temperature and nitrate proxies are anti-correlated by
+regional oceanography and that separating thermal stress from nutrient
+limitation "is not available from this data at all"; this is measured nitrate,
+not the BEUTI proxy recommended above. It is not simply switched on because
+these moorings sit on wastewater outfall diffusers, so nitrate here carries an
+anthropogenic component that a kelp-nutrient reading must account for. Tracked
+separately; do not add it as a one-line parameter entry.
+
+### `south-bay-ocean-outfall-historic` disagrees with itself about where it is
+
+Two further datasets exist, covering 2020-01 to 2023-01 (`point-loma-ocean-outfall-histori`)
+and 2020-01 to 2022-11 (`south-bay-ocean-outfall-historic`). **Neither is
+ingested**, and the second must not be without an upstream fix.
+
+Checked on 2026-08-28, `south-bay-ocean-outfall-historic` gives three different
+answers to where its instrument was:
+
+| Source | Says |
+|---|---|
+| `geospatial_lat/lon` attributes | 32.66996, -117.32676 — Point Loma's position, byte-identical to both PLOO datasets |
+| the `latitude`/`longitude` columns in the rows | 32.86917, -117.24674 — La Jolla, ~37 km north |
+| its `z` range, -26.0 to -1.0 m | South Bay's mooring, which is what the title claims |
+
+The depths are the only one of the three that matches the title, so the data is
+probably South Bay's and both positions are wrong. That is a guess, and a site
+record is not built on a guess — position is a reviewed registry fact here
+(`sites.json`, `PROJ:TIDBIT-1`), and a station whose provider contradicts
+itself twice has not supplied one. `point-loma-ocean-outfall-histori` is
+self-consistent and agrees with its real-time sibling; it is left out only to
+keep the first landing to one concern, and backfilling it is ordinary work.
+
+### The portal CSVs are the same data, worse
+
+`data.sandiego.gov` publishes the same measurements as per-year CSVs on
+`seshat.datasd.org`, and they were the obvious route until the ERDDAP feeds
+turned up. Recorded so the comparison is not redone:
+
+- **They stop at 2023.** ERDDAP runs to 2024-12 (PLOO) and 2025-06 (SBOO).
+- **They carry a qualifier flag of 1-5 and 9**, including a `5` for
+  "value changed / drift-corrected in post-processing" that has no doc 03
+  equivalent and would need a judgement call. The ERDDAP feeds use the
+  five-value QARTOD set that needs none.
+- **They are 3-34 MB per file with no server-side subsetting**, so an
+  incremental re-run downloads the year again and a recorded fixture is a
+  large one. `erddapy` constrains by time and variable at the server.
+- **No new dependency either way** — `erddapy` is already required for SCCOOS.
+
+They remain the only route to 2020 and most of 2021 for South Bay, since that
+window exists on ERDDAP only in the dataset described above.
+
+### Distance is the standing caveat
+
+These moorings are 25-40 km south of La Jolla and sit on outfall diffusers.
+They are a **depth reference, not a neighbor**: doc 04's neighbor validation
+compares an instrument against a nearby one, and nothing here is nearby. What
+they can support is the question `sites.json` currently answers in prose — how
+far a 3.4 m shore reading sits from water at thermocline depth in this region,
+and how that gap moves with season. They also cannot validate the project's own
+loggers, whose deployments begin in July 2026, after every RTOMS record ends.
 
 ## CDIP (Coastal Data Information Program)
 
