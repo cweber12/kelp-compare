@@ -20,7 +20,7 @@ from kelpcompare.adapters.base import RawSeries, SeriesInfo
 from kelpcompare.normalize import NormalizedBatch, convert_unit, to_observations
 from kelpcompare.parameters import load_parameters
 from kelpcompare.registry import Deployment, find_deployment, load_registry
-from kelpcompare.storage import OBSERVATION_COLUMNS
+from kelpcompare.storage import OBSERVATION_COLUMNS, validate_frame
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIX = Path(__file__).parent / "fixtures"
@@ -204,6 +204,26 @@ def test_an_unmapped_series_is_reported_and_skipped(tmp_path, parameters):
     assert "no series_map entry" in batch.warnings[0]
     assert set(batch.frame["parameter"]) == {"sea_water_temperature"}
     assert len(batch.frame) == 2
+
+
+def test_a_batch_with_nothing_mapped_is_still_the_storage_schema(parameters):
+    """The empty frame has to be the docs/03 schema, not object columns (#51).
+
+    Reachable here even though the ingest CLI now quarantines a file whose
+    series_map names none of its series: the normalizer does not run validation
+    and must not depend on someone else having done so.
+    """
+    batch = to_observations(
+        _raw_series(name="Light", unit="degC"),
+        _deployment(series_map={"Tidbit 1": "sea_water_temperature"}),
+        parameters,
+        source="project",
+        run_id=RUN_ID,
+    )
+
+    assert batch.frame.empty
+    assert batch.skipped_series == ("Light",)
+    validate_frame(batch.frame)  # would raise on the object-dtype timestamp
 
 
 def test_a_series_map_naming_an_unknown_parameter_refuses(parameters):

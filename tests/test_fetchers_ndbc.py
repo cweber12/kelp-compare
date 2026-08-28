@@ -397,6 +397,21 @@ def test_a_declaration_the_parameter_vocabulary_does_not_know_is_reported(parame
     assert any("sea_water_temp" in w and "not in" in w for w in parsed.warnings)
 
 
+def test_a_parse_that_yields_no_rows_still_returns_the_storage_schema(parameters):
+    """An empty result is a docs/03 frame, not a bag of `object` columns.
+
+    `write_observations` documents "no rows this run" as normal and then refused
+    it: the empty branch built columns pandas typed `object`, and hard rule 2 is
+    enforced on the dtype, so the refusal was a dtype accident rather than a
+    decision (#51). What stops a zero-row window now is the ingest CLI, which
+    can tell an empty payload from an empty declaration.
+    """
+    parsed = _parse(ARCHIVE, parameters, measured_parameters=("water_level",))
+
+    assert parsed.frame.empty
+    validate_frame(parsed.frame)  # would raise on the object-dtype timestamp
+
+
 def test_declaring_one_parameter_leaves_the_others_out_without_extra_warnings(parameters):
     """A station with no such sensor must not also collect a warning about the
     column being absent from a file it was never going to be read from."""
