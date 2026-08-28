@@ -21,7 +21,7 @@ import click
 import pandas as pd
 
 from kelpcompare.adapters import hobo_xlsx
-from kelpcompare.adapters.base import REGISTRY_GATE, Check, ValidationReport
+from kelpcompare.adapters.base import QUARANTINE_CHECKS, Check, ValidationReport
 from kelpcompare.features.build import BuildOutcome, build_features
 from kelpcompare.features.climatology import CLIMATOLOGY_KEY, anomaly_columns
 from kelpcompare.features.comparison import COMPARISON_KEY, build_comparison
@@ -1123,19 +1123,26 @@ def _route(path: Path):
 def _blocking_check(report: ValidationReport) -> Check | None:
     """The checks that stop an ingest, in the order they should be reported.
 
-    Only two. The registry gate is docs/06 s5 check 4. The timezone cross-check
-    joins it because the normalizer places timestamps using a fixed offset taken
-    from the registry zone: if the header disagrees with that zone, or the
-    deployment straddles a DST transition HOBOconnect handles in an unverified
-    way (docs/06 s6), the honest answer is that we do not know the offset.
+    Two families. `QUARANTINE_CHECKS` is docs/06 s5 check 4 in both its halves:
+    a deployment record must exist for the serial, and its series map must name
+    something this file actually carries. Its order is owned by the adapter
+    contract rather than repeated here, so a new blocking check reaches this
+    caller by being declared once.
 
-    Everything else -- a statistics mismatch, a cadence gap, a renamed file -- is
-    recorded and ingested. Those are facts about the data, not reasons to refuse
-    it.
+    The timezone cross-check joins them because the normalizer places timestamps
+    using a fixed offset taken from the registry zone: if the header disagrees
+    with that zone, or the deployment straddles a DST transition HOBOconnect
+    handles in an unverified way (docs/06 s6), the honest answer is that we do
+    not know the offset.
+
+    Everything else -- a statistics mismatch, a cadence gap, a renamed file, a
+    single unmapped series on a multi-series logger -- is recorded and ingested.
+    Those are facts about the data, not reasons to refuse it.
     """
-    gate = report.check(REGISTRY_GATE)
-    if gate is not None and gate.status == "fail":
-        return gate
+    for name in QUARANTINE_CHECKS:
+        check = report.check(name)
+        if check is not None and check.status == "fail":
+            return check
 
     timezone = report.check(TIMEZONE_CHECK)
     if timezone is not None and timezone.status != "pass":
