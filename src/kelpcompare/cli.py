@@ -97,7 +97,13 @@ def main() -> None:
 
 
 @main.command()
-@click.option("--source", required=True, help="Source name per docs/02 (currently: project, ndbc).")
+@click.option(
+    "--source",
+    required=True,
+    # Listed from the registries rather than spelled out, so adding a source
+    # cannot leave the help text claiming it does not exist.
+    help=f"Source name per docs/02 (currently: {', '.join(sorted(set(RAW_DIRECTORY) | set(FETCHERS)))}).",
+)
 @click.option(
     "--path",
     type=click.Path(exists=True, path_type=Path),
