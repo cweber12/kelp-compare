@@ -69,6 +69,22 @@ winning; run IDs sort chronologically by construction, which is what makes
 the tie-break deterministic. That is how overlapping readouts of a running
 logger (doc 06 §5 check 5) resolve to one row per measurement.
 
+**Two of the four key fields come from the registry, which makes both immutable
+once rows have landed.** `site_id` and `depth_m` are read from the deployment
+record, not from the instrument's file, so editing either in `sites.json` —
+renaming a site, or filling a null depth — makes the re-ingested rows key
+differently from the ones already on disk. They collide with nothing, so nothing
+is superseded and nothing raises: both copies survive in the partition, and the
+features layer builds them as two series for one instrument — the stale one
+under a `site_id` the registry no longer contains, which no join through the
+registry can resolve. Treat a landed `site_id` or `depth_m` as one-way until
+`rebuild` exists to repair it.
+
+**A window correction is not in this class**, and is safe. `window_local` sets
+the `deployment_window` verdict and so moves `qc_flag`, which is not part of the
+key; re-dropping the file supersedes the rows in place. The distinction matters
+because deployment notes reach for the same phrase for both.
+
 **A part file is never half-written.** The new file is written under a staging
 name that deliberately does not match `part-*.parquet` — so a leftover from a
 crashed run is invisible to every reader of this zone, DuckDB globs included —
