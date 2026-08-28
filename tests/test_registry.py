@@ -197,3 +197,26 @@ def test_the_committed_registrys_depths_are_floats():
     loaded = load_registry(COMMITTED)
     assert loaded.deployments
     assert all(d.depth_m is None or isinstance(d.depth_m, float) for d in loaded.deployments)
+
+
+def test_a_numeric_site_id_loads_as_a_string_on_both_halves(tmp_path):
+    """The same hole as `depth_m`, on the other key field docs/03 names with it."""
+    loaded = registry(
+        tmp_path,
+        {
+            "site_id": 1234,
+            "operator": "ndbc",
+            "station_code": "TEST",
+            "deployments": [{"serial": "22506632"}],
+        },
+    )
+    (found,) = find_stations(loaded, "ndbc")
+    assert found.site_id == "1234"
+    assert find_deployment(loaded, "22506632").site_id == "1234"
+
+
+def test_an_explicit_null_site_id_is_empty_rather_than_the_word_none(tmp_path):
+    """`site.get("site_id", "")` returns None for a present-but-null key, and a
+    bare `str()` would turn that into a site called "None"."""
+    loaded = registry(tmp_path, {"site_id": None, "deployments": [{"serial": "22506632"}]})
+    assert find_deployment(loaded, "22506632").site_id == ""

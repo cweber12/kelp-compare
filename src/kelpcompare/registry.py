@@ -191,6 +191,22 @@ def _normalize_serial(serial: object) -> str:
     return str(serial).strip()
 
 
+def _site_id(site: dict) -> str:
+    """The site's identifier as a string, whatever the JSON holds.
+
+    The same reason as `_depth`: `site_id` is the other `OBSERVATION_KEY`
+    component read from this file rather than from the instrument, and the
+    partition write dedupes before it casts dtypes, so a JSON number keys
+    differently from the `"1234"` already on disk and the reading survives twice.
+    docs/03 names the two fields together for that reason.
+
+    An explicit `null` becomes `""` -- the same "no site declared" the absent key
+    produces -- rather than the string `"None"` that a bare `str()` would invent.
+    """
+    value = site.get("site_id")
+    return "" if value is None else str(value)
+
+
 def _depth(value: object, *, site_id: str, serial: str) -> float | None:
     """Depths are floats, but a hand-edited registry may hold a JSON string.
 
@@ -222,7 +238,7 @@ def _station(site: dict) -> Station:
     platform = site.get("same_platform_as") or ()
     measured = site.get("measured_parameters") or ()
     return Station(
-        site_id=site.get("site_id", ""),
+        site_id=_site_id(site),
         station_code=str(site.get("station_code", "")),
         operator=str(site.get("operator", "")),
         name=site.get("name"),
@@ -235,7 +251,7 @@ def _station(site: dict) -> Station:
 def _deployment(site: dict, record: dict) -> Deployment:
     window = record.get("window_local")
     series_map = record.get("series_map")
-    site_id = site.get("site_id", "")
+    site_id = _site_id(site)
     serial = _normalize_serial(record.get("serial"))
     return Deployment(
         site_id=site_id,
