@@ -191,6 +191,32 @@ def _normalize_serial(serial: object) -> str:
     return str(serial).strip()
 
 
+def _depth(value: object, *, site_id: str, serial: str) -> float | None:
+    """Depths are floats, but a hand-edited registry may hold a JSON string.
+
+    Coerced rather than passed through because `depth_m` is one of the four
+    `storage.OBSERVATION_KEY` components, and `_dedupe` runs before the write
+    casts dtypes. A depth that arrives as `"8.23"` does not compare equal to the
+    `8.23` already in the partition, so the same reading survives twice and
+    nothing raises -- the silent split docs/03 "Partition files and idempotence"
+    describes for a depth *change*, reached here by an edit that changed nothing.
+
+    Refusing a non-number is the other half. Left alone it still fails, but at
+    the `astype` inside the partition write: after the fetch, the parse and the
+    QC are done, and naming storage rather than the registry field at fault.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"depth_m on {site_id or '<unnamed site>'} deployment of serial "
+            f"{serial or '<no serial>'} is {value!r}, which is not a number; it is part "
+            "of the storage dedupe key and must be a float or null"
+        ) from None
+
+
 def _station(site: dict) -> Station:
     depths = site.get("sensor_depths_m") or {}
     platform = site.get("same_platform_as") or ()
@@ -209,14 +235,16 @@ def _station(site: dict) -> Station:
 def _deployment(site: dict, record: dict) -> Deployment:
     window = record.get("window_local")
     series_map = record.get("series_map")
+    site_id = site.get("site_id", "")
+    serial = _normalize_serial(record.get("serial"))
     return Deployment(
-        site_id=site.get("site_id", ""),
-        serial=_normalize_serial(record.get("serial")),
+        site_id=site_id,
+        serial=serial,
         instrument=record.get("instrument"),
         deployment_number=record.get("deployment_number"),
         tz=record.get("tz"),
         window_local=(str(window[0]), str(window[1])) if window and len(window) == 2 else None,
         series_map={str(k): str(v) for k, v in series_map.items()} if series_map else None,
-        depth_m=record.get("depth_m"),
+        depth_m=_depth(record.get("depth_m"), site_id=site_id, serial=serial),
         notes=record.get("notes"),
     )
