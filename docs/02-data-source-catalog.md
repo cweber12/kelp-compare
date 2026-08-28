@@ -442,6 +442,71 @@ these moorings sit on wastewater outfall diffusers, so nitrate here carries an
 anthropogenic component that a kelp-nutrient reading must account for. Tracked
 separately; do not add it as a one-line parameter entry.
 
+### Three things a real ingest turned up
+
+Measured on `SDRTOMS:SBOO` for 2023 — 88,307 rows stored from a payload of
+107,831 — and each would have been silent.
+
+**A second instrument reports at a temperature depth, on its own clock.** The
+depth filter above catches the ADCP bins because they sit where no temperature
+sensor does. It cannot catch the same thing happening *at* 20 m, which is a
+declared depth: something else on the string reports there a minute off the
+10-minute grid, and ERDDAP emits a row for every `(time, depth)` any instrument
+reported at. That was **17,755 rows** — a series that is essentially complete
+read as 40% missing, which would have carried into `pct_coverage` and every
+quarterly feature built on it.
+
+The provider separates them itself, and exactly: across that ingest **every row
+carrying a value had a `_qc_tests` verdict, without exception**. An empty
+verdict therefore means no temperature test was ever run on that row, which is
+not a sensor that failed but a row that was never about this sensor. The
+fetcher drops those and keeps every gap the provider did evaluate, which stays
+in the record flagged `9`. Both are dropped silently — this is the normal shape
+of every payload, and the manifest's `rows_in` against `rows_out` already shows
+the attrition.
+
+**`_qc_agg` and `_qc_tests` disagree on absent readings.** The provider writes
+`qc_agg = 2` (not evaluated) on rows whose own `_qc_tests` records the gross
+range test as `9` (missing) — all seven 26 m gaps in the recorded fixture do
+this. doc 03 decides it: an absent value is `9`, because there is nothing in an
+absence to judge. Landing them at `2` would put holes through the default
+`qc_flag <= 2` analysis filter as though they were data. The fetcher therefore
+overrides the aggregate wherever the value is null, and this is a deliberate
+divergence from the provider rather than an accident.
+
+**Conditional requests are not honoured.** ERDDAP answers `If-Modified-Since`
+with `200` and the whole body, verified 2026-08-28. This source has no cheap
+"has it changed" and never raises `NotModified`; a re-run is made cheap by
+asking for a narrower time window instead, which suits a growing time series
+better than an ETag would anyway.
+
+### What it is worth, measured
+
+One year of South Bay, stored and aggregated:
+
+| Depth | Mean 2023 temperature |
+|---|---|
+| 1 m | 18.44 °C |
+| 10 m | 16.13 °C |
+| 20 m | 14.97 °C |
+| 25 m | 12.38 °C |
+
+Six degrees over twenty-five metres. That is the number the whole entry is for:
+`NDBC:LJAC1` measures 3.4 m and nothing else, `PROJ:TIDBIT-2` sits at 16.76 m,
+and `sites.json` currently explains the ~5 °C gap between them in prose. It is
+also why these moorings are a depth reference and not a neighbor — the gradient
+is the signal, and 25-40 km of coastline is the confound.
+
+**None of this reaches `comparison.parquet`, by construction.** The features
+run that landed these series left the comparison table byte-identical
+(`sha256:7d2c62503276e7be`, 15,300 rows). Two independent reasons, and both
+should be understood before anyone expects a lag screen to change: no polygon
+lists these sites in `site_ids`, and the climatology baseline is fixed at
+2007-2019 while these records begin in 2021, so every series lands with
+`baseline_years = 0` and every anomaly null. A four-year record cannot support
+a ten-year climatology, and no amount of backfill from the portal CSVs would
+change that — they start in 2020.
+
 ### `south-bay-ocean-outfall-historic` disagrees with itself about where it is
 
 Two further datasets exist, covering 2020-01 to 2023-01 (`point-loma-ocean-outfall-histori`)
@@ -478,8 +543,17 @@ turned up. Recorded so the comparison is not redone:
   five-value QARTOD set that needs none.
 - **They are 3-34 MB per file with no server-side subsetting**, so an
   incremental re-run downloads the year again and a recorded fixture is a
-  large one. `erddapy` constrains by time and variable at the server.
-- **No new dependency either way** — `erddapy` is already required for SCCOOS.
+  large one. `tabledap` constrains by time and variable at the server: one hour
+  of South Bay is 17 KB, which is what makes the recorded fixture possible.
+- **No new dependency either way.**
+
+Unlike the SCCOOS entry above, this fetcher builds its `tabledap` URLs directly
+rather than through `erddapy`. The URL is the thing `raw/` records and the run
+manifest reports, so constructing it in one visible place means a landed payload
+can be re-requested by copying a string out of the manifest. `erddapy` remains
+the right tool for SCCOOS, where dataset discovery and variable introspection
+are the hard part; here the query is four constraints and a fixed variable
+list.
 
 They remain the only route to 2020 and most of 2021 for South Bay, since that
 window exists on ERDDAP only in the dataset described above.
