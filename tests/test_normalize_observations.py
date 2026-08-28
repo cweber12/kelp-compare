@@ -127,7 +127,12 @@ def test_registry_metadata_lands_on_every_row(normalized, deployment):
     assert set(frame["parameter"]) == {"sea_water_temperature"}
     assert set(frame["source"]) == {"project"}
     assert set(frame["fetch_run_id"]) == {RUN_ID}
-    assert frame["depth_m"].isna().all()  # null pending a GPS fix, by design
+
+    # Whatever the deployment record declares: null while a site is unplaced, the
+    # surveyed depth once it is. What is asserted is that the value comes from the
+    # registry, not that it is any particular number.
+    depths = {None if pd.isna(value) else value for value in frame["depth_m"]}
+    assert depths == {deployment.depth_m}
 
 
 def test_an_edited_file_normalizes_to_the_same_in_window_rows(parameters, deployment):
