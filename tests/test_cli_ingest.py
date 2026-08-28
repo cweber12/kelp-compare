@@ -155,6 +155,30 @@ def test_an_edited_file_is_ingested_and_marked(data_root):
     assert any("events_consistency" in w for w in entry["warnings"])
 
 
+def test_an_edited_file_says_so_on_the_console(data_root):
+    """Never silently means never manifest-only: the operator reads the console.
+
+    `_report` prints warnings for exactly this reason, and the project-sensor
+    path recorded them on the entry without ever promoting them -- so the one
+    signal that a file was hand-edited reached only a JSON file nobody opens.
+    """
+    drop(data_root, EDITED)
+    output = run_ingest(data_root).output
+
+    assert "details_statistics" in output
+    assert "events_consistency" in output
+    assert EDITED.name in output
+
+
+def test_a_clean_original_warns_about_nothing(data_root):
+    """The other half: a warning that always fires stops being read."""
+    drop(data_root, ORIGINAL)
+    result = run_ingest(data_root)
+
+    assert "warning" not in result.output
+    assert manifest_of(data_root)["warnings"] == []
+
+
 # --------------------------------------------------------------------------
 # Quarantine -- docs/06 s5 check 4, hard rule 5
 # --------------------------------------------------------------------------
