@@ -104,7 +104,7 @@ def test_only_the_declared_sensor_depths_survive_the_profile_axis(parameters):
     """The datasets flatten ADCP velocity bins onto the same z axis as temperature."""
     parsed = parse(parameters)
     assert parsed.rows_in == 293
-    assert len(parsed.frame) == 45
+    assert len(parsed.frame) == 35
     assert set(parsed.frame["depth_m"]) <= set(DECLARED)
 
 
@@ -167,8 +167,35 @@ def test_a_row_with_no_reading_is_missing_whatever_the_provider_called_it(parame
 def test_an_outage_at_a_declared_depth_stays_in_the_record(parameters):
     """Flags, never deletions (hard rule 4). A sensor that did not report is a row."""
     parsed = parse(parameters)
-    assert int(parsed.frame["value"].isna().sum()) == 17
-    assert parsed.missing_counts["sea_water_temperature"] == 17
+    assert int(parsed.frame["value"].isna().sum()) == 7
+    assert parsed.missing_counts["sea_water_temperature"] == 7
+
+
+def test_a_gap_the_provider_never_evaluated_is_not_stored_as_a_gap(parameters):
+    """Another instrument at a temperature depth, reporting on its own clock.
+
+    The depth filter cannot catch this one: 20 m is a declared depth, and
+    ERDDAP emits a row for every (time, depth) any instrument on the string
+    reported at. On a real 2023 South Bay ingest it was 17,755 rows, which made
+    an essentially complete series look 40% missing -- and that would carry
+    into `pct_coverage` and every quarterly feature built on it.
+
+    The provider separates them itself: across that ingest every row carrying a
+    value had a QC verdict, without exception, so an empty verdict means no
+    temperature test was ever run on that row.
+    """
+    parsed = parse(parameters)
+    stored = parsed.frame
+    assert (stored["value"].notna() | stored["qc_tests"].ne("")).all()
+
+
+def test_a_gap_the_provider_did_evaluate_keeps_its_row(parameters):
+    """The other half: a real outage stays in the record, flagged (hard rule 4)."""
+    parsed = parse(parameters)
+    gaps = parsed.frame[parsed.frame["value"].isna()]
+    assert len(gaps) == 7
+    assert set(gaps["qc_tests"]) == {"gross_range:missing"}
+    assert set(gaps["depth_m"]) == {26.0}
 
 
 def test_a_reading_whose_flag_disagrees_with_its_own_tests_is_reported(parameters):

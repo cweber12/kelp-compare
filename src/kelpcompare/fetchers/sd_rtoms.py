@@ -311,6 +311,44 @@ def parse(
     flags, tests, flag_warnings = _verdicts(kept, absent, payload)
     warnings.extend(flag_warnings)
 
+    # A row with no reading AND no verdict on it is not this sensor's row.
+    #
+    # The depth filter above catches the ADCP bins, which sit at depths no
+    # temperature sensor occupies. It cannot catch the same thing happening *at*
+    # a temperature depth: another instrument at 20 m reporting on a clock a
+    # minute off the temperature sensor's puts a row at (t, -20.0) with the
+    # temperature null, and 20 m is a declared depth. On a real 2023 South Bay
+    # ingest that was 17,755 rows -- it made a series that is essentially
+    # complete look 40% missing, which would carry into `pct_coverage` and the
+    # quarterly features built on it.
+    #
+    # The provider separates them itself, and exactly: across that ingest every
+    # row carrying a value had a qc_tests verdict, without exception, so an
+    # empty verdict means the provider never ran a temperature test on that row.
+    # That is not a sensor that failed -- it is a row that was never about this
+    # sensor. A gap the provider *did* evaluate keeps its row and its flag 9,
+    # which is the outage docs/03 wants in the record.
+    phantom = absent & pd.Series(tests).eq("").to_numpy()
+    #
+    # Dropped silently, like the profile bins above and for the same reason: it
+    # is a property of how ERDDAP flattens a TimeSeriesProfile, present in every
+    # payload, and a warning on every ingest about the normal shape of the feed
+    # is one the operator learns to ignore. The attrition is visible anyway --
+    # the manifest records rows_in against rows_out -- and docs/02 explains it.
+    if phantom.any():
+        # `keep` indexes the whole table and decides which values are read below,
+        # so it has to lose exactly the rows `kept` does or the two fall out of
+        # step and every column after this is offset against its own timestamps.
+        keep = keep.copy()
+        keep.loc[kept.index[phantom]] = False
+        survivors = ~phantom
+        kept = kept[survivors]
+        flags = flags[survivors]
+        tests = [text for text, alive in zip(tests, survivors, strict=True) if alive]
+        absent = absent[survivors]
+        if kept.empty:
+            return _nothing(payload, rows_in=len(table), warnings=tuple(warnings))
+
     # An absent reading is `missing`, whatever the provider called it. docs/03
     # gives 9 to a row with no value, and `qc.flags` states the reason as a
     # deliberate divergence from `ioos_qc`: there is nothing in an absence to
