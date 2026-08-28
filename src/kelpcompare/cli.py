@@ -1084,6 +1084,15 @@ def _ingest_file(
             entry.quarantined_to = _as_text(_quarantine(path, zones, dry_run=dry_run))
             return
 
+        # A check that did not stop the ingest still noticed something, and the
+        # operator reads the console rather than the manifest -- the reason
+        # `_report` prints warnings at all. Promoted here where kelpwatch's are
+        # deliberately not: a hand-edit, a cadence gap or a renamed file each
+        # fire only on a file that is not a well-formed original, so this is not
+        # a warning that always fires and therefore stops being read.
+        for warning in entry.warnings:
+            run.note_warning(f"{path.name}: {warning}")
+
         deployment, ambiguity = _select_deployment(registry, metadata)
         if deployment is None:
             entry.outcome = "quarantined"
@@ -1099,6 +1108,8 @@ def _ingest_file(
         entry.rows_out = len(batch.frame)
         entry.qc_flags = batch.flag_counts
         entry.warnings.extend(batch.warnings)
+        for warning in batch.warnings:
+            run.note_warning(f"{path.name}: {warning}")
 
         entry.landed = _as_text(_land(path, zones, raw_directory, entry.serial, dry_run=dry_run))
         if not dry_run:
