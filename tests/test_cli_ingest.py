@@ -208,7 +208,13 @@ def test_a_deployment_missing_its_series_map_is_quarantined(data_root):
     """The gate now covers the mapping the normalizer needs (docs/06 s5 check 4)."""
     sites = data_root / "registry" / "sites.json"
     payload = json.loads(sites.read_text(encoding="utf-8"))
-    payload["sites"][0]["deployments"][0].pop("series_map")
+    record = next(
+        d
+        for site in payload["sites"]
+        for d in site.get("deployments", ())
+        if str(d.get("serial")) == KNOWN_SERIAL
+    )
+    record.pop("series_map")
     sites.write_text(json.dumps(payload), encoding="utf-8")
 
     drop(data_root, ORIGINAL)
