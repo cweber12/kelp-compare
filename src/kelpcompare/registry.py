@@ -88,17 +88,52 @@ class Station:
     operator: str
     name: str | None = None
     sensor_depths_m: dict[str, float] = field(default_factory=dict)
+    depth_set_m: dict[str, tuple[float, ...]] = field(default_factory=dict)
     measured_parameters: tuple[str, ...] = ()
     same_platform_as: tuple[str, ...] = ()
 
     def depth_for(self, parameter: str) -> float | None:
-        """The declared depth for one parameter, or None.
+        """The depth the registry supplies for one parameter, or None.
 
         None is the right answer for a met parameter -- docs/03 says `depth_m` is
         null for those -- and equally the right answer for a water parameter
         whose depth the provider has not published. Neither is guessed.
+
+        None is also the answer for a parameter measured on a moored string,
+        whose depth is on the payload rather than here (`describes_own_depth`).
+        That is deliberate: this method's contract is "what the fetcher should
+        write", and for a self-describing source the answer is "not mine to
+        say". A fetcher falling back to this value would write one depth for
+        every sensor on the string and collapse them all into one series.
         """
         return self.sensor_depths_m.get(parameter)
+
+    def describes_own_depth(self, parameter: str) -> bool:
+        """Whether the payload carries this parameter's depth rather than the registry.
+
+        True when the registry declared a *set* of depths for it. A moored string
+        measures one parameter at many depths, so there is no single value for
+        `sensor_depths_m` to hold and the depth has to be read per row. What the
+        registry can still do is record which depths anyone has actually looked
+        at, which is what `declared_depths` is for.
+        """
+        return parameter in self.depth_set_m
+
+    def declared_depths(self, parameter: str) -> tuple[float, ...]:
+        """Every depth recorded for one parameter, however it was declared.
+
+        A scalar declaration answers with a one-tuple, a set declaration with the
+        set, and an undeclared parameter with `()`. A caller checking a payload
+        depth against the registry wants those three to look the same, so the two
+        declaration forms are flattened here rather than at each call site.
+
+        Empty means undeclared, never "measured nowhere" -- the same distinction
+        `declares_parameters` draws, and for the same reason.
+        """
+        if parameter in self.depth_set_m:
+            return self.depth_set_m[parameter]
+        depth = self.sensor_depths_m.get(parameter)
+        return () if depth is None else (depth,)
 
     @property
     def declares_parameters(self) -> bool:
@@ -233,16 +268,72 @@ def _depth(value: object, *, site_id: str, serial: str) -> float | None:
         ) from None
 
 
+def _sensor_depths(site: dict) -> tuple[dict[str, float], dict[str, tuple[float, ...]]]:
+    """Split `sensor_depths_m` into its scalar and its set declarations (docs/03).
+
+    A number means the registry supplies the depth and the fetcher writes it. A
+    list means the source is self-describing -- a moored string measuring one
+    parameter at many depths -- and the registry is instead recording which
+    depths have been seen, so a new one is caught rather than landed silently.
+
+    Both arrive as floats, for the reason `_depth` gives: `depth_m` is part of
+    `storage.OBSERVATION_KEY`, and a depth carried as a string does not compare
+    equal to the float already in the partition, so the same reading survives
+    twice and nothing raises.
+
+    An empty list is refused rather than read as "no depths". It would flow on as
+    a station that declares a set and matches nothing, which reads at the fetcher
+    exactly like a source that changed every depth at once -- a confusing way to
+    say something the absent key already says plainly.
+    """
+    declared = site.get("sensor_depths_m") or {}
+    site_id = _site_id(site) or "<unnamed site>"
+    scalars: dict[str, float] = {}
+    sets: dict[str, tuple[float, ...]] = {}
+    for key, value in declared.items():
+        parameter = str(key)
+        if isinstance(value, (list, tuple)):
+            if not value:
+                raise ValueError(
+                    f"sensor_depths_m[{parameter!r}] on {site_id} is an empty list; omit the "
+                    "parameter instead, which is how the registry says a depth is undeclared"
+                )
+            sets[parameter] = tuple(
+                _sensor_depth(item, site_id=site_id, parameter=parameter) for item in value
+            )
+        else:
+            scalars[parameter] = _sensor_depth(value, site_id=site_id, parameter=parameter)
+    return scalars, sets
+
+
+def _sensor_depth(value: object, *, site_id: str, parameter: str) -> float:
+    """One `sensor_depths_m` entry as a float, or a refusal naming the registry.
+
+    The station-side counterpart to `_depth`, refused for the same reason: a
+    depth reaching storage as a string splits a series in two without raising
+    (docs/03 "Partition files and idempotence"). Left alone it would still fail,
+    but inside a partition write that can only name storage as the culprit.
+    """
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"sensor_depths_m[{parameter!r}] on {site_id} is {value!r}, which is not a number; "
+            "it is part of the storage dedupe key and must be a float"
+        ) from None
+
+
 def _station(site: dict) -> Station:
-    depths = site.get("sensor_depths_m") or {}
     platform = site.get("same_platform_as") or ()
     measured = site.get("measured_parameters") or ()
+    scalars, sets = _sensor_depths(site)
     return Station(
         site_id=_site_id(site),
         station_code=str(site.get("station_code", "")),
         operator=str(site.get("operator", "")),
         name=site.get("name"),
-        sensor_depths_m={str(k): float(v) for k, v in depths.items()},
+        sensor_depths_m=scalars,
+        depth_set_m=sets,
         measured_parameters=tuple(str(p) for p in measured),
         same_platform_as=tuple(str(s) for s in platform),
     )
