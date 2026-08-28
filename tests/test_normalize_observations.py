@@ -286,7 +286,7 @@ def test_the_committed_vocabulary_covers_every_registry_series_map():
 
 def _deployment(series_map=None) -> Deployment:
     return Deployment(
-        site_id="PROJ:YELLOW-BUOY",
+        site_id="PROJ:TIDBIT-1",
         serial=KNOWN_SERIAL,
         deployment_number=3,
         tz="America/Los_Angeles",
