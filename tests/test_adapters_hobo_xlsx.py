@@ -22,7 +22,7 @@ import pandas as pd
 import pytest
 
 from kelpcompare.adapters import hobo_xlsx
-from kelpcompare.adapters.base import REGISTRY_GATE
+from kelpcompare.adapters.base import REGISTRY_GATE, SERIES_MAPPING
 from kelpcompare.registry import Deployment, find_deployment, load_registry
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -292,6 +292,7 @@ def test_validate_original_passes_every_check(registry):
         "timezone_crosscheck": "pass",
         "filename_serial": "pass",
         REGISTRY_GATE: "pass",
+        SERIES_MAPPING: "pass",
     }
 
 
@@ -400,6 +401,127 @@ def test_missing_series_map_is_quarantined(tmp_path):
     assert gate.detail.endswith("-- quarantine")
     assert "missing series_map)" in gate.detail  # only the absent field is named
     assert report.quarantined is True
+
+
+def test_a_series_map_that_names_nothing_in_the_file_is_quarantined(tmp_path):
+    """The gate's blind spot: a map that exists, is non-empty, and matches nothing.
+
+    The key is the sensor name as the operator configured it -- a user setting
+    transcribed into the registry by hand -- so getting it wrong is an ordinary
+    typo, and every other check passes on a perfectly good file.
+    """
+    registry = _registry(tmp_path, {"Temperature": "sea_water_temperature"})
+    report = hobo_xlsx.validate(ORIGINAL, registry=registry)
+
+    assert report.check(REGISTRY_GATE).status == "pass"  # the gate is satisfied
+    mapping = report.check(SERIES_MAPPING)
+    assert mapping.status == "fail"
+    assert "'Tidbit 1'" in mapping.detail  # what the file carries
+    assert "'Temperature'" in mapping.detail  # what the registry declares
+    assert "zero rows" in mapping.detail
+    assert report.quarantined is True
+    assert report.ok is False
+
+
+def test_one_unmapped_series_on_a_multi_series_logger_only_warns(tmp_path):
+    """docs/06 s6: iterate every series column, and do not let one cost the rest.
+
+    A synthetic two-series workbook rather than a fixture: no real multi-series
+    export has been recorded, and a fabricated file in `tests/fixtures/` would
+    read as evidence of HOBOconnect behaviour nobody has verified.
+    """
+    path = write_hobo_xlsx(
+        tmp_path / "two_series.xlsx",
+        series=(
+            ("Tidbit 1", f"{DEGREE}F", [60.0, 61.0, 62.0]),
+            ("Light", "lux", [100.0, 220.0, 180.0]),
+        ),
+    )
+    report = hobo_xlsx.validate(path, registry=_registry(tmp_path))
+
+    mapping = report.check(SERIES_MAPPING)
+    assert mapping.status == "warn"
+    assert "'Light'" in mapping.detail
+    assert "'Tidbit 1'" not in mapping.detail.split("declares")[0]
+    assert report.quarantined is False
+    assert report.ok is True
+
+
+def test_a_series_renamed_between_deployments_still_maps(tmp_path):
+    """Checked against every record for the serial, not the first one.
+
+    A logger is redeployed and its series can be renamed in between. Comparing
+    against one arbitrary record would quarantine a file the registry does in
+    fact describe -- so the verdict is about the serial, not about which window
+    the file belongs to.
+    """
+    path = tmp_path / "renamed.json"
+    path.write_text(
+        json.dumps(
+            {
+                "sites": [
+                    {
+                        "site_id": "PROJ:X",
+                        "deployments": [
+                            {
+                                "serial": KNOWN_SERIAL,
+                                "deployment_number": 2,
+                                "tz": "America/Los_Angeles",
+                                "window_local": ["2026-05-01 00:00", "2026-06-01 00:00"],
+                                "series_map": {"Old name": "sea_water_temperature"},
+                            },
+                            {
+                                "serial": KNOWN_SERIAL,
+                                "deployment_number": 3,
+                                "tz": "America/Los_Angeles",
+                                "window_local": ["2026-07-11 08:00", "2026-08-01 07:30"],
+                                "series_map": {"Tidbit 1": "sea_water_temperature"},
+                            },
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = hobo_xlsx.validate(ORIGINAL, registry=load_registry(path))
+    assert report.check(SERIES_MAPPING).status == "pass"
+
+
+def test_no_deployment_record_leaves_the_mapping_check_to_the_gate(tmp_path, registry):
+    """One verdict per problem: an unregistered serial is the gate's to report."""
+    path = write_hobo_xlsx(tmp_path / "stranger.xlsx", serial="99999999")
+    report = hobo_xlsx.validate(path, registry=registry)
+
+    assert report.check(REGISTRY_GATE).status == "fail"
+    assert report.check(SERIES_MAPPING).status == "skipped"
+
+
+def _registry(tmp_path: Path, series_map: dict | None = None):
+    """A minimal registry whose only variable is the series map under test."""
+    path = tmp_path / "sites_series_map.json"
+    path.write_text(
+        json.dumps(
+            {
+                "sites": [
+                    {
+                        "site_id": "PROJ:X",
+                        "deployments": [
+                            {
+                                "serial": KNOWN_SERIAL,
+                                "deployment_number": 3,
+                                "tz": "America/Los_Angeles",
+                                "window_local": ["2026-07-11 07:00", "2026-08-01 07:30"],
+                                "series_map": series_map or {"Tidbit 1": "sea_water_temperature"},
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return load_registry(path)
 
 
 def test_series_map_resolves_the_parameter_by_series_name(registry):

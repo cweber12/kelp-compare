@@ -15,6 +15,7 @@ from kelpcompare.adapters.base import (
     SeriesInfo,
     ValidationReport,
     registry_gate,
+    series_mapping,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "SeriesInfo",
     "ValidationReport",
     "registry_gate",
+    "series_mapping",
 ]

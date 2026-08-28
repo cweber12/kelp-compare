@@ -140,6 +140,7 @@ def test_the_manifest_records_the_checks_and_the_landing(data_root):
         "timezone_crosscheck",
         "filename_serial",
         "registry_gate",
+        "series_mapping",
     }
 
 

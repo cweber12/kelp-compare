@@ -26,6 +26,7 @@ from kelpcompare.adapters.base import (
     RawSeries,
     SeriesInfo,
     registry_gate,
+    series_mapping,
 )
 from kelpcompare.registry import Deployment, Registry, find_deployment
 
@@ -601,6 +602,7 @@ def run_checks(sheets: HoboSheets, raw: RawSeries, registry: Registry) -> tuple[
         check_timezone(raw, deployment),
         check_filename_serial(sheets, details),
         registry_gate(details.serial, registry),
+        series_mapping(details.serial, [info.name for info in raw.series], registry),
     )
 
 

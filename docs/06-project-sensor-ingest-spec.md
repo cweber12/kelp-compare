@@ -158,6 +158,20 @@ Run automatically; results go in the run manifest.
    were surveyed on 2026-08-27, so no committed record exercises that path any
    more; `tests/test_adapters_hobo_xlsx.py` writes an unplaced site of its own
    rather than letting the invariant lapse.
+
+   **Series mapping** is the second half of the same gate, and needs the file:
+   the map must name at least one series this export actually carries. Because
+   the keys are sensor names as configured on the logger and transcribed into
+   the registry by hand, a mistyped key is invisible to every other check —
+   `Deployment.parameter_for` returns `None`, the normalizer reports and skips
+   (§4), and the run stores nothing while reporting an ingest. So the verdict
+   splits: **some** series unmapped is a `warn` and the rest ingest, which is
+   the multi-series behaviour §6 requires; **every** series unmapped is a
+   `fail` and the file is quarantined, because a registry that names nothing in
+   a file is a registry gap for a human (hard rule 5). The comparison is against
+   every complete record for the serial, not the one the ingest goes on to
+   choose — a series can be renamed between deployments, so this verdict is
+   about the serial rather than about which window the file belongs to.
 5. **Duplicate-readout detection**: same serial + overlapping time range as
    a prior ingest → keep both raw, dedupe deterministically in
    observations (readouts of a running logger overlap by design).
