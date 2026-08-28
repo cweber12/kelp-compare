@@ -380,6 +380,62 @@ follow the standard Hobday framework computed from the SST series (doc 04).
 All are small, well-behaved downloads; each still gets a fetcher and a
 registry entry like every other source.
 
+## Sources considered and set aside
+
+### SBC LTER reef bottom temperature (`knb-lter-sbc.13`) is the wrong coast
+
+Reviewed 2026-08-28 and not adopted. It is easy to reach for, because it is
+published by the same LTER site as the kelp product this project already
+depends on and it measures the same quantity on the same instrument family as
+the project sensors — continuous bottom temperature from Onset TidbiT loggers,
+two per site offset to give 15-minute resolution, retrieved and replaced
+bi-annually, ongoing since 2000.
+
+**It covers nine reefs in the Santa Barbara Channel, at about 34.4° N.** Every
+polygon and every site in this project is San Diego, at about 32.85° N — some
+270 km south, on the other side of Point Conception's influence and in a
+different upwelling setting. Joining it to the comparison table would pair kelp
+with water that never touched it. That is the whole reason, and it is not a
+close call: `sites.json` already declines to report `PROJ:TIDBIT-2` bias
+against a reference 2.0 km away, on the narrower ground that the reference sits
+13.4 m above the logger. Distance at this scale disqualifies more decisively
+than depth did.
+
+**It is not `knb-lter-sbc.74`, and the two are easy to confuse.** That is the
+Landsat canopy product pinned in `polygons.geojson`, which spans Pt. Reyes to
+Punta Abreojos and therefore does include this coast. A reader who finds an
+`knb-lter-sbc` package and assumes it is the kelp one will reach the wrong
+conclusion about whether it is usable here.
+
+Two uses were weighed before setting it aside, and both are recorded because
+each could look attractive again later:
+
+- **An out-of-region replication of the doc 04 §4.1 lag screen.** Nine sites
+  across roughly 24 years would test whether the screen's leading candidate
+  survives outside San Diego, which is worth more than it sounds — that
+  candidate currently rests on one station against two adjacent beds. Set aside
+  on sequencing rather than on merit: it needs a second site registry, polygon
+  set and climatology baseline, while doc 04 §4.5 — the project's own key
+  question — still cannot run at all.
+- **An empirical floor for the `sea_water_temperature` QC thresholds**
+  (`https://github.com/cweber12/kelp-compare/issues/4`), whose fallback option
+  is literature values. Same instrument at the same depth class over a record
+  long enough to contain real internal bores, so it would show the statistics
+  directly. Set aside because Santa Barbara bore statistics are not San Diego's:
+  it could bound the thresholds but not set them, and that issue's nearer
+  options — a SCCOOS/Scripps fetcher, or a winter deployment of the project's
+  own logger — answer the question properly rather than approximately.
+
+**No revision is pinned here, deliberately.** The description above was read
+from DataONE's mirror, whose newest indexed revision is 19 and whose coverage
+stops in 2013; the live package is far ahead of that. EDI itself returns 403 to
+an anonymous caller on every method — re-confirmed on 2026-08-28 against
+`readMetadata`, `listDataPackageRevisions` and `searchDataPackages`, the same
+global lockout described under Kelp Watch above and tracked at
+`https://github.com/cweber12/kelp-compare/issues/25`. Pinning a revision from a
+stale mirror would be recording a number nobody has verified. If this package is
+ever revisited, read it live first.
+
 ## Cross-cutting fetcher rules
 
 Every fetcher: writes the untouched payload to `raw/{source}/` before
