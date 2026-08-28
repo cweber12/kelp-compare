@@ -140,6 +140,7 @@ def test_the_manifest_records_the_checks_and_the_landing(data_root):
         "timezone_crosscheck",
         "filename_serial",
         "registry_gate",
+        "series_mapping",
     }
 
 
@@ -198,6 +199,74 @@ def test_an_unregistered_serial_is_quarantined_and_nothing_is_stored(data_root, 
     assert entry["outcome"] == "quarantined"
     assert entry["landed"] is None  # a quarantined file never enters raw/
     assert "99999999" in entry["reason"]
+
+
+def test_a_series_map_naming_nothing_in_the_file_is_quarantined(data_root):
+    """docs/06 s5 check 4: the map has to name what the file actually carries.
+
+    Every other check passes -- this is a good file and a real deployment
+    record, with one key mistyped. Before the check existed the run landed the
+    file in raw/, stored nothing, and said so nowhere an operator would look.
+    """
+    _remap(data_root, {"Temperature": "sea_water_temperature"})
+    drop(data_root, ORIGINAL)
+    result = run_ingest(data_root)
+    assert result.exit_code == 0  # fail soft: a rejection is not a crash
+
+    assert (data_root / "quarantine" / ORIGINAL.name).exists()
+    assert not (data_root / "observations").exists()
+    assert not (data_root / "raw" / "project_sensors" / KNOWN_SERIAL).exists()
+
+    entry = manifest_of(data_root)["files"][0]
+    assert entry["outcome"] == "quarantined"
+    assert entry["landed"] is None
+    assert entry["reason"].startswith("series_mapping:")
+    assert "'Tidbit 1'" in entry["reason"]
+
+
+def test_a_dry_run_reports_the_problem_instead_of_an_ingest(data_root):
+    """The mode an operator checks a new deployment record in, and the one that lied.
+
+    `--dry-run` never reaches storage, so nothing downstream could object: the
+    run printed `ingested ... 0 rows` and exited 0. Validation runs in every
+    mode, which is why the verdict belongs there rather than in the write path.
+    """
+    _remap(data_root, {"Temperature": "sea_water_temperature"})
+    drop(data_root, ORIGINAL)
+    result = run_ingest(data_root, "--dry-run")
+
+    assert result.exit_code == 0
+    assert "ingested" not in result.output
+    assert "quarantined" in result.output
+    assert "series_mapping" in result.output
+
+
+def test_one_unmapped_series_of_two_still_lands_the_other(data_root, tmp_path):
+    """The documented soft case must survive the new gate (docs/06 s6).
+
+    Built rather than recorded: no real multi-series export exists, and this
+    asserts our own contract -- one unrecognized column costs the run that
+    column, not its temperature record.
+    """
+    from test_adapters_hobo_xlsx import DEGREE, write_hobo_xlsx
+
+    path = write_hobo_xlsx(
+        tmp_path / "two_series.xlsx",
+        series=(
+            ("Tidbit 1", f"{DEGREE}F", [60.0, 61.0, 62.0]),
+            ("Light", "lux", [100.0, 220.0, 180.0]),
+        ),
+    )
+    drop(data_root, path)
+    assert run_ingest(data_root).exit_code == 0
+
+    entry = manifest_of(data_root)["files"][0]
+    assert entry["outcome"] == "ingested"
+    assert entry["rows_out"] == 3
+    assert any("series_mapping" in w for w in entry["warnings"])
+
+    stored = storage.read_observations(Zones.at(data_root), source="project")
+    assert set(stored["parameter"]) == {"sea_water_temperature"}
 
 
 def test_a_quarantined_file_stays_in_incoming_for_a_retry(data_root, tmp_path):
@@ -318,6 +387,21 @@ def test_an_unimplemented_source_says_so(data_root):
 # --------------------------------------------------------------------------
 # Building an unregistered file from the reference export
 # --------------------------------------------------------------------------
+
+
+def _remap(data_root: Path, series_map: dict) -> None:
+    """Rewrite the known serial's series_map in this run's copy of the registry.
+
+    The committed registry is never touched: `data_root` holds a copy, and a
+    registry edit is a `data(registry)` change with its own review.
+    """
+    path = data_root / "registry" / "sites.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    for site in document["sites"]:
+        for deployment in site.get("deployments", []):
+            if deployment.get("serial") == KNOWN_SERIAL:
+                deployment["series_map"] = series_map
+    path.write_text(json.dumps(document, indent=2), encoding="utf-8")
 
 
 def _reserialed(tmp_path: Path, source: Path, serial: str) -> Path:

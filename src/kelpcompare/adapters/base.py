@@ -13,6 +13,7 @@ ingest CLI's (docs/03).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,15 @@ CheckStatus = Literal["pass", "fail", "warn", "skipped"]
 
 #: Name of the check that decides quarantine (docs/06 s5 check 4).
 REGISTRY_GATE = "registry_gate"
+
+#: The other half of check 4: the map exists, but does it name *this file's*
+#: series? A map whose keys match nothing lands zero rows.
+SERIES_MAPPING = "series_mapping"
+
+#: Checks whose failure stops an ingest, in the order to report them. Read by
+#: `ValidationReport.quarantined` and by the ingest CLI, so a new blocking check
+#: cannot be added to one and forgotten in the other.
+QUARANTINE_CHECKS = (REGISTRY_GATE, SERIES_MAPPING)
 
 #: Columns of `RawSeries.data`, long format so a multi-series logger needs no
 #: schema change (docs/06 s6).
@@ -113,9 +123,8 @@ class ValidationReport:
 
     @property
     def quarantined(self) -> bool:
-        """True iff the registry gate failed -- the only check that quarantines."""
-        gate = self.check(REGISTRY_GATE)
-        return gate is not None and gate.status == "fail"
+        """True iff one of the `QUARANTINE_CHECKS` failed."""
+        return any(c.status == "fail" for c in self.checks if c.name in QUARANTINE_CHECKS)
 
 
 def registry_gate(serial: str | None, registry: Registry) -> Check:
@@ -160,6 +169,77 @@ def registry_gate(serial: str | None, registry: Registry) -> Check:
     return Check(
         REGISTRY_GATE, "pass", f"serial {serial} matched {len(complete)} record(s): {listed}"
     )
+
+
+def series_mapping(serial: str | None, series_names: Sequence[str], registry: Registry) -> Check:
+    """docs/06 s5 check 4, second half: does the map name this file's series?
+
+    `registry_gate` requires a series map to exist and stops there, because it
+    is given only a serial. It could not check the contents anyway without the
+    file: the keys are sensor names as the operator configured them on the
+    logger -- a user setting (docs/06 s6), transcribed into the registry by
+    hand. A key that does not match is invisible to every other check.
+
+    The cost of not checking is silent and total. `Deployment.parameter_for`
+    returns None for a name it does not know and the normalizer reports and
+    skips, which is right for one unrecognized column on a multi-series logger
+    and wrong when it is every column -- there the run stores nothing while
+    reporting an ingest. So a partial miss warns and a total miss quarantines:
+    a registry gap for a human, which is what hard rule 5 says to do with a
+    file the registry does not cover.
+
+    Compared against *every* complete record for the serial rather than the one
+    the CLI will go on to choose. A logger is redeployed and its series can be
+    renamed between deployments, so failing here means no record of this serial
+    names the series at all -- never that this file was matched to the wrong
+    window.
+
+    Needs only names and a registry, like `registry_gate`, so the next vendor
+    adapter shares it unchanged.
+    """
+    if not series_names:
+        return Check(SERIES_MAPPING, "skipped", "the file reports no series to map")
+
+    candidates = [d for d in find_deployments(registry, serial or "") if d.is_complete]
+    if not candidates:
+        return Check(
+            SERIES_MAPPING,
+            "skipped",
+            f"no complete deployment record for serial {serial} to map against "
+            f"(see {REGISTRY_GATE})",
+        )
+
+    unmapped = [
+        name
+        for name in series_names
+        if not any(d.parameter_for(name) is not None for d in candidates)
+    ]
+    declared = sorted({key for d in candidates for key in (d.series_map or {})})
+
+    if len(unmapped) == len(series_names):
+        return Check(
+            SERIES_MAPPING,
+            "fail",
+            f"no series in this file is named by a series_map for serial {serial}: the file "
+            f"carries {_listed(series_names)} and the registry declares {_listed(declared)}; "
+            "ingesting would store zero rows and report success -- quarantine",
+        )
+    if unmapped:
+        return Check(
+            SERIES_MAPPING,
+            "warn",
+            f"{_listed(unmapped)} not named by a series_map for serial {serial}; skipped, "
+            f"the rest ingest. The registry declares {_listed(declared)}",
+        )
+    return Check(
+        SERIES_MAPPING,
+        "pass",
+        f"the registry names every series in this file: {_listed(series_names)}",
+    )
+
+
+def _listed(names: Sequence[str]) -> str:
+    return ", ".join(repr(name) for name in names) or "nothing"
 
 
 def _incomplete_reason(deployment: Deployment) -> str:

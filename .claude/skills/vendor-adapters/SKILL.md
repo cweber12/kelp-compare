@@ -42,6 +42,10 @@ Adapters only extract faithfully.
 2. No ingest without a registry deployment record matching the serial,
    with timezone, in-water window, and `series_map` (sensor name from the
    header -> controlled parameter). Otherwise quarantine.
+2b. The `series_map` must also *name* a series the file carries. Keys are
+   hand-transcribed sensor names, so a typo is invisible elsewhere: the
+   normalizer skips the series and the run stores nothing. Some series
+   unmapped -> warn and ingest the rest; all unmapped -> quarantine.
 3. Validation on originals: parsed n/min/max/mean must equal the Details
    statistics; first/last samples must match Started/End-of-File events;
    observed spacing must match the configured interval. Skip
