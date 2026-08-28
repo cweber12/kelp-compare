@@ -34,7 +34,7 @@ from kelpcompare.features.kelp import (
     build_kelp,
 )
 from kelpcompare.features.quarterly import QUARTERLY_KEY, feature_columns
-from kelpcompare.fetchers import cache, kelpwatch, ndbc
+from kelpcompare.fetchers import cache, kelpwatch, ndbc, sd_rtoms
 from kelpcompare.fetchers.base import NotModified, SourceUnavailable, land
 from kelpcompare.manifest import RunManifest
 from kelpcompare.normalize import to_observations
@@ -75,7 +75,7 @@ RAW_DIRECTORY = {"project": "project_sensors", kelpwatch.SOURCE: kelpwatch.SOURC
 #: fetcher module and one entry here (docs/02). Keyed by the docs/03 source name,
 #: which is also the raw landing directory for these -- the asymmetry above is
 #: peculiar to project sensors.
-FETCHERS = {ndbc.SOURCE: ndbc}
+FETCHERS = {ndbc.SOURCE: ndbc, sd_rtoms.SOURCE: sd_rtoms}
 
 #: Where a file-drop source expects its files (docs/02 "Project sensors").
 INCOMING = "incoming"
@@ -965,13 +965,25 @@ def _ingest_window(
         if not dry_run:
             entry.landed = str(land(payload, zones))
 
+        # Which depth argument a fetcher wants is a property of its source, not
+        # of this function. A fixed-depth station is told the depth to write; a
+        # moored string reads it off its own payload and is instead told which
+        # depths the registry has reviewed, so a sensor at a new one is reported
+        # rather than landed (docs/03 "A source may be self-describing on
+        # depth"). Branching on the module rather than on the site keeps a
+        # registry typo from silently choosing the other contract.
+        depth_argument = (
+            {"declared_depths": site.declared_depths(getattr(fetcher, "PARAMETER", ""))}
+            if getattr(fetcher, "READS_DEPTH_FROM_PAYLOAD", False)
+            else {"depths_m": site.sensor_depths_m}
+        )
         parsed = fetcher.parse(
             payload,
             parameters,
             site_id=site.site_id,
-            depths_m=site.sensor_depths_m,
             measured_parameters=site.measured_parameters,
             run_id=run.run_id,
+            **depth_argument,
         )
         entry.rows_in = parsed.rows_in
         entry.rows_out = len(parsed.frame)
