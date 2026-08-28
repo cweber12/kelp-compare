@@ -22,12 +22,18 @@ from click.testing import CliRunner
 from kelpcompare import storage
 from kelpcompare.cli import main
 from kelpcompare.qc.flags import parse_tests
+from kelpcompare.registry import find_deployment, load_registry
 from kelpcompare.storage import FLAG_FAIL, FLAG_NOT_EVALUATED, FLAG_PASS, Zones
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIX = Path(__file__).parent / "fixtures"
 ORIGINAL = FIX / "Tidbit_1__22506632__2026-08-01_07_44_27_PDT__Data_PDT_.xlsx"
 REGISTRY_SOURCE = REPO_ROOT / "data" / "registry"
+
+KNOWN_SERIAL = "22506632"
+
+#: Read from the committed registry, not pinned: a site rename is a data edit.
+PROJECT_SITE = find_deployment(load_registry(REGISTRY_SOURCE / "sites.json"), KNOWN_SERIAL).site_id
 
 
 @pytest.fixture
@@ -193,7 +199,7 @@ def test_the_run_manifest_records_each_evaluated_series(data_root):
 
     (series,) = qc_manifest(data_root)["series"]
     assert series["source"] == "project"
-    assert series["site_id"] == "PROJ:YELLOW-BUOY"
+    assert series["site_id"] == PROJECT_SITE
     assert series["parameter"] == "sea_water_temperature"
     assert series["rows"] == 3029
     assert set(series["tests"]) == {"gross_range", "spike", "rate_of_change"}

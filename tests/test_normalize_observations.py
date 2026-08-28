@@ -121,9 +121,9 @@ def test_the_window_is_carried_into_utc_too(normalized):
     )
 
 
-def test_registry_metadata_lands_on_every_row(normalized):
+def test_registry_metadata_lands_on_every_row(normalized, deployment):
     frame = normalized.frame
-    assert set(frame["site_id"]) == {"PROJ:YELLOW-BUOY"}
+    assert set(frame["site_id"]) == {deployment.site_id}
     assert set(frame["parameter"]) == {"sea_water_temperature"}
     assert set(frame["source"]) == {"project"}
     assert set(frame["fetch_run_id"]) == {RUN_ID}
