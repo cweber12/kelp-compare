@@ -1,6 +1,6 @@
 {
   "_comment": "Kelp Watch analysis polygons per docs/03. One Feature per area the analysis compares kelp over. Each declares polygon_id (the key every kelp and comparison row joins on), purpose (near_site, control or regional), site_ids (the stations this polygon is compared against, so no analysis code string-matches a polygon name), and source_file -- the Kelp Watch export its rows arrive in, because the CSV names the geometry it describes nowhere in the file (docs/02). kelp_watch pins the dataset revision the exports came from; bumping it obsoletes every landing at the old revision, because a newer revision may revise history as well as extend it. Geometry is WGS84 (RFC 7946) and is null here: these six are Kelp Watch's own named bed geometries, selected in the site's UI, and their outlines have not been recorded in this repository yet. Nothing computes from them -- the export arrives already summed over the selected geometry -- but docs/04 s4.5's distance-decay test will need them, and that is the stage that should refuse a polygon without one.",
-  "_provisional": "The purpose labels and the site pairings below are a first pass and are meant to be revised. NDBC:LJAC1's published position (32.867, -117.257) is inside the La Jolla bed, so that bed is regional and the other five are controls. Every bed is paired with both the public reference station and the project sensor, which is the docs/04 s4.5 comparison; PROJ:YELLOW-BUOY's own position is still unverified, so no near_site polygon is declared. Changing any of this is a data(registry) edit needing no code.",
+  "_provisional": "The purpose labels and the site pairings below are a first pass and are meant to be revised. NDBC:LJAC1's published position (32.867, -117.257) is inside the La Jolla bed, so that bed is regional and the other five are controls. Every bed is paired with both the public reference station and the project sensor, which is the docs/04 s4.5 comparison; PROJ:TIDBIT-1's own position is still unverified, so no near_site polygon is declared. Changing any of this is a data(registry) edit needing no code.",
   "type": "FeatureCollection",
   "kelp_watch": {
     "_comment": "From the export's own recommended-citation download, retrieved 2026-08-26: Bell, T., K. Cavanaugh, D. Siegel. 2024. SBC LTER: Time series of quarterly NetCDF files of kelp biomass in the canopy from Landsat 5, 7 and 8, since 1984 (ongoing) ver 23. Environmental Data Initiative.",
@@ -14,9 +14,9 @@
         "polygon_id": "KELP:LA-JOLLA",
         "name": "La Jolla kelp bed",
         "purpose": "regional",
-        "site_ids": ["NDBC:LJAC1", "PROJ:YELLOW-BUOY"],
+        "site_ids": ["NDBC:LJAC1", "PROJ:TIDBIT-1"],
         "source_file": "kelp_lajolla.csv",
-        "notes": "The bed containing NDBC:LJAC1, whose published position sits inside it. The project sensor is deployed in this bed too, though its exact position is unverified (see PROJ:YELLOW-BUOY in sites.json)."
+        "notes": "The bed containing NDBC:LJAC1, whose published position sits inside it. The project sensor is deployed in this bed too, though its exact position is unverified (see PROJ:TIDBIT-1 in sites.json)."
       },
       "geometry": null
     },
@@ -26,7 +26,7 @@
         "polygon_id": "KELP:DEL-MAR",
         "name": "Del Mar kelp bed",
         "purpose": "control",
-        "site_ids": ["NDBC:LJAC1", "PROJ:YELLOW-BUOY"],
+        "site_ids": ["NDBC:LJAC1", "PROJ:TIDBIT-1"],
         "source_file": "kelp_delmar.csv",
         "notes": "The smallest bed exported. Genuinely empty for most of the record, which makes it the bed where a fabricated cloud-gap zero would be least visible (docs/02)."
       },
@@ -38,7 +38,7 @@
         "polygon_id": "KELP:SOLANA-BEACH",
         "name": "Solana Beach kelp bed",
         "purpose": "control",
-        "site_ids": ["NDBC:LJAC1", "PROJ:YELLOW-BUOY"],
+        "site_ids": ["NDBC:LJAC1", "PROJ:TIDBIT-1"],
         "source_file": "kelp_solanabeach.csv"
       },
       "geometry": null
@@ -49,7 +49,7 @@
         "polygon_id": "KELP:ENCINITAS",
         "name": "Encinitas kelp bed",
         "purpose": "control",
-        "site_ids": ["NDBC:LJAC1", "PROJ:YELLOW-BUOY"],
+        "site_ids": ["NDBC:LJAC1", "PROJ:TIDBIT-1"],
         "source_file": "kelp_encinitas.csv",
         "notes": "The northern end of the exported range."
       },
@@ -61,7 +61,7 @@
         "polygon_id": "KELP:SAN-DIEGO",
         "name": "San Diego kelp bed",
         "purpose": "control",
-        "site_ids": ["NDBC:LJAC1", "PROJ:YELLOW-BUOY"],
+        "site_ids": ["NDBC:LJAC1", "PROJ:TIDBIT-1"],
         "source_file": "kelp_sandiego.csv",
         "notes": "The largest bed exported, by a factor of nearly two over La Jolla."
       },
@@ -73,7 +73,7 @@
         "polygon_id": "KELP:IMPERIAL-BEACH",
         "name": "Imperial Beach kelp bed",
         "purpose": "control",
-        "site_ids": ["NDBC:LJAC1", "PROJ:YELLOW-BUOY"],
+        "site_ids": ["NDBC:LJAC1", "PROJ:TIDBIT-1"],
         "source_file": "kelp_imperialbeach.csv",
         "notes": "The southern end of the exported range."
       },

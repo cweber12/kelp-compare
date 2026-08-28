@@ -2,8 +2,8 @@
   "_comment": "Site registry per docs/03. Deployment records are REQUIRED before project-sensor ingest (docs/06 registry gate). window_local values below are from the reviewed Tidbit deployment; verify before first real run. series_map keys are the sensor name as it appears in the vendor file header ('Tidbit 1 , degF' -> 'Tidbit 1'), not the full column label; values are controlled parameter names from parameters.json. measured_parameters on a public station lists the controlled parameters that station actually carries an instrument for; a fetcher stores only those, so a fixed-column format cannot land rows for a sensor the station does not have. Omit it only while nobody has checked - an absent field means undeclared, and the fetcher stores everything it recognises and says so.",
   "sites": [
     {
-      "site_id": "PROJ:YELLOW-BUOY",
-      "name": "Yellow buoy temperature logger",
+      "site_id": "PROJ:TIDBIT-1",
+      "name": "TidbiT 1 site (yellow buoy)",
       "operator": "project",
       "lat": null,
       "lon": null,
