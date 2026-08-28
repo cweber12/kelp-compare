@@ -294,6 +294,78 @@ def test_a_payload_that_will_not_parse_is_still_landed(data_root, monkeypatch):
     assert [p.read_bytes() for p in landed] == [b"not an NDBC file\n"]
 
 
+def test_declared_parameters_that_match_no_column_fail_the_run(data_root, monkeypatch):
+    """A registry declaration naming nothing the format carries stores nothing.
+
+    The pulled-source twin of a `series_map` key that matches no series (#44):
+    `measured_parameters` is hand-written, only what it names is stored, and
+    nothing else in the run compares it against the file. Every row parses,
+    every column is understood, and no observation comes out.
+    """
+    _declare(data_root, ["water_level"])  # real parameter, no stdmet column
+    monkeypatch.setattr(ndbc, "fetch_realtime", _serves(REALTIME.read_bytes()))
+
+    result = run(data_root)
+
+    assert result.exit_code == 1  # a human has to fix the registry
+    entry = manifest(data_root)["files"][0]
+    assert entry["outcome"] == "failed"
+    assert entry["rows_in"] == 300
+    assert entry["rows_out"] == 0
+    assert "produced no observations" in entry["reason"]
+    assert "NDBC:LJAC1" in entry["reason"]
+    assert not (data_root / "observations").exists()
+
+
+def test_a_payload_with_no_data_rows_is_a_gap_not_a_failure(data_root, monkeypatch):
+    """Nothing to read is an upstream hole, and docs/01 §5 keeps the run going."""
+    header = b"\n".join(REALTIME.read_bytes().splitlines()[:2]) + b"\n"
+    monkeypatch.setattr(ndbc, "fetch_realtime", _serves(header))
+
+    result = run(data_root)
+
+    assert result.exit_code == 0
+    payload = manifest(data_root)
+    entry = payload["files"][0]
+    assert entry["outcome"] == "skipped"
+    assert entry["rows_in"] == 0
+    assert any("no data rows" in gap for gap in payload["gaps"])
+    assert not (data_root / "observations").exists()
+
+
+def test_a_run_that_stored_nothing_does_not_remember_the_url(data_root, monkeypatch):
+    """`unchanged` must mean the rows are in the zone, not merely that we asked.
+
+    Recording the validator here would make the next run skip a window whose
+    observations were never written -- the hole then survives every retry.
+    """
+    _declare(data_root, ["water_level"])
+    monkeypatch.setattr(ndbc, "fetch_realtime", _serves(REALTIME.read_bytes()))
+
+    run(data_root)
+
+    assert validators(data_root) == {}
+
+
+def _serves(body: bytes):
+    """A fetcher stub returning fixed bytes, with the realtime signature."""
+
+    def realtime(station, *, session=None, validators=None):
+        return new_payload("ndbc", station.upper(), "LJAC1.txt", "file://x", body)
+
+    return realtime
+
+
+def _declare(data_root: Path, measured: list[str]) -> None:
+    """Rewrite LJAC1's `measured_parameters` in this run's copy of the registry."""
+    path = data_root / "registry" / "sites.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    for site in document["sites"]:
+        if site.get("station_code") == "LJAC1":
+            site["measured_parameters"] = measured
+    path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+
+
 # --------------------------------------------------------------------------
 # Selecting what to fetch
 # --------------------------------------------------------------------------

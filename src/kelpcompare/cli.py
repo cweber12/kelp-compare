@@ -981,6 +981,30 @@ def _ingest_window(
         for warning in parsed.warnings:
             run.note_warning(f"{label}: {warning}")
 
+        # A payload that arrived and yielded nothing, told apart the way the
+        # outcomes above are. No data rows at all is an upstream hole, which
+        # docs/01 s5 says must not stop the run. Data rows that produced no
+        # observation is the station declaring parameters this file does not
+        # carry, or a format change -- and this function's contract is that
+        # both need a human.
+        #
+        # Decided here rather than left to the writer, which cannot tell the
+        # difference: an empty frame is a legitimate thing to hand it, and
+        # writing nothing is exactly what it should then do.
+        if parsed.frame.empty:
+            if not parsed.rows_in:
+                entry.outcome = "skipped"
+                entry.reason = "the payload carries no data rows"
+                run.note_gap(f"{source}: {label}: the payload carries no data rows")
+            else:
+                entry.outcome = "failed"
+                entry.reason = (
+                    f"{parsed.rows_in} data row(s) produced no observations: nothing "
+                    f"{site.site_id} declares matched a column in this {parsed.layout} file"
+                )
+                run.note_warning(f"{label}: {entry.reason}")
+            return
+
         if not dry_run:
             written = write_observations(parsed.frame, zones, source=source, run_id=run.run_id)
             entry.partitions = [str(p) for p in written]
