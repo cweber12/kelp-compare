@@ -85,6 +85,19 @@ the `deployment_window` verdict and so moves `qc_flag`, which is not part of the
 key; re-dropping the file supersedes the rows in place. The distinction matters
 because deployment notes reach for the same phrase for both.
 
+**A key field typed wrong is refused rather than landed.** The merge dedupes on
+the key *before* it normalises types, so a `depth_m` carried as the string
+`"8.23"` would key differently from the `8.23` already on disk and leave both
+copies in the file — the duplication a raw glob reader would then count twice.
+`storage.validate_frame` therefore checks the dtype of `site_id`, `parameter` and
+`depth_m` — and of `value` — before a partition is read or written, so a depth
+that is not a number is refused at the boundary instead of aborting the run
+inside the writer's cast, after the fetch, parse, normalize and QC work is
+already done. It is types that are checked, not whether a field is populated: a
+`depth_m` null on every row is the documented shape for a met parameter and
+passes, and so does a column that is a depth for one parameter and null for
+another.
+
 **A part file is never half-written.** The new file is written under a staging
 name that deliberately does not match `part-*.parquet` — so a leftover from a
 crashed run is invisible to every reader of this zone, DuckDB globs included —
