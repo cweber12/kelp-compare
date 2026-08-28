@@ -47,12 +47,18 @@ import gzip
 import io
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pandas as pd
 
 from kelpcompare import __version__
-from kelpcompare.fetchers.base import NotModified, Payload, SourceUnavailable, new_payload
+from kelpcompare.fetchers.base import (
+    NotModified,
+    ParsedPayload,
+    Payload,
+    SourceUnavailable,
+    new_payload,
+)
 from kelpcompare.normalize import convert_unit
 from kelpcompare.parameters import Parameters
 from kelpcompare.storage import (
@@ -128,30 +134,6 @@ COLUMNS = (
 
 #: The columns above, for reporting what a file carried that we did not store.
 MAPPED_COLUMNS = frozenset(spec.column for spec in COLUMNS)
-
-
-@dataclass(frozen=True)
-class ParsedPayload:
-    """Observation rows plus what the run manifest should hear about them."""
-
-    frame: pd.DataFrame
-    station: str
-    layout: str
-    rows_in: int
-    warnings: tuple[str, ...] = ()
-    unmapped_columns: tuple[str, ...] = ()
-    undeclared_parameters: tuple[str, ...] = ()
-    missing_counts: dict[str, int] = field(default_factory=dict)
-
-    @property
-    def flag_counts(self) -> dict[str, int]:
-        """The docs/03 flag histogram, shaped as `NormalizedBatch` reports it.
-
-        Same shape on purpose: the manifest should not be able to tell whether a
-        run's rows arrived through an adapter or a fetcher.
-        """
-        counts = self.frame["qc_flag"].value_counts().to_dict()
-        return {str(flag): int(n) for flag, n in sorted(counts.items())}
 
 
 def realtime_url(station: str) -> str:
