@@ -121,13 +121,18 @@ def test_the_window_is_carried_into_utc_too(normalized):
     )
 
 
-def test_registry_metadata_lands_on_every_row(normalized):
+def test_registry_metadata_lands_on_every_row(normalized, deployment):
     frame = normalized.frame
-    assert set(frame["site_id"]) == {"PROJ:YELLOW-BUOY"}
+    assert set(frame["site_id"]) == {deployment.site_id}
     assert set(frame["parameter"]) == {"sea_water_temperature"}
     assert set(frame["source"]) == {"project"}
     assert set(frame["fetch_run_id"]) == {RUN_ID}
-    assert frame["depth_m"].isna().all()  # null pending a GPS fix, by design
+
+    # Whatever the deployment record declares: null while a site is unplaced, the
+    # surveyed depth once it is. What is asserted is that the value comes from the
+    # registry, not that it is any particular number.
+    depths = {None if pd.isna(value) else value for value in frame["depth_m"]}
+    assert depths == {deployment.depth_m}
 
 
 def test_an_edited_file_normalizes_to_the_same_in_window_rows(parameters, deployment):
@@ -281,7 +286,7 @@ def test_the_committed_vocabulary_covers_every_registry_series_map():
 
 def _deployment(series_map=None) -> Deployment:
     return Deployment(
-        site_id="PROJ:YELLOW-BUOY",
+        site_id="PROJ:TIDBIT-1",
         serial=KNOWN_SERIAL,
         deployment_number=3,
         tz="America/Los_Angeles",

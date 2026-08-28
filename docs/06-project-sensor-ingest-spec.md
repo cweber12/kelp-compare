@@ -59,7 +59,7 @@ by deleting rows in Excel:
 
 ```json
 {
-  "site_id": "PROJ:YELLOW-BUOY",
+  "site_id": "PROJ:TIDBIT-1",
   "deployments": [{
     "instrument": "HOBO TidbiT MX2204",
     "serial": "22506632",
@@ -67,7 +67,7 @@ by deleting rows in Excel:
     "window_local": ["2026-07-11 08:00", "2026-08-01 07:30"],
     "tz": "America/Los_Angeles",
     "series_map": {"Tidbit 1": "sea_water_temperature"},
-    "depth_m": null
+    "depth_m": 8.23
   }]
 }
 ```
@@ -153,8 +153,11 @@ Run automatically; results go in the run manifest.
    controlled parameter behind each vendor series — `{"Tidbit 1":
    "sea_water_temperature"}` — because the sensor name is a user setting and
    the unit cannot stand in for it (`°C` is equally water and air
-   temperature). The gate deliberately does *not* require a position: serial
-   22506632's is null pending a GPS fix.
+   temperature). The gate deliberately does *not* require a position — a logger
+   can be recording before anyone has surveyed where it is. Both project sites
+   were surveyed on 2026-08-27, so no committed record exercises that path any
+   more; `tests/test_adapters_hobo_xlsx.py` writes an unplaced site of its own
+   rather than letting the invariant lapse.
 5. **Duplicate-readout detection**: same serial + overlapping time range as
    a prior ingest → keep both raw, dedupe deterministically in
    observations (readouts of a running logger overlap by design).

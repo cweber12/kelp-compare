@@ -20,6 +20,7 @@ from click.testing import CliRunner
 
 from kelpcompare import storage
 from kelpcompare.cli import main
+from kelpcompare.registry import find_deployment, load_registry
 from kelpcompare.storage import Zones
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +30,11 @@ EDITED = FIX / "yellow_buoy_temps.xlsx"
 REGISTRY_SOURCE = REPO_ROOT / "data" / "registry"
 
 KNOWN_SERIAL = "22506632"
+
+#: The site that serial is deployed at, read from the committed registry rather than
+#: pinned here. Renaming a site is a data(registry) edit; it must not need a code
+#: change to keep this green.
+PROJECT_SITE = find_deployment(load_registry(REGISTRY_SOURCE / "sites.json"), KNOWN_SERIAL).site_id
 
 
 @pytest.fixture
@@ -80,7 +86,7 @@ def test_ingesting_the_reference_export_writes_the_documented_rows(data_root):
     stored = storage.read_observations(Zones.at(data_root), source="project")
     assert len(stored) == 3029
     assert set(stored["parameter"]) == {"sea_water_temperature"}
-    assert set(stored["site_id"]) == {"PROJ:YELLOW-BUOY"}
+    assert set(stored["site_id"]) == {PROJECT_SITE}
 
     usable = stored.loc[stored["qc_flag"] <= 2]
     assert len(usable) == 3022
@@ -121,7 +127,7 @@ def test_the_manifest_records_the_checks_and_the_landing(data_root):
     entry = payload["files"][0]
     assert entry["outcome"] == "ingested"
     assert entry["serial"] == KNOWN_SERIAL
-    assert entry["site_id"] == "PROJ:YELLOW-BUOY"
+    assert entry["site_id"] == PROJECT_SITE
     assert entry["provenance"] == "original"
     assert entry["rows_in"] == 3029
     assert entry["rows_out"] == 3029
@@ -202,7 +208,13 @@ def test_a_deployment_missing_its_series_map_is_quarantined(data_root):
     """The gate now covers the mapping the normalizer needs (docs/06 s5 check 4)."""
     sites = data_root / "registry" / "sites.json"
     payload = json.loads(sites.read_text(encoding="utf-8"))
-    payload["sites"][0]["deployments"][0].pop("series_map")
+    record = next(
+        d
+        for site in payload["sites"]
+        for d in site.get("deployments", ())
+        if str(d.get("serial")) == KNOWN_SERIAL
+    )
+    record.pop("series_map")
     sites.write_text(json.dumps(payload), encoding="utf-8")
 
     drop(data_root, ORIGINAL)

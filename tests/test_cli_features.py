@@ -28,6 +28,7 @@ from click.testing import CliRunner
 from kelpcompare.cli import main
 from kelpcompare.fetchers import ndbc
 from kelpcompare.fetchers.base import new_payload
+from kelpcompare.registry import find_deployment, load_registry
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIX = Path(__file__).parent / "fixtures"
@@ -37,6 +38,11 @@ REALTIME = FIX / "ndbc" / "LJAC1_realtime_excerpt.txt"
 REGISTRY_SOURCE = REPO_ROOT / "data" / "registry"
 
 REGISTRY_FILES = ("sites.json", "parameters.json", "features.json")
+
+KNOWN_SERIAL = "22506632"
+
+#: Read from the committed registry, not pinned: a site rename is a data edit.
+PROJECT_SITE = find_deployment(load_registry(REGISTRY_SOURCE / "sites.json"), KNOWN_SERIAL).site_id
 
 
 @pytest.fixture
@@ -142,7 +148,7 @@ def test_the_reference_deployment_becomes_one_quarter(data_root):
     run(data_root, "features")
 
     (row,) = quarterly(data_root).to_dict("records")
-    assert (row["source"], row["site_id"]) == ("project", "PROJ:YELLOW-BUOY")
+    assert (row["source"], row["site_id"]) == ("project", PROJECT_SITE)
     assert (row["parameter"], row["year"], row["quarter"]) == ("sea_water_temperature", 2026, 3)
     assert row["feature_set"] == "temperature"
     assert row["n_obs"] == 3022  # the rows qc left at flag <= 2
@@ -325,7 +331,7 @@ def test_the_run_manifest_records_each_series_quarter_counts(data_root):
     run(data_root, "features")
 
     (series,) = features_manifest(data_root)["series"]
-    assert series["site_id"] == "PROJ:YELLOW-BUOY"
+    assert series["site_id"] == PROJECT_SITE
     assert series["parameter"] == "sea_water_temperature"
     assert series["rows"] == 3029
     assert (series["quarters"], series["quarters_usable"]) == (1, 0)

@@ -7,10 +7,12 @@ normalizer, which needs `tz` and `window_local` to convert to UTC and flag the
 deployment window, and `series_map` to name the parameter each series carries.
 
 Note what `Deployment` deliberately does NOT carry: `lat`/`lon`. Position lives
-on the site record and is nullable by design -- serial 22506632's position is
-unverified pending a GPS fix (see its `notes` in sites.json). Leaving the field
-off this dataclass means ingest code has nowhere to put a coordinate, so it
-cannot come to depend on one or quietly invent one.
+on the site record and is nullable by design: a logger can be in the water and
+recording before anyone has surveyed where it is, and the docs/06 s5 check-4 gate
+lets that file ingest. Leaving the field off this dataclass means ingest code has
+nowhere to put a coordinate, so it cannot come to depend on one or quietly invent
+one -- and it is why two loggers at different positions are two site records
+rather than two deployments of one.
 """
 
 from __future__ import annotations

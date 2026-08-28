@@ -410,9 +410,41 @@ def test_series_map_resolves_the_parameter_by_series_name(registry):
     assert deployment.parameter_for("Light") is None
 
 
-def test_gate_passes_although_the_position_is_unverified(registry):
-    """Serial 22506632's lat/lon are deliberately null pending a GPS fix."""
-    site = registry.site("PROJ:YELLOW-BUOY")
+def test_gate_passes_for_a_site_with_no_position(tmp_path):
+    """docs/06 s5 check 4 deliberately does not require a position.
+
+    Written here rather than read from the committed registry. The invariant is
+    that an unplaced site still ingests -- which has to keep holding once the
+    real sites are surveyed, so it cannot be asserted against whichever sites
+    happen to be unplaced today.
+    """
+    unplaced = tmp_path / "sites.json"
+    unplaced.write_text(
+        json.dumps(
+            {
+                "sites": [
+                    {
+                        "site_id": "PROJ:X",
+                        "lat": None,
+                        "lon": None,
+                        "deployments": [
+                            {
+                                "serial": KNOWN_SERIAL,
+                                "deployment_number": 3,
+                                "tz": "America/Los_Angeles",
+                                "window_local": ["2026-07-11 08:00", "2026-08-01 07:30"],
+                                "series_map": {"Tidbit 1": "sea_water_temperature"},
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    registry = load_registry(unplaced)
+
+    site = registry.site("PROJ:X")
     assert site["lat"] is None and site["lon"] is None
 
     deployment = find_deployment(registry, KNOWN_SERIAL)

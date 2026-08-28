@@ -53,7 +53,7 @@ def test_an_ingested_file_records_its_landing_and_row_counts(tmp_path):
         adapter="hobo_xlsx",
         provenance="original",
         serial="22506632",
-        site_id="PROJ:YELLOW-BUOY",
+        site_id="PROJ:TIDBIT-1",
         landed="raw/project_sensors/22506632/abc__Tidbit_1.xlsx",
         rows_in=3029,
         rows_out=3029,

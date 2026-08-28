@@ -315,7 +315,7 @@ owned and maintained by NOAA's National Ocean Service. NDBC redistributes the
 NOS observations: the two site records describe one instrument package, not two
 stations. `sites.json` records this as `same_platform_as`, because the doc 04
 neighbor validation must never count them as two independent references for the
-same sensor — `PROJ:YELLOW-BUOY` lists both in `neighbor_refs`.
+same sensor — both project sites list both in `neighbor_refs`.
 
 ## NOAA CO-OPS (Tides & Currents)
 

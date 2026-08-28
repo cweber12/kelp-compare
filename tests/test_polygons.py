@@ -142,7 +142,7 @@ def test_lookup_by_id_and_by_site(tmp_path):
     pairs with which station is read off the file rather than string-matched."""
     loaded = load(
         tmp_path,
-        feature(polygon_id="KELP:NEAR", purpose="near_site", site_ids=["PROJ:YELLOW-BUOY"]),
+        feature(polygon_id="KELP:NEAR", purpose="near_site", site_ids=["PROJ:TIDBIT-1"]),
         feature(polygon_id="KELP:CTRL", purpose="control", site_ids=["NDBC:LJAC1"]),
     )
 

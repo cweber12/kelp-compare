@@ -19,7 +19,7 @@ RUN_A = "20260824T120000000Z-ingest"
 RUN_B = "20260824T130000000Z-ingest"
 
 
-def observations(timestamps, *, values=None, run_id=RUN_A, depth_m=None, site="PROJ:YELLOW-BUOY"):
+def observations(timestamps, *, values=None, run_id=RUN_A, depth_m=None, site="PROJ:TIDBIT-1"):
     """A minimal docs/03 frame: UTC-aware timestamps in, everything else fixed."""
     index = pd.to_datetime(list(timestamps), utc=True)
     count = len(index)
@@ -252,7 +252,7 @@ def test_a_leftover_file_in_one_partition_does_not_touch_another(tmp_path):
     write_observations(observations(stamps, site="NDBC:LJAC1"), zones, source="ndbc", run_id=RUN_A)
 
     rows = storage.read_observations(zones)
-    assert sorted(rows["site_id"]) == ["NDBC:LJAC1", "PROJ:YELLOW-BUOY"]
+    assert sorted(rows["site_id"]) == ["NDBC:LJAC1", "PROJ:TIDBIT-1"]
 
 
 def test_a_rewrite_that_preserves_fetch_run_id_still_wins(tmp_path):
@@ -354,7 +354,7 @@ def test_a_source_restricted_write_leaves_every_other_sources_rows_intact(tmp_pa
     zones = Zones.at(tmp_path)
     write(
         features(
-            [("ndbc", "NDBC:LJAC1", 2007, 1, 15.0), ("project", "PROJ:YELLOW-BUOY", 2026, 3, 21.0)]
+            [("ndbc", "NDBC:LJAC1", 2007, 1, 15.0), ("project", "PROJ:TIDBIT-1", 2026, 3, 21.0)]
         ),
         zones,
         replacing=("ndbc", "project"),
@@ -404,7 +404,7 @@ def test_retained_rows_follow_the_current_configurations_columns(tmp_path):
     """A retuned threshold renames its column; the source not yet rebuilt shows
     null there rather than the old column lingering beside the new one."""
     zones = Zones.at(tmp_path)
-    old = features([("project", "PROJ:YELLOW-BUOY", 2026, 3, 21.0)])
+    old = features([("project", "PROJ:TIDBIT-1", 2026, 3, 21.0)])
     old["days_above_20c"] = 4.0
     write(old, zones, replacing=("project",))
 
