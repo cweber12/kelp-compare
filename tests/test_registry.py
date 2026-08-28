@@ -1,10 +1,15 @@
 """Public-station records in `sites.json` (docs/03 "Site registry").
 
-The deployment half of the registry is exercised through the adapter and ingest
-suites, which is where its rules bite. This file covers `Station` — what a
-fetcher is allowed to ask the registry about a public station — and in
-particular the distinction the registry exists to hold: a station that has no
-instrument for a parameter, versus one nobody has checked yet.
+The deployment half's *rules* are exercised through the adapter and ingest
+suites, which is where they bite. This file covers `Station` — what a fetcher is
+allowed to ask the registry about a public station — and in particular the
+distinction the registry exists to hold: a station that has no instrument for a
+parameter, versus one nobody has checked yet.
+
+It also covers what both halves owe the reader of a hand-maintained JSON file:
+that a field's declared type is the type that comes back, whatever the editor
+typed. That belongs here rather than downstream because the failure it prevents
+is silent everywhere else (docs/03 "Partition files and idempotence").
 """
 
 from __future__ import annotations
@@ -12,7 +17,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from kelpcompare.registry import find_stations, load_registry
+import pytest
+
+from kelpcompare.registry import find_deployment, find_stations, load_registry
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMMITTED = REPO_ROOT / "data" / "registry" / "sites.json"
@@ -28,6 +35,12 @@ def station(tmp_path: Path, **fields):
     record = {"site_id": "NDBC:TEST", "operator": "ndbc", "station_code": "TEST", **fields}
     (found,) = find_stations(registry(tmp_path, record), "ndbc")
     return found
+
+
+def deployment(tmp_path: Path, *, site_id: str = "PROJ:TEST", **fields):
+    record = {"serial": "22506632", **fields}
+    loaded = registry(tmp_path, {"site_id": site_id, "deployments": [record]})
+    return find_deployment(loaded, "22506632")
 
 
 def committed(site_id: str):
@@ -138,3 +151,72 @@ def test_ljac1_still_carries_its_intake_depth_and_its_platform_twin():
     ljac1 = committed("NDBC:LJAC1")
     assert ljac1.depth_for("sea_water_temperature") == 3.4
     assert ljac1.same_platform_as == ("COOPS:9410230",)
+
+
+# --------------------------------------------------------------------------
+# Key fields are coerced on load -- a hand-edit must not change a row's identity
+#
+# `site_id` and `depth_m` are two of the four `storage.OBSERVATION_KEY`
+# components and both are read from here, not from the instrument's file. The
+# partition write dedupes *before* it casts dtypes, so a key part that arrives
+# as the wrong type does not compare equal to the same value already on disk:
+# the reading survives twice and nothing raises. Asserting on the type rather
+# than the value is the whole point -- `"8.23" == 8.23` is False, which is
+# exactly the bug, so a value-only assertion would pass with it present.
+# --------------------------------------------------------------------------
+
+
+def test_a_string_depth_loads_as_a_float(tmp_path):
+    """The hand-edit this exists for: quoting a number changes nothing visible."""
+    found = deployment(tmp_path, depth_m="8.23")
+    assert found.depth_m == 8.23
+    assert isinstance(found.depth_m, float)
+
+
+def test_an_integer_depth_loads_as_a_float(tmp_path):
+    """A whole-metre depth is the one an editor is most likely to write unquoted."""
+    found = deployment(tmp_path, depth_m=8)
+    assert isinstance(found.depth_m, float)
+
+
+def test_a_null_depth_stays_none_rather_than_becoming_a_number(tmp_path):
+    """Unsurveyed is not a depth. `float(None)` would be a crash; 0.0 would be a lie."""
+    assert deployment(tmp_path, depth_m=None).depth_m is None
+    assert deployment(tmp_path).depth_m is None
+
+
+def test_a_depth_that_is_not_a_number_is_refused_at_load(tmp_path):
+    """Left uncoerced this still fails, but inside the partition write -- after the
+    fetch and QC are done, and naming storage rather than the field at fault."""
+    with pytest.raises(ValueError, match="depth_m on PROJ:TEST"):
+        deployment(tmp_path, depth_m="8.23 m")
+
+
+def test_the_committed_registrys_depths_are_floats():
+    """The file this all protects. Both deployments carry a surveyed depth."""
+    loaded = load_registry(COMMITTED)
+    assert loaded.deployments
+    assert all(d.depth_m is None or isinstance(d.depth_m, float) for d in loaded.deployments)
+
+
+def test_a_numeric_site_id_loads_as_a_string_on_both_halves(tmp_path):
+    """The same hole as `depth_m`, on the other key field docs/03 names with it."""
+    loaded = registry(
+        tmp_path,
+        {
+            "site_id": 1234,
+            "operator": "ndbc",
+            "station_code": "TEST",
+            "deployments": [{"serial": "22506632"}],
+        },
+    )
+    (found,) = find_stations(loaded, "ndbc")
+    assert found.site_id == "1234"
+    assert find_deployment(loaded, "22506632").site_id == "1234"
+
+
+def test_an_explicit_null_site_id_is_empty_rather_than_the_word_none(tmp_path):
+    """`site.get("site_id", "")` returns None for a present-but-null key, and a
+    bare `str()` would turn that into a site called "None"."""
+    loaded = registry(tmp_path, {"site_id": None, "deployments": [{"serial": "22506632"}]})
+    assert find_deployment(loaded, "22506632").site_id == ""
