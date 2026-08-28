@@ -5,21 +5,22 @@
       "site_id": "PROJ:TIDBIT-1",
       "name": "TidbiT 1 site (yellow buoy)",
       "operator": "project",
-      "lat": null,
-      "lon": null,
+      "lat": 32.852278,
+      "lon": -117.269472,
       "neighbor_refs": ["NDBC:LJAC1", "COOPS:9410230"],
       "deployments": [
         {
           "instrument": "HOBO TidbiT MX2204",
           "serial": "22506632",
           "deployment_number": 3,
-          "depth_m": null,
+          "depth_m": 8.23,
           "tz": "America/Los_Angeles",
           "window_local": ["2026-07-11 08:00", "2026-08-01 07:30"],
           "series_map": {"Tidbit 1": "sea_water_temperature"},
-          "notes": "Position unverified - conflicting reports ~1-2 km apart. Leave lat/lon null until a GPS fix from the placer. Do NOT fill from memory or nearby station coords."
+          "notes": "depth_m is the logger depth, reported by the placer as 27 fsw and converted at 0.3048 m/ft. fsw here is feet of depth as a dive computer displays it, not the 1/33 atm pressure unit, which would give 8.27 m."
         }
-      ]
+      ],
+      "notes": "Position surveyed and supplied by the placer 2026-08-27, superseding the conflicting reports ~1-2 km apart this record previously carried and the null it held while they stood. WGS84, converted from 32 deg 51' 08.2\" N, 117 deg 16' 10.1\" W. Position is a site fact, not a deployment one: a redeployment of this logger at another spot is a new site record, not another deployments[] entry here."
     },
     {
       "site_id": "NDBC:LJAC1",
