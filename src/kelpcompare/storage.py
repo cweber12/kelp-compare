@@ -16,7 +16,9 @@ Two invariants are enforced here rather than trusted:
 
 * `validate_frame` rejects anything that is not exactly the docs/03 observation
   schema with a timezone-aware UTC timestamp. This is the last place a naive or
-  local timestamp could slip into storage (hard rule 2).
+  local timestamp could slip into storage (hard rule 2), and the last place a
+  column typed as something storage cannot take -- a depth read as a string, a
+  value that never became a float -- can reach a partition file (#57).
 * `_dedupe` collapses the overlap that readouts of a running logger produce by
   design (docs/06 s5 check 5). Deterministically: newest `fetch_run_id` wins,
   and run ids sort chronologically by construction (see `manifest.new_run_id`).
@@ -79,6 +81,18 @@ WINDOW_TEST = "deployment_window"
 #: same instant is the same measurement even if a later export rounds it
 #: differently, and not `qc_flag`, which is a judgement about the row.
 OBSERVATION_KEY = ("site_id", "parameter", "timestamp", "depth_m")
+
+#: The columns `validate_frame` checks the dtype of, beyond `timestamp`, which has
+#: its own contract. Every `OBSERVATION_KEY` component, because a wrong dtype there
+#: splits the dedupe key rather than raising -- two writes of one reading leave two
+#: rows -- plus `value`, the one other column whose bad dtype aborts a run deep
+#: inside `_write_partition` instead of at the boundary that produced it (#57).
+#:
+#: Derived from the key rather than restated, so a change to what makes an
+#: observation the same observation carries its type check with it.
+GATED_COLUMNS = tuple(
+    column for column in (*OBSERVATION_KEY, "value") if column in OBSERVATION_DTYPES
+)
 
 #: The docs/03 `features/` tables this project writes, each one file rewritten
 #: wholesale. Not partitioned: docs/03 names single files, the row count is in
@@ -213,7 +227,18 @@ def empty_observations(*, stored: bool = False) -> pd.DataFrame:
 
 
 def validate_frame(frame: pd.DataFrame) -> None:
-    """Refuse anything that is not the docs/03 schema. Raises, never coerces."""
+    """Refuse anything that is not the docs/03 schema. Raises, never coerces.
+
+    Columns, column order, the timestamp's timezone, and the dtype of every
+    `GATED_COLUMNS` entry -- the columns where a wrong one does damage.
+
+    Not equality against `OBSERVATION_DTYPES`, which would refuse frames that are
+    correct today: a freshly built frame carries `str` where storage declares
+    `string` and `int64` where it declares `float64`, and a depth that is null on
+    every row carries `object`. The check is therefore a predicate per declared
+    dtype -- "a string dtype", "a numeric dtype" -- which accepts anything
+    `_write_partition` can cast without inventing a value.
+    """
     columns = tuple(frame.columns)
     if columns != OBSERVATION_COLUMNS:
         missing = [c for c in OBSERVATION_COLUMNS if c not in columns]
@@ -233,6 +258,15 @@ def validate_frame(frame: pd.DataFrame) -> None:
         raise ValueError(
             f"'timestamp' must be timezone-aware UTC before storage (hard rule 2), got {dtype}"
         )
+
+    for column in GATED_COLUMNS:
+        declared = OBSERVATION_DTYPES[column]
+        storable, wanted = _STORABLE_AS[declared]
+        if not storable(frame[column]):
+            raise ValueError(
+                f"{column!r} must be {wanted} before storage: docs/03 stores it as "
+                f"{declared}, got {frame[column].dtype}"
+            )
 
 
 def write_observations(
@@ -460,6 +494,65 @@ def _write_partition(
         if stale != target:
             stale.unlink()
     return target
+
+
+#: What an `object` column's values may infer as and still be storable. `object` is
+#: the dtype every one of these checks exists to catch, and also the one a correct
+#: frame keeps reaching storage with -- `pd.concat` of a depth-bearing parameter and
+#: a met one types the column `object`, and so does a column null on every row. So
+#: `object` is decided on the values rather than on the dtype, and only there.
+#:
+#: `empty` covers both no rows and no non-null values, which cannot be told apart
+#: here and do not need to be: a depth the registry does not record is null on every
+#: row by design (docs/03: null for met parameters). Whether a required field is
+#: populated is a different question from what type it holds, and not this gate's.
+_OBJECT_STRINGS = frozenset({"string", "empty"})
+_OBJECT_NUMBERS = frozenset({"floating", "integer", "mixed-integer-float", "empty"})
+
+
+def _is_storable_string(series: pd.Series) -> bool:
+    """Would `astype("string")` keep this column as it stands?
+
+    `str` (what a frame built under pandas 3 carries), `string` (what comes back
+    from Parquet), and an `object` column of strings -- which is what an ordinary
+    string column is under the pandas 2.2 floor in `pyproject.toml`, and so cannot
+    be refused outright.
+
+    `pandas.api.types.is_string_dtype` is asked about the *series*, never the
+    dtype: given a dtype it answers True for every `object` column, the false
+    positive that makes it useless as a guard.
+    """
+    if series.dtype == object:
+        return pd.api.types.infer_dtype(series, skipna=True) in _OBJECT_STRINGS
+    return pd.api.types.is_string_dtype(series)
+
+
+def _is_storable_number(series: pd.Series) -> bool:
+    """Would `astype("float64")` keep this column's values?
+
+    `int64`, `Int64`, `Float64` and `float64` all convert losslessly. `bool` does
+    not, though pandas counts it as numeric: `True` is not 1.0 degC, and a column
+    of them is a caller having lost track of what it built.
+
+    A string that happens to look like a number is exactly what this refuses, so
+    an `object` column is judged on what it holds: numbers and nulls pass, one
+    `"8.23"` among them does not.
+    """
+    if series.dtype == object:
+        return pd.api.types.infer_dtype(series, skipna=True) in _OBJECT_NUMBERS
+    if pd.api.types.is_bool_dtype(series):
+        return False
+    return pd.api.types.is_numeric_dtype(series)
+
+
+#: How each gated column is checked, keyed by the dtype docs/03 declares for it,
+#: with the phrase its refusal is worded in. A gated column whose declared dtype is
+#: not here raises `KeyError` on the first `validate_frame` call rather than going
+#: quietly unchecked -- the failure mode this whole gate exists to remove.
+_STORABLE_AS = {
+    "string": (_is_storable_string, "a string dtype"),
+    "float64": (_is_storable_number, "a numeric dtype"),
+}
 
 
 def _dedupe(frame: pd.DataFrame) -> pd.DataFrame:

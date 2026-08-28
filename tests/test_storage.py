@@ -101,6 +101,130 @@ def test_a_missing_column_is_refused(tmp_path):
         write_observations(frame, Zones.at(tmp_path), source="project", run_id=RUN_A)
 
 
+def test_a_numeric_looking_string_depth_is_refused(tmp_path):
+    """The dtype that reached stored Parquet in #47, refused at the gate (#57).
+
+    `depth_m` is part of `OBSERVATION_KEY`, so a string that looks like a number
+    keys differently from the float it is about to become: it splits the dedupe
+    key silently instead of raising. Naming the column is most of the point.
+    """
+    frame = observations(["2026-07-11 14:00"], depth_m="8.23")
+    with pytest.raises(ValueError, match="depth_m") as refused:
+        write_observations(frame, Zones.at(tmp_path), source="project", run_id=RUN_A)
+    assert "str" in str(refused.value)
+
+
+def test_a_depth_that_is_not_a_number_at_all_is_refused(tmp_path):
+    """The same gate, reached before the partition writer's `astype` can raise.
+
+    Ungated this aborted inside pandas with `could not convert string to float:
+    '8.23 m': Error while type casting for column 'depth_m'`, after the fetch,
+    parse, normalize and QC work was already done, and naming the storage layer
+    rather than the field that produced it.
+    """
+    zones = Zones.at(tmp_path)
+    frame = observations(["2026-07-11 14:00"], depth_m="8.23 m")
+    with pytest.raises(ValueError, match="depth_m"):
+        write_observations(frame, zones, source="project", run_id=RUN_A)
+    assert not zones.observations.exists()
+
+
+def test_a_string_value_is_refused(tmp_path):
+    """Not a key column, but the one other column whose bad dtype aborts a run."""
+    frame = observations(["2026-07-11 14:00"], values=["17.0"])
+    with pytest.raises(ValueError, match="'value'"):
+        write_observations(frame, Zones.at(tmp_path), source="project", run_id=RUN_A)
+
+
+def test_a_non_string_site_id_is_refused(tmp_path):
+    """Also a key component: a float site id keys differently from its label."""
+    frame = observations(["2026-07-11 14:00"], site=1.0)
+    with pytest.raises(ValueError, match="site_id"):
+        write_observations(frame, Zones.at(tmp_path), source="project", run_id=RUN_A)
+
+
+def test_a_non_string_parameter_is_refused(tmp_path):
+    frame = observations(["2026-07-11 14:00"])
+    frame["parameter"] = 3.0
+    with pytest.raises(ValueError, match="parameter"):
+        write_observations(frame, Zones.at(tmp_path), source="project", run_id=RUN_A)
+
+
+def test_a_depth_null_on_every_row_is_accepted(tmp_path):
+    """A deployment with no recorded depth is the normal case, and it is `object`.
+
+    docs/03 says `depth_m` is null for met parameters, and a frame built with
+    that column null on every row carries `object` rather than `float64`. The
+    numeric check therefore has to accept an entirely-null object column, or the
+    ordinary shape of a met series would be refused.
+    """
+    frame = observations(["2026-07-11 14:00"])
+    assert frame["depth_m"].dtype == object
+    validate_frame(frame)
+
+
+def test_an_integer_depth_and_value_are_accepted(tmp_path):
+    """`int64` converts to the stored `float64` losslessly, so the gate is a
+    predicate on the dtype family, not equality with `OBSERVATION_DTYPES`."""
+    frame = observations(["2026-07-11 14:00"], values=[17], depth_m=8)
+    assert (frame["value"].dtype, frame["depth_m"].dtype) == ("int64", "int64")
+    validate_frame(frame)
+    assert len(write_observations(frame, Zones.at(tmp_path), source="project", run_id=RUN_A)) == 1
+
+
+def test_a_depth_recorded_for_one_parameter_and_not_another_is_accepted(tmp_path):
+    """The shape every multi-parameter fetcher builds, and the reason an `object`
+    column is judged on its values rather than on being entirely null.
+
+    A station reporting a water temperature at a known depth and an air
+    temperature at no depth concatenates to one `object` column of floats and
+    nulls. Measured while building this gate: refusing that took 31 tests with
+    it, across the NDBC fetcher and the ingest, QC and features CLIs.
+    """
+    water = observations(["2026-07-11 14:00"], depth_m=8.23)
+    air = observations(["2026-07-11 14:00"])
+    air["parameter"] = "air_temperature"
+    frame = pd.concat([water, air], ignore_index=True)
+
+    assert frame["depth_m"].dtype == object
+    validate_frame(frame)
+    assert len(write_observations(frame, Zones.at(tmp_path), source="project", run_id=RUN_A)) == 1
+
+
+def test_a_site_id_carried_as_an_object_column_of_strings_is_accepted():
+    """What an ordinary string column is under the pandas 2.2 floor in pyproject."""
+    frame = observations(["2026-07-11 14:00"])
+    frame["site_id"] = frame["site_id"].astype(object)
+    validate_frame(frame)
+
+
+def test_a_depth_that_is_a_float_on_one_row_and_a_string_on_another_is_refused(tmp_path):
+    """The carve-out is for a column that is null throughout, not for `object`."""
+    frame = observations(["2026-07-11 14:00", "2026-07-11 14:10"], depth_m=[8.23, "8.23"])
+    assert frame["depth_m"].dtype == object
+    with pytest.raises(ValueError, match="depth_m"):
+        write_observations(frame, Zones.at(tmp_path), source="project", run_id=RUN_A)
+
+
+def test_a_boolean_value_is_refused(tmp_path):
+    """pandas counts `bool` as numeric; storage does not -- `True` is not 1.0 degC."""
+    frame = observations(["2026-07-11 14:00"], values=[True])
+    with pytest.raises(ValueError, match="'value'"):
+        write_observations(frame, Zones.at(tmp_path), source="project", run_id=RUN_A)
+
+
+def test_the_stored_empty_frame_passes_the_guard_too():
+    """The other form of `empty_observations`, which is what an empty read returns.
+
+    Its timestamp is naive by design (DuckDB reads a naive column as TIMESTAMP,
+    not TIMESTAMPTZ in the reader's zone), so the guard is given the frame the
+    way the CLI hands it on after a read: localized, everything else untouched.
+    """
+    stored = empty_observations(stored=True)
+    stored["timestamp"] = stored["timestamp"].dt.tz_localize("UTC")
+    validate_frame(stored)
+
+
 # --------------------------------------------------------------------------
 # Writing
 # --------------------------------------------------------------------------
