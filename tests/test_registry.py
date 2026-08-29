@@ -19,7 +19,13 @@ from pathlib import Path
 
 import pytest
 
-from kelpcompare.registry import find_deployment, find_stations, load_registry
+from kelpcompare.registry import (
+    find_deployment,
+    find_station,
+    find_stations,
+    load_registry,
+    neighbor_refs,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMMITTED = REPO_ROOT / "data" / "registry" / "sites.json"
@@ -407,3 +413,73 @@ def test_the_committed_shore_station_carries_the_position_its_archive_prints():
     assert found.declared_depths("sea_water_temperature") == (0.5, 5.0)
     assert found.describes_own_depth("sea_water_temperature")
     assert found.depth_for("sea_water_temperature") is None
+
+
+def test_find_station_resolves_one_site_id(tmp_path):
+    """What `neighbor_refs` hands back is a site_id, so that is what resolves it."""
+    loaded = registry(
+        tmp_path,
+        {"site_id": "NDBC:A", "station_code": "A", "operator": "ndbc"},
+        {"site_id": "NDBC:B", "station_code": "B", "operator": "ndbc"},
+    )
+
+    assert find_station(loaded, "NDBC:B").station_code == "B"
+
+
+def test_find_station_does_not_answer_for_a_project_site(tmp_path):
+    """A project sensor has no `station_code`, so there is nothing to ask a
+    provider for -- and a `neighbor_refs` entry naming one is a registry error
+    the caller has to see, not a Station this function should invent."""
+    loaded = registry(tmp_path, {"site_id": "PROJ:X", "deployments": []})
+
+    assert find_station(loaded, "PROJ:X") is None
+
+
+def test_find_station_does_not_answer_for_an_unknown_site_id(tmp_path):
+    """A reference naming a station nobody has registered is a gap the caller
+    reports; it must not raise here and abort every other pair."""
+    loaded = registry(tmp_path, {"site_id": "NDBC:A", "station_code": "A", "operator": "ndbc"})
+
+    assert find_station(loaded, "NDBC:MISSING") is None
+
+
+def test_neighbor_refs_keep_registry_order(tmp_path):
+    """docs/03 calls them ordered: the first is the one to reach for first."""
+    loaded = registry(
+        tmp_path,
+        {"site_id": "PROJ:X", "neighbor_refs": ["NDBC:SECOND", "NDBC:FIRST"], "deployments": []},
+    )
+
+    assert neighbor_refs(loaded, "PROJ:X") == ("NDBC:SECOND", "NDBC:FIRST")
+
+
+def test_neighbor_refs_are_empty_when_undeclared(tmp_path):
+    """Empty means nobody has recorded them, which produces no validation rows.
+    The alternative -- guessing the nearest station -- would make the table look
+    complete on a site nobody has reviewed."""
+    loaded = registry(tmp_path, {"site_id": "PROJ:X", "deployments": []})
+
+    assert neighbor_refs(loaded, "PROJ:X") == ()
+    assert neighbor_refs(loaded, "PROJ:UNKNOWN") == ()
+
+
+def test_neighbor_refs_are_a_site_fact_not_a_deployment_one(tmp_path):
+    """The same argument as lat/lon: a deployment carrying its own copy could
+    disagree with its sibling, so there is nowhere on `Deployment` to put one."""
+    found = deployment(tmp_path, serial="1")
+
+    assert not hasattr(found, "neighbor_refs")
+
+
+def test_the_committed_project_sites_both_name_one_platform_twice():
+    """Both TidbiT sites name LJAC1 and 9410230, which are one NOS package --
+    docs/04 s1 says validation must not count them as two references, so the
+    registry hands over both and the fold happens where the comparison is made."""
+    loaded = load_registry(COMMITTED)
+
+    for site_id in ("PROJ:TIDBIT-1", "PROJ:TIDBIT-2"):
+        assert neighbor_refs(loaded, site_id) == ("NDBC:LJAC1", "COOPS:9410230")
+
+    ljac1 = find_station(loaded, "NDBC:LJAC1")
+    assert ljac1.same_platform_as == ("COOPS:9410230",)
+    assert ljac1.depth_for("sea_water_temperature") == 3.4
