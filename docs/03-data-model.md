@@ -799,6 +799,74 @@ Event covariates for the lagged quarter — marine heatwave days, ENSO state, wa
 events (doc 04 §2) — are not present. Each needs an external source ingested
 first.
 
+## Neighbor validation: `validation.parquet`
+
+**Implemented** — `src/kelpcompare/features/validation.py`, written by
+`kelpcompare validate`. The standing table doc 04 §1 asks for: the evidence base
+for the claim that a project sensor is trustworthy.
+
+One row per **`site_id × serial × deployment_number × parameter × depth_m ×
+reference_site_id × reference_depth_m`**. A deployment compared against two
+references is two rows; a reference carrying one parameter at two depths is two
+rows, because agreement at 0.5 m says nothing about agreement at 5 m.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `site_id`, `serial`, `deployment_number` | VARCHAR, VARCHAR, INT | Which instrument, in which deployment |
+| `parameter`, `depth_m` | VARCHAR, DOUBLE | The deployment's series |
+| `reference_site_id`, `reference_depth_m` | VARCHAR, DOUBLE | The reference series; depth null for a met parameter |
+| `source`, `reference_source` | VARCHAR | The observation `source` each side was read from |
+| `depth_gap_m` | DOUBLE | `abs(depth_m − reference_depth_m)`; null when either depth is |
+| `depth_comparable` | BOOLEAN | Whether the gap is within the configured tolerance |
+| `cadence_s` | INT | The bin width both sides were reduced to before comparing |
+| `n_pairs` | INT | Bins in which both sides have an observation |
+| `overlap_start`, `overlap_end` | TIMESTAMP | UTC bounds of the compared window |
+| `correlation` | DOUBLE | Pearson *r*. Always reported |
+| `bias`, `rmse` | DOUBLE | Deployment minus reference. **Null unless `depth_comparable`** |
+| `collapsed_refs` | VARCHAR | Same-platform references folded into this row, `;`-joined |
+| `qc_max_flag` | TINYINT | The strictness both sides were filtered at |
+
+**Bias and RMSE are null against a reference at another depth, and that is a
+refusal rather than a gap in the data.** Doc 04 §1 sets the rule: below the
+thermocline the depth offset *is* most of the signal, so a bias computed across
+one measures stratification and prints it as instrument error. Correlation
+survives, because both series still track the same synoptic forcing, and it is
+reported with `depth_gap_m` beside it so it is never read as agreement.
+
+**Both sides are binned to a common cadence before comparing.** The bin is the
+coarser of the two series' median native intervals — a 10-minute logger against
+an hourly station is compared hourly — and each side contributes the mean of its
+observations in the bin. Bins where either side has nothing are not pairs.
+
+Two alternatives were rejected. *Joining on exact timestamps* discards five of
+every six samples when a 10-minute logger meets an hourly station, and reports
+an `n_pairs` that describes the calendar rather than the overlap. *Resampling
+both to a fixed cadence* makes the number chosen here rather than by the data,
+and would either upsample a daily record or throw away a logger's resolution.
+
+The rejected third option is worth naming because it is not available: **nearest-
+neighbour matching within a tolerance** would pair every logger sample with the
+same hourly reading several times over, which inflates `n_pairs` and makes the
+correlation a statement about the tolerance.
+
+**Where one side is a grab sample the bin mean is not like for like.** A daily
+bottle at 10:38 against a day's mean of a continuous logger are different
+quantities, and nothing here corrects for it. `cadence_s` and `n_pairs` are on
+the row so a reader can see which comparison they are looking at.
+
+**Same-platform references are folded, never counted twice.** `NDBC:LJAC1` and
+`COOPS:9410230` are one NOS package under two identifiers, and doc 04 §1 says
+they must not count as two independent references. The first named in
+`neighbor_refs` that has rows produces the row; the rest are listed in
+`collapsed_refs`, so the fold is visible in the table rather than inferred from
+its absence.
+
+**Regenerated wholesale** by `kelpcompare validate`, from the observations zone
+and the registry as they stand. Wholesale rather than source-scoped, because a
+pair the registry no longer declares must lose its row rather than keep it
+forever — the same argument as `comparison`, and it is written through
+`replace_features` for the same reason.
+
 ## Run manifests
 
 Every ingest/QC/feature run writes
