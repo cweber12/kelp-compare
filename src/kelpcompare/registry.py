@@ -18,10 +18,16 @@ rather than two deployments of one.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_REGISTRY_PATH = Path("data/registry/sites.json")
+
+#: What `archive.archived` has to look like. It is a directory name in `raw/`
+#: and the value a file's own header is checked against, so it is pinned to one
+#: spelling rather than parsed leniently.
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 @dataclass(frozen=True)
@@ -60,6 +66,43 @@ class Deployment:
 
 
 @dataclass(frozen=True)
+class Archive:
+    """Which hand-downloaded snapshot a site's landings came from (docs/03).
+
+    A pulled station needs no such record: the identifier *is* the version,
+    because the provider serves whatever is current and a re-run gets the same
+    thing. A station that can only be downloaded by hand has no such guarantee
+    -- what arrives is one cumulative snapshot of the whole record, and the next
+    one may revise it -- so the snapshot is pinned here, and an ingest without a
+    pin is refused rather than traced to "whatever was on the site that day".
+
+    This is the Kelp Watch revision pin (`polygons.KelpWatch`) applied to a site
+    rather than a polygon, and it does one thing that one cannot: the SIO Shore
+    Stations file declares its own archive date in its header, so the pin is
+    *checked* at ingest and a file from another snapshot is quarantined.
+
+    `citation` is pinned beside the date rather than left to a document because
+    it is a property of the archive, not of the program: the funding award in
+    the SIO citation text differs between snapshots.
+    """
+
+    archived: str
+    source_file: str | None = None
+    doi: str | None = None
+    citation: str | None = None
+
+    @property
+    def label(self) -> str:
+        """The landing directory, so two archives cannot interleave in `raw/`.
+
+        The date itself rather than a prefixed form of it. `polygons.KelpWatch`
+        needs `ver23` because a bare `23` names nothing; an ISO date already
+        says what it is.
+        """
+        return self.archived
+
+
+@dataclass(frozen=True)
 class Station:
     """A public-station site record: what a fetcher needs in order to ask for it.
 
@@ -81,16 +124,30 @@ class Station:
     It is not derivable from `sensor_depths_m`: a met parameter has no depth and
     is measured anyway, so an absence there means "no depth published", never
     "no sensor" (docs/03).
+
+    **`lat`/`lon` are carried here although `Deployment` deliberately refuses
+    them**, and the asymmetry is the same fact twice. A project logger can be in
+    the water and recording before anyone has surveyed it, so ingest code must
+    have nowhere to put a coordinate; a public station's position is something
+    its operator published, and for a hand-downloaded archive it is how a
+    dropped file is matched to a site at all -- the SIO Shore Stations file
+    declares its own position, and the match is against this. Still optional,
+    because a station can be registered before anyone has copied its position
+    down, and a caller that needs one has to cope with `None` rather than
+    assume.
     """
 
     site_id: str
     station_code: str
     operator: str
     name: str | None = None
+    lat: float | None = None
+    lon: float | None = None
     sensor_depths_m: dict[str, float] = field(default_factory=dict)
     depth_set_m: dict[str, tuple[float, ...]] = field(default_factory=dict)
     measured_parameters: tuple[str, ...] = ()
     same_platform_as: tuple[str, ...] = ()
+    archive: Archive | None = None
 
     def depth_for(self, parameter: str) -> float | None:
         """The depth the registry supplies for one parameter, or None.
@@ -332,11 +389,80 @@ def _station(site: dict) -> Station:
         station_code=str(site.get("station_code", "")),
         operator=str(site.get("operator", "")),
         name=site.get("name"),
+        lat=_coordinate(site.get("lat"), site, "lat"),
+        lon=_coordinate(site.get("lon"), site, "lon"),
         sensor_depths_m=scalars,
         depth_set_m=sets,
         measured_parameters=tuple(str(p) for p in measured),
         same_platform_as=tuple(str(s) for s in platform),
+        archive=_archive(site),
     )
+
+
+def _archive(site: dict) -> Archive | None:
+    """The pinned snapshot on a hand-downloaded station's record, or None.
+
+    None rather than a raise, because most sites legitimately have no archive
+    block -- a pulled station has nothing to pin. It is the ingest of a
+    file-drop station that refuses when the pin is absent, which is the moment
+    an archive date would otherwise be invented (the same posture
+    `polygons._kelp_watch` takes).
+
+    `archived` is validated because it is load-bearing twice over: it is the
+    landing directory name, and it is what the file's own header is checked
+    against. A malformed one would make a directory nobody can find again and a
+    comparison nothing can match. The rest of the block is provenance text and
+    is taken as written.
+    """
+    block = site.get("archive")
+    if block is None:
+        return None
+
+    site_id = _site_id(site) or "<unnamed site>"
+    if not isinstance(block, dict) or not block:
+        raise ValueError(
+            f"`archive` on {site_id} is {block!r}; declare a block with an `archived` date "
+            "or omit it, which is how the registry says a site is not a hand-downloaded one"
+        )
+
+    archived = block.get("archived")
+    if not isinstance(archived, str) or not _ISO_DATE.fullmatch(archived):
+        raise ValueError(
+            f"`archive.archived` on {site_id} is {archived!r}; it must be a YYYY-MM-DD date. "
+            "It names the raw landing directory and is checked against the archive date the "
+            "file declares in its own header, so it cannot be free text"
+        )
+
+    return Archive(
+        archived=archived,
+        source_file=_optional_text(block.get("source_file")),
+        doi=_optional_text(block.get("doi")),
+        citation=_optional_text(block.get("citation")),
+    )
+
+
+def _optional_text(value: object) -> str | None:
+    return None if value is None else str(value)
+
+
+def _coordinate(value: object, site: dict, field_name: str) -> float | None:
+    """One WGS84 coordinate as a float, or None if the site declares none.
+
+    Refused rather than coerced-or-ignored when it is present and unreadable.
+    Position is a reviewed fact in this project -- docs/02 leaves a whole RTOMS
+    window out because its provider gave three different answers for it -- and
+    a coordinate silently read as absent would turn a station that *is* placed
+    into one that matches nothing.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"{field_name} on {_site_id(site) or '<unnamed site>'} is {value!r}, which is "
+            "not a number; a position is either declared or absent, never unreadable"
+        ) from None
 
 
 def _deployment(site: dict, record: dict) -> Deployment:

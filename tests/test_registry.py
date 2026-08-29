@@ -282,3 +282,128 @@ def test_an_explicit_null_site_id_is_empty_rather_than_the_word_none(tmp_path):
     bare `str()` would turn that into a site called "None"."""
     loaded = registry(tmp_path, {"site_id": None, "deployments": [{"serial": "22506632"}]})
     assert find_deployment(loaded, "22506632").site_id == ""
+
+
+# --------------------------------------------------------------------------
+# The archive a hand-downloaded station's landings came from (docs/03)
+# --------------------------------------------------------------------------
+
+
+def test_a_station_with_no_archive_block_pins_nothing(tmp_path):
+    """Most sites are pulled, and a pulled station has nothing to pin: the
+    provider serves whatever is current and the identifier is the version."""
+    assert station(tmp_path).archive is None
+
+
+def test_an_archive_block_pins_the_snapshot_and_how_to_cite_it(tmp_path):
+    found = station(
+        tmp_path,
+        archive={
+            "archived": "2026-06-30",
+            "source_file": "LaJolla_TEMP_1916-202603.csv",
+            "doi": "10.6075/J06T0K0M",
+            "citation": "Carter, Melissa L.; ... Award# C22820005.",
+        },
+    )
+    assert found.archive is not None
+    assert found.archive.archived == "2026-06-30"
+    assert found.archive.source_file == "LaJolla_TEMP_1916-202603.csv"
+    assert found.archive.doi == "10.6075/J06T0K0M"
+    assert "C22820005" in found.archive.citation
+
+
+def test_the_archive_date_is_the_raw_landing_directory(tmp_path):
+    """So two archives of one cumulative record cannot interleave in `raw/`."""
+    found = station(tmp_path, archive={"archived": "2026-06-30"})
+    assert found.archive.label == "2026-06-30"
+
+
+def test_everything_but_the_date_is_optional_provenance(tmp_path):
+    found = station(tmp_path, archive={"archived": "2026-06-30"})
+    assert (found.archive.source_file, found.archive.doi, found.archive.citation) == (
+        None,
+        None,
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    "archived",
+    ["June 2026", "2026-6-30", "20260630", "", 20260630, None],
+    ids=["prose", "unpadded", "compact", "empty", "number", "null"],
+)
+def test_an_archive_date_that_is_not_iso_is_refused_by_name(tmp_path, archived):
+    """It names a directory and is compared against the file's own header, so a
+    spelling nobody can reproduce is a registry error rather than a value."""
+    with pytest.raises(ValueError, match="archive.archived"):
+        station(tmp_path, archive={"archived": archived})
+
+
+@pytest.mark.parametrize("block", ["2026-06-30", [], {}], ids=["string", "list", "empty"])
+def test_an_archive_that_is_not_a_block_is_refused(tmp_path, block):
+    with pytest.raises(ValueError, match="`archive` on NDBC:TEST"):
+        station(tmp_path, archive=block)
+
+
+def test_an_unreadable_archive_names_the_site_it_is_on(tmp_path):
+    """Registry errors have to say which record to open, since nothing else can."""
+    with pytest.raises(ValueError, match="SIO:LAJOLLA-PIER"):
+        find_stations(
+            registry(
+                tmp_path,
+                {
+                    "site_id": "SIO:LAJOLLA-PIER",
+                    "operator": "sio_shore_stations",
+                    "station_code": "LaJolla",
+                    "archive": {"archived": "whenever"},
+                },
+            ),
+            "sio_shore_stations",
+        )
+
+
+# --------------------------------------------------------------------------
+# A public station's position (docs/03)
+# --------------------------------------------------------------------------
+
+
+def test_a_public_stations_position_reaches_the_station_record(tmp_path):
+    """`Deployment` refuses one and `Station` carries one, and the asymmetry is
+    deliberate: a project logger can be recording before anyone has surveyed it,
+    while a public station's position is something its operator published."""
+    found = station(tmp_path, lat=32.866944, lon=-117.257139)
+    assert (found.lat, found.lon) == (32.866944, -117.257139)
+
+
+def test_a_station_with_no_position_declares_none_rather_than_zero(tmp_path):
+    found = station(tmp_path)
+    assert (found.lat, found.lon) == (None, None)
+
+
+def test_a_position_is_read_as_a_float_whatever_the_editor_typed(tmp_path):
+    found = station(tmp_path, lat="32.866944", lon=-117)
+    assert (found.lat, found.lon) == (32.866944, -117.0)
+
+
+@pytest.mark.parametrize("bad", ["32 deg 52'", "", []], ids=["dms", "empty", "list"])
+def test_a_position_that_is_present_and_unreadable_is_refused(tmp_path, bad):
+    """Not read as absent. Position is a reviewed fact here -- docs/02 leaves a
+    whole RTOMS window out because its provider gave three answers for one -- and
+    a coordinate silently dropped turns a placed station into one that matches
+    nothing."""
+    with pytest.raises(ValueError, match="lat on NDBC:TEST"):
+        station(tmp_path, lat=bad, lon=-117.25)
+
+
+def test_the_committed_shore_station_carries_the_position_its_archive_prints():
+    """32 deg 52' 01.0" N 117 deg 15' 25.7" W, from the file's own header."""
+    loaded = load_registry(COMMITTED)
+    (found,) = find_stations(loaded, "sio_shore_stations")
+
+    assert found.site_id == "SIO:LAJOLLA-PIER"
+    assert found.lat == pytest.approx(32 + 52 / 60 + 1.0 / 3600, abs=1e-6)
+    assert found.lon == pytest.approx(-(117 + 15 / 60 + 25.7 / 3600), abs=1e-6)
+    assert found.archive.archived == "2026-06-30"
+    assert found.declared_depths("sea_water_temperature") == (0.5, 5.0)
+    assert found.describes_own_depth("sea_water_temperature")
+    assert found.depth_for("sea_water_temperature") is None

@@ -18,6 +18,7 @@ implementation, since public endpoints and formats drift.
 | NOAA CO-OPS | Water level, coastal water temp | REST API (JSON/CSV) | 6 min / hourly | JSON, CSV |
 | SCCOOS / CalOOS | Shore stations, HABs, currents | ERDDAP (tabledap/griddap) | Varies | CSV, NetCDF, JSON |
 | City of San Diego RTOMS | Depth-resolved reference temperature | CeNCOOS ERDDAP (tabledap) | 10 min | CSV |
+| SIO Shore Stations | Century-scale reference temperature | Hand-downloaded CSV, dropped in `raw/sio_shore_stations/incoming/` | Daily | CSV |
 | CDIP | Wave climate | THREDDS/ERDDAP NetCDF | 30 min | NetCDF |
 | CDFW / marineBIOS | GIS context, historical kelp surveys | Downloaded shapefiles/services | Static / annual | Shapefile, GeoJSON |
 | Supplementary (SST, indices) | Gap-filling, regional drivers | ERDDAP / flat files | Daily / monthly | NetCDF, text |
@@ -567,6 +568,323 @@ they can support is the question `sites.json` currently answers in prose — how
 far a 3.4 m shore reading sits from water at thermocline depth in this region,
 and how that gap moves with season. They also cannot validate the project's own
 loggers, whose deployments begin in July 2026, after every RTOMS record ends.
+
+## SIO Shore Stations — La Jolla, Scripps Pier
+
+**Implemented** — `src/kelpcompare/fetchers/sio_shore_stations.py`,
+`kelpcompare ingest --source sio_shore_stations`. Everything below was verified
+against the fourteen downloaded snapshots on 2026-08-28; excerpts of two of them
+are recorded in `tests/fixtures/sio_shore_stations/`.
+
+**The longest in-situ temperature record in the study area: one daily grab
+sample at Scripps Pier, surface and bottom, since 22 August 1916.** 40,034
+consecutive days to 31 March 2026 in the pinned snapshot, with no gap in the
+calendar — a day nobody sampled is a row with a null reading, not an absent row.
+That is 110 years against Kelp Watch's 42 and NDBC:LJAC1's 19, which is the
+whole reason it is here.
+
+Citation is required wherever these data appear, in the words the pinned
+snapshot's own header uses:
+
+> Carter, Melissa L.; Flick, Reinhard E.; Terrill, Eric; Beckhaus, Elena C.;
+> Martin, Kayla; Fey, Connie L.; Walker, Patricia W.; Largier, John L.;
+> McGowan, John A. (2022). Shore Stations Program — La Jolla, Scripps Pier
+> (La Jolla Archive, 2026-06-30). In *Shore Stations Program Data Archive:
+> Current and Historical Coastal Ocean Temperature and Salinity Measurements
+> from California Stations*. UC San Diego Library Digital Collections.
+> `https://doi.org/10.6075/J06T0K0M`
+>
+> Funding for the Shore Stations Program provided by the California Department
+> of Parks and Recreation, Natural Resources Division, Award# C22820005.
+
+The award number is **not** constant across snapshots — the five oldest name
+`C1670003` — so the citation is a property of the pinned archive rather than of
+the program, and is recorded on the site record beside the pin.
+
+### The route: a hand-downloaded CSV, pinned like a Kelp Watch revision
+
+**The operator downloads the archive by hand and drops
+`LaJolla_TEMP_1916-YYYYMM.csv` in `raw/sio_shore_stations/incoming/`.** There
+is no fetcher, no URL and no `SourceUnavailable` path, for the same reason Kelp
+Watch has none: the source cannot be pulled. Access needs a Google Form
+registration, and the UCSD Library repository sits behind Anubis proof-of-work
+bot protection (endpoint `/.within.website/x/cmd/anubis/`, confirmed
+2026-08-28). Automating past a bot wall is not a fetcher, it is an evasion, and
+this project does not write one.
+
+It is also not on SCCOOS ERDDAP: only the HAB and SPATT datasets exist there for
+Scripps Pier.
+
+Each download is a **cumulative snapshot of the whole record**, so re-ingesting
+one is a rewrite rather than an append, exactly like a Kelp Watch export.
+`sites.json` therefore pins one — `archive.archived` plus the file it arrived
+as — and an ingest refuses to run without a pin, quarantines a file whose header
+declares a different archive date, and lands under
+`raw/sio_shore_stations/{archived}/`, so two archives cannot interleave.
+
+**Unlike Kelp Watch, the file declares its own version**, on preamble line 4:
+`Data provided are subject to revision and were archived 2026-06-30.` So the pin
+is *checked* rather than merely asserted, which is the one thing the Kelp Watch
+pin cannot do.
+
+**Also unlike Kelp Watch, no snapshot has yet revised history.** Comparing the
+pinned 2026-06-30 archive against the 2020-12, 2023-12 and 2025-12 ones, across
+38,118, 39,213 and 39,944 shared days, **not one value, flag or time differs** —
+every newer snapshot is a pure append. That is measured, not promised: the
+header says the data are "subject to revision", so the pin stays.
+
+### Layout
+
+A preamble, then the column header, then one row per calendar day:
+
+```
+YEAR,MONTH,DAY,TIME_PST,TIME_FLAG,SURF_TEMP_C,SURF_FLAG,BOT_TEMP_C,BOT_FLAG,,,,,
+1916,8,22,NaN,NaN,19.5,0,NaN,NaN,,,,,
+...
+2026,3,31,1343,0,18.7,0,18.7,0,,,,,
+```
+
+Five unnamed trailing columns are present in every row of every snapshot and are
+empty in all of them; the parser tolerates them and refuses any that is not.
+Missing is spelled `NaN`, everywhere, in both value and flag columns. Line
+endings are CRLF.
+
+**The preamble length is not fixed.** Nine of the fourteen snapshots carry 46
+lines before the column header and five carry 45. A parser that skipped a
+constant would read the column header as data on a third of the archive, so the
+header line is *found*, by its `YEAR,MONTH,DAY,TIME_PST` prefix.
+
+**Nor is the encoding.** The five oldest snapshots are Mac Roman (the degree
+sign in the position line is byte `0xA1`) and carry no byte-order mark; the nine
+newest are UTF-8 with a BOM (`0xC2 0xB0`). Nothing in this project reads that
+character — the position is parsed with a pattern that treats any non-digit run
+as a separator — so decoding falls back to latin-1, which cannot raise, on the
+same reasoning `fetchers.base.Payload.decode` gives.
+
+**The filename does not name the last day of data.** `LaJolla_TEMP_1916-202509`
+runs to 2025-10-31. Coverage is read from the rows.
+
+**Trailing filler rows exist.** Five of the fourteen snapshots end with between
+30 and 119 rows that are nothing but commas. A row with no date at all is
+dropped; a row with a *partial* date is a format surprise and stops the parse.
+
+### Two depths in one file, and `depth_m` is permanent
+
+Surface (~0.5 m) and bottom (~5 m) are two series, and `depth_m` is part of
+`OBSERVATION_KEY` (doc 03), so getting the pair wrong is not fixable by a later
+run. `sensor_depths_m` therefore declares the **list** form for this site and the
+parser checks its two depths against it (doc 03, "A source may be
+self-describing on depth"), rather than the registry supplying a single value it
+could not have.
+
+The depths come from the file, not from this document: preamble line 2 reads
+`Shore Stations Program - La Jolla, Scripps Pier Surface (~0.5m) and Bottom
+(~5m) Temperature Data`, and the parser reads the two parenthesised depths out
+of it. Identical across all fourteen snapshots. A snapshot that renamed or
+re-sounded them is quarantined rather than landed at the old numbers.
+
+They are nominal, and the `~` is the program's own. A pier sampler works from a
+fixed platform in about 5 m of water, so the bottom figure is a sounding rather
+than a sensor depth, and the surface bucket is wherever the surface was that
+morning. Nothing here treats either as better than ±0.5 m.
+
+**The bottom series starts ten years after the surface one**, on 1926-07-21.
+Before that the file carries a row per day with `BOT_TEMP_C` *and* `BOT_FLAG`
+both `NaN` — the flag column is empty for exactly the 3,620 days before the
+first bottom reading and for no others, which is the source saying the series
+did not exist yet rather than that a sample was missed. Those rows are dropped;
+a null *after* a series starts is a real gap in a running program and lands
+flagged missing, as doc 03 requires. This is the same distinction the RTOMS
+parser draws between an outage at a declared depth and another instrument's
+profile bin, reached by different evidence.
+
+### Times are PST, exist only from 1990, and are otherwise a convention
+
+`TIME_PST` is an integer `HHMM` with no leading zero — `858` is 08:58, and
+midnight would be `0`. It is present for 12,473 of 40,034 days, none of them
+before 1990, and the header says so: *"Time of sample collection available for
+1990-current data only."*
+
+**PST is a fixed −08:00 offset, not `America/Los_Angeles`.** The header names
+the zone as Pacific *Standard* Time, and applying a DST-aware zone would move
+every summer reading by an hour in the direction that looks like a diurnal
+signal. The parser applies −08:00 year-round.
+
+The header also warns that *"Time records between 1990-2004 may vary by up to 1
+hour with actual sample time since time zone was not recorded during these
+years"* — which is the same DST ambiguity, admitted upstream, over the 5,163
+timed days in that span. It is documented and **not flagged**: an hour of
+uncertainty on a daily grab sample changes no quarterly feature, and marking
+5,163 rows suspect would drop them from the default `qc_flag <= 2` filter to buy
+nothing.
+
+**The convention for a day with no time: 10:38 PST.** That is the median
+time-of-day of the 12,473 days that do carry one, and using it rather than a
+round number is the point — it is an estimate from this program's own sampling
+behaviour, not a placeholder. The 2005-onward days, the ones with no DST
+ambiguity at all, give 10:43, so the estimate is stable across the two halves of
+the timed record. The hourly distribution is tight and unimodal: the modal hour
+is 10, the interquartile range is 09:45–12:00, and the whole record spans 05:24
+to 20:02.
+
+Alternatives, and why not:
+
+- **Local midnight.** Simple and obviously arbitrary, but it is the worst
+  available estimate of when a morning grab sample was taken, off by about ten
+  and a half hours in a known direction.
+- **Local noon.** Conventional, but still a guess, and it is *later* than this
+  program actually samples — which biases every imputed reading toward the
+  warmer part of the day rather than toward no bias at all.
+- **A null timestamp.** Not available: `timestamp` is not nullable in doc 03 and
+  is part of `OBSERVATION_KEY`.
+
+The cost, stated plainly: **27,561 of 40,034 days carry no time**, which is
+51,502 of the 76,448 stored observations — 67% — with a timestamp this project
+assigned rather than one the observer wrote down. Everything the project does
+with these rows is quarterly, and a quarter is 90 days, so the assignment
+changes no feature. It would matter to any day-matched or hour-matched
+comparison, which is why the imputed rows are identifiable.
+
+**How to tell an imputed timestamp from a measured one.** A row whose `qc_tests`
+records a `sample_time` verdict had a time in the file; a row with no
+`sample_time` verdict did not. No new column, and it is the honest reading of
+doc 03's rule that a test which reached no verdict records nothing: there was no
+time to check.
+
+That the convention lands at 18:38 UTC also keeps the UTC date equal to the
+local date. Any imputed time at or after 16:00 PST would roll into the next UTC
+day and move a 31 December reading into the next quarter — some of the record's
+measured times do exactly that, legitimately, and an assigned one must not.
+
+**`TIME_FLAG` cannot be used to detect a missing time.** All 766 post-1990 days
+with no `TIME_PST` carry `TIME_FLAG = 0`, "good data", about a time that is not
+there. The `TIME_PST` column is the only evidence.
+
+### Flag mapping — the program's own vocabulary, not QARTOD
+
+Declared in the preamble of every snapshot, and read from it: a snapshot whose
+legend declares a code this table does not cover is quarantined, on the same
+rule the RTOMS parser applies when a provider's flag vocabulary changes.
+
+| Source | Meaning | `qc_tests` | `qc_flag` |
+|---|---|---|---|
+| value is `NaN` | data not collected | `source_flag:missing` | 9 missing |
+| `0` | good data | `source_flag:pass` | 1 pass |
+| `1` | illegible entry | `source_flag:suspect` | 3 suspect |
+| `2` | differs from other sources | `source_flag:suspect` | 3 suspect |
+| `3` | data uncertain | `source_flag:suspect` | 3 suspect |
+| `4` | leaky bottle | `source_flag:suspect` | 3 suspect |
+| `5` | Pier Chlorophyll Program **or a different location** | `source_flag:fail` | 4 fail |
+| flag is `NaN`, value is not | *(never observed)* | no verdict | 2 not evaluated |
+
+**That last column is what this test contributes, not always the stored flag.**
+`qc_flag` is the roll-up of every verdict on the row, so a `sample_time:suspect`
+beside a `source_flag:pass` stores 3 — and in the one row above where the data
+flag is absent, a `sample_time:pass` alone stores 1 rather than 2, because it is
+then the only verdict that reached a conclusion. That case has never occurred,
+and it costs nothing if it does: both 1 and 2 pass the default `qc_flag <= 2`
+filter, so the label differs and the analysis does not.
+
+**An absent reading is `missing` whatever the flag column says.** The source
+writes `0` — good data — beside 1,330 absent surface readings and 2,256 absent
+bottom ones. Doc 03 gives 9 to a row with no value and there is nothing in an
+absence to judge, so the flag column is not read as evidence about a reading
+that does not exist, and `qc_tests` records `missing` so the roll-up and the
+record agree.
+
+**Flag 5 is the one that needed a decision, and it does not occur.** Across all
+fourteen snapshots and both series, the only data flags ever written are
+`0, 1, 2, 3`. Flag 4 ("leaky bottle") is a salinity condition and never appears
+in a temperature file either. So the two rows of the table above that matter
+most are rules for cases that have not arisen, and they are written to fail
+safely rather than to be convenient:
+
+- Flag 5 conflates two different things — a sample taken for another program at
+  this pier, which is this site's water, and a sample taken *somewhere else*,
+  which is not. One code cannot be mapped to both, and there is no other column
+  to tell them apart. Mapping it to `fail` keeps the row on the record and out
+  of the default analysis filter, which is what doc 06 §3 does with a reading
+  taken outside its deployment window, and for the same reason: a real
+  measurement that is not a measurement of this site.
+- The alternative — stopping the parse — was rejected because it would block a
+  110-year record on one row, and because flag 5 is a *documented* code rather
+  than a surprise. An **undocumented** code still stops the parse, which is
+  where the RTOMS precedent actually applies.
+- A run that lands any flag-5 row warns, by date, so the choice is visible the
+  first time it is ever exercised rather than settled silently here.
+
+`TIME_FLAG` maps onto a second test, `sample_time`, on the same scale and only
+where a time exists: `0` is `pass`, `1`/`2`/`3` are `suspect`. That is 133 days
+of 40,034, and it is the source telling us the *time* is illegible or disputed —
+which makes the observation suspect, since an observation is a reading and a
+time. Use `--qc-max-flag 3` to get them back.
+
+### Data quality, measured
+
+- **39,919 of 40,034 surface readings carry flag 0.** Only 115 surface and 112
+  bottom readings are flagged at all, across 110 years.
+- Landed: **76,448 observations** — 40,034 surface and 36,414 bottom, from
+  40,034 daily rows. By `qc_flag` at ingest: 72,436 pass, 426 suspect, 3,586
+  missing. 266 of the suspects are the `sample_time` verdict rather than the
+  data flag.
+- 30 of 30 years are usable in every quarter, surface and bottom, for both the
+  1984–2013 and 1991–2020 baselines (≥60% of days at flag 0).
+- Against `NDBC:LJAC1` over 5,822 overlapping days, 2007–2025: **bottom ~5 m
+  gives bias −0.07 °C, RMSE 1.02 °C, r 0.918**, with monthly bias never beyond
+  ±0.33 °C and no seasonal structure. Surface ~0.5 m gives bias +0.66 °C. The
+  bottom series is effectively the same measurement as LJAC1, extended back to
+  1916.
+
+### One daily grab sample is not a time series, and some features do not survive it
+
+This is one bottle a day, not a moored sensor. Threshold counts, spell lengths
+and degree-days are computed from daily values and are comparable; **`p95` and
+variance are not** comparable to anything sampled sub-hourly, because they
+measure the tail and the spread of a *sampling* distribution that has one point
+per day here and hundreds at LJAC1. Wherever a quarterly feature from this
+source is put beside one from a continuous source, that has to be said. Doc 04's
+neighbor-validation caveat about depth is the same shape of problem: the number
+computes fine and means something different.
+
+**The QARTOD thresholds in `parameters.json` are the same problem, and they are
+live.** They are keyed by parameter and were tuned against a 10-minute logger,
+so on this daily series `spike` flags **3,043 of 34,158 bottom readings (8.9%)**
+as suspect or failed — the threshold of 1.5 °C sits near the 88th percentile of
+ordinary day-to-day variation at 5 m, which off this pier is upwelling rather
+than instrument error — while `rate_of_change` cannot fail at all and records a
+`pass` on 70,462 rows regardless. **Do not run `kelpcompare qc` over
+`source=sio_shore_stations`** until that is resolved: the ingest-time flags from
+the program's own vocabulary are correct and sufficient, and a qc run would
+overwrite 3,043 good readings with a suspect verdict that the default
+`qc_flag <= 2` filter then drops. Tracked, with the measured percentiles and the
+options, at https://github.com/cweber12/kelp-compare/issues/68.
+
+### Co-located with `NDBC:LJAC1`, but not the same instrument
+
+The header position, `32°52'01.0"N 117°15'25.7"W` → 32.866944, −117.257139, is
+about 10 m from the `NDBC:LJAC1` / `COOPS:9410230` platform. It is nonetheless
+**not** recorded as `same_platform_as` those, because that field means one
+physical instrument package under two identifiers (doc 03), and this is a
+hand-taken bottle at 0.5 m and 5 m against an automated NOS sensor 3.4 m below
+MLLW — different instruments, different method, different depths, agreeing to
+r = 0.918 rather than by construction.
+
+What follows is that doc 04's neighbor validation would count them as two
+independent references for a project sensor, and spatially they are one place.
+It is not a `neighbor_ref` for either project logger anyway, for a simpler
+reason: this record ends 2026-03-31 and both deployments begin in July 2026, so
+there is nothing to compare. That is a reprieve rather than an answer — the next
+quarterly archive may end the gap, and at 5 m this is the most depth-comparable
+reference the project has for `PROJ:TIDBIT-1`. Tracked at
+https://github.com/cweber12/kelp-compare/issues/69.
+
+### Temperature only
+
+The same download carries `LaJolla_SALT_*.csv` in the identical format.
+Salinity has no `parameters.json` entry, and adding one is a registry decision
+about SI units and QC bounds rather than a parsing convenience — the same line
+the RTOMS entry draws. `sniff()` accepts the temperature layout only, so a
+dropped SALT file is skipped rather than misread.
 
 ## CDIP (Coastal Data Information Program)
 

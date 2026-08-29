@@ -71,8 +71,12 @@ class FileEntry:
     `site_id` and `polygon_id` are alternatives, not a pair: an observation
     belongs to a site and a canopy value belongs to a polygon, and calling a
     polygon a site to save a field would put a lie in the audit trail.
-    `dataset_revision` is the upstream version a landing came from, for the one
-    source whose file carries no version of its own (docs/02).
+    `dataset_revision` is the upstream version a landing came from, for the two
+    sources that are downloaded by hand: a Kelp Watch export carries no version
+    of its own and takes the revision the polygon registry pins, while a Shore
+    Stations archive declares its own archive date and takes that. Hence
+    `int | str` -- the field records what the upstream calls its version, and the
+    two upstreams do not agree on what a version looks like.
     """
 
     path: str
@@ -83,7 +87,7 @@ class FileEntry:
     serial: str | None = None
     site_id: str | None = None
     polygon_id: str | None = None
-    dataset_revision: int | None = None
+    dataset_revision: int | str | None = None
     landed: str | None = None
     quarantined_to: str | None = None
     rows_in: int | None = None
