@@ -423,6 +423,55 @@ uncertainty rather than p-value collections. All notebooks run
 start-to-finish from the comparison table; figures for team sharing export
 with the run manifest ID in the caption.
 
+### Predictors and controls
+
+Not every parameter in the screen is eligible for that pre-registration.
+`features.json` gives each one a `role`: a **predictor** may be registered and
+carried into 4.3; a **control** is screened and reported and never registered,
+because its coefficient is evidence about the screen rather than about kelp.
+The role governs the analysis and nothing else — a control is fetched,
+normalized, flagged, aggregated and stored exactly as a predictor is, so a
+demotion withholds a parameter from a claim without withholding a row. That is
+§1's flags-not-deletions posture applied one layer up, and it is why the
+demotion below is a registry edit rather than a filter in a fetcher.
+
+**`air_temperature` and `wind_speed` are controls.** Two separate reasons, and
+neither is a coefficient that came out weak:
+
+- **Air temperature is largely re-measuring the water.** Across the 47 quarters
+  where all three `NDBC:LJAC1` series are usable, the quarterly mean anomalies
+  correlate at **r = 0.857** between air and sea water temperature (against
+  −0.341 air-to-wind and −0.117 water-to-wind). Coastal air temperature is
+  substantially a consequence of the SST beneath it, so as a predictor it is a
+  noisier proxy for a quantity this project measures directly, in the medium
+  kelp actually lives in.
+- **Scalar wind speed mixes two opposite mechanisms.** Upwelling is driven by
+  equatorward alongshore wind stress: a northwesterly is upwelling-favorable,
+  bringing the cold nutrient-rich water §2 makes `days_below_14c` a proxy for. A
+  Santa Ana is offshore and downwelling-favorable — warm and nutrient-poor. Both
+  register as speed, so the variable averages a signal against its own negation
+  and its coefficient has no sign to predict. The variables that separate them
+  are the ones doc 02 already names: BEUTI/CUTI for upwelling, CDIP for
+  storm-driven canopy removal. A direction-resolved wind stress would reopen the
+  question; scalar speed does not.
+
+Neither can serve 4.5 in any case. The project sensors measure water
+temperature, so a met parameter is neither the quantity under test nor a
+validation reference for it.
+
+**What controls are for.** Keeping them is not politeness. If air temperature
+correlates with kelp about as strongly as sea water temperature does, that is
+evidence the screen is recovering shared seasonality rather than mechanism — and
+a screen carrying one predictor family cannot establish that about itself. The
+notebook therefore reports the control cells beside the predictor cells rather
+than hiding them, and only the ranking that feeds registration is restricted.
+
+**The multiple-comparison arithmetic improves as a side effect, and only as
+one.** Restricting the pool roughly halves the cells eligible for registration.
+That changes the denominator; it does not change the top-*k*-by-|r| cut that
+selects candidates, and it does not make two adjacent beds against one station
+into independent evidence.
+
 ## 6. Known interpretive limits
 
 Landsat canopy is a surface expression — subsurface kelp condition, urchin
