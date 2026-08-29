@@ -360,3 +360,50 @@ def test_an_unreadable_archive_names_the_site_it_is_on(tmp_path):
             ),
             "sio_shore_stations",
         )
+
+
+# --------------------------------------------------------------------------
+# A public station's position (docs/03)
+# --------------------------------------------------------------------------
+
+
+def test_a_public_stations_position_reaches_the_station_record(tmp_path):
+    """`Deployment` refuses one and `Station` carries one, and the asymmetry is
+    deliberate: a project logger can be recording before anyone has surveyed it,
+    while a public station's position is something its operator published."""
+    found = station(tmp_path, lat=32.866944, lon=-117.257139)
+    assert (found.lat, found.lon) == (32.866944, -117.257139)
+
+
+def test_a_station_with_no_position_declares_none_rather_than_zero(tmp_path):
+    found = station(tmp_path)
+    assert (found.lat, found.lon) == (None, None)
+
+
+def test_a_position_is_read_as_a_float_whatever_the_editor_typed(tmp_path):
+    found = station(tmp_path, lat="32.866944", lon=-117)
+    assert (found.lat, found.lon) == (32.866944, -117.0)
+
+
+@pytest.mark.parametrize("bad", ["32 deg 52'", "", []], ids=["dms", "empty", "list"])
+def test_a_position_that_is_present_and_unreadable_is_refused(tmp_path, bad):
+    """Not read as absent. Position is a reviewed fact here -- docs/02 leaves a
+    whole RTOMS window out because its provider gave three answers for one -- and
+    a coordinate silently dropped turns a placed station into one that matches
+    nothing."""
+    with pytest.raises(ValueError, match="lat on NDBC:TEST"):
+        station(tmp_path, lat=bad, lon=-117.25)
+
+
+def test_the_committed_shore_station_carries_the_position_its_archive_prints():
+    """32 deg 52' 01.0" N 117 deg 15' 25.7" W, from the file's own header."""
+    loaded = load_registry(COMMITTED)
+    (found,) = find_stations(loaded, "sio_shore_stations")
+
+    assert found.site_id == "SIO:LAJOLLA-PIER"
+    assert found.lat == pytest.approx(32 + 52 / 60 + 1.0 / 3600, abs=1e-6)
+    assert found.lon == pytest.approx(-(117 + 15 / 60 + 25.7 / 3600), abs=1e-6)
+    assert found.archive.archived == "2026-06-30"
+    assert found.declared_depths("sea_water_temperature") == (0.5, 5.0)
+    assert found.describes_own_depth("sea_water_temperature")
+    assert found.depth_for("sea_water_temperature") is None

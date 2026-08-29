@@ -124,12 +124,25 @@ class Station:
     It is not derivable from `sensor_depths_m`: a met parameter has no depth and
     is measured anyway, so an absence there means "no depth published", never
     "no sensor" (docs/03).
+
+    **`lat`/`lon` are carried here although `Deployment` deliberately refuses
+    them**, and the asymmetry is the same fact twice. A project logger can be in
+    the water and recording before anyone has surveyed it, so ingest code must
+    have nowhere to put a coordinate; a public station's position is something
+    its operator published, and for a hand-downloaded archive it is how a
+    dropped file is matched to a site at all -- the SIO Shore Stations file
+    declares its own position, and the match is against this. Still optional,
+    because a station can be registered before anyone has copied its position
+    down, and a caller that needs one has to cope with `None` rather than
+    assume.
     """
 
     site_id: str
     station_code: str
     operator: str
     name: str | None = None
+    lat: float | None = None
+    lon: float | None = None
     sensor_depths_m: dict[str, float] = field(default_factory=dict)
     depth_set_m: dict[str, tuple[float, ...]] = field(default_factory=dict)
     measured_parameters: tuple[str, ...] = ()
@@ -376,6 +389,8 @@ def _station(site: dict) -> Station:
         station_code=str(site.get("station_code", "")),
         operator=str(site.get("operator", "")),
         name=site.get("name"),
+        lat=_coordinate(site.get("lat"), site, "lat"),
+        lon=_coordinate(site.get("lon"), site, "lon"),
         sensor_depths_m=scalars,
         depth_set_m=sets,
         measured_parameters=tuple(str(p) for p in measured),
@@ -428,6 +443,26 @@ def _archive(site: dict) -> Archive | None:
 
 def _optional_text(value: object) -> str | None:
     return None if value is None else str(value)
+
+
+def _coordinate(value: object, site: dict, field_name: str) -> float | None:
+    """One WGS84 coordinate as a float, or None if the site declares none.
+
+    Refused rather than coerced-or-ignored when it is present and unreadable.
+    Position is a reviewed fact in this project -- docs/02 leaves a whole RTOMS
+    window out because its provider gave three different answers for it -- and
+    a coordinate silently read as absent would turn a station that *is* placed
+    into one that matches nothing.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"{field_name} on {_site_id(site) or '<unnamed site>'} is {value!r}, which is "
+            "not a number; a position is either declared or absent, never unreadable"
+        ) from None
 
 
 def _deployment(site: dict, record: dict) -> Deployment:
