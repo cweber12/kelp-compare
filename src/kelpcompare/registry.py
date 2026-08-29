@@ -274,6 +274,50 @@ def find_deployment(registry: Registry, serial: str) -> Deployment | None:
     return matches[0] if matches else None
 
 
+def find_station(registry: Registry, site_id: str) -> Station | None:
+    """The public station registered under one `site_id`, or None.
+
+    The by-identifier counterpart to `find_stations`, which answers by operator.
+    docs/04 s1's neighbor validation resolves `neighbor_refs` -- a list of
+    `site_id`s -- against the stations they name, and asking for every station of
+    an unknown operator to find one of them would be the wrong question.
+
+    None for a `site_id` that is a project sensor, or that no site declares.
+    Neither is an error here: a `neighbor_refs` entry naming a station nobody has
+    registered yet is a gap the caller reports, not a reason to refuse the
+    registry.
+    """
+    for site in registry.sites:
+        if _site_id(site) == site_id and site.get("station_code"):
+            return _station(site)
+    return None
+
+
+def neighbor_refs(registry: Registry, site_id: str) -> tuple[str, ...]:
+    """The public stations declared for validating one site, in registry order.
+
+    Ordered because docs/03 calls them ordered: the first entry is the reference
+    a reader should reach for first, and `find_station` resolving them in turn is
+    what makes "the nearest one" a registry fact rather than a distance this code
+    recomputes.
+
+    **Not a field on `Deployment`, and for the same reason `lat`/`lon` are not.**
+    Which stations validate this place is a property of the place, not of the
+    instrument that happened to be in it -- a second deployment of the same
+    logger at the same site validates against the same references, and a record
+    that carried its own copy could disagree with its sibling. Reading it from
+    the site record means there is one answer and nowhere to put a second.
+
+    Empty means undeclared, never "validate against nothing": a site whose
+    references nobody has recorded produces no validation rows and says so,
+    rather than silently producing a table that looks complete.
+    """
+    site = registry.site(site_id)
+    if not site:
+        return ()
+    return tuple(str(ref) for ref in site.get("neighbor_refs") or ())
+
+
 def _normalize_serial(serial: object) -> str:
     """Serials are strings, but a hand-edited registry may hold a JSON number."""
     if serial is None:

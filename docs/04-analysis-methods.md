@@ -109,16 +109,36 @@ first. It cannot answer the second as a field, because the gap is a property of
 the pair rather than of either station, so this table's code has to read
 `sensor_depths_m` against each deployment's `depth_m` and decide per statistic.
 
-Not built, and the blocker is no longer the one this section first recorded. The
-public-station half of the comparison exists: `NDBC:LJAC1` now carries 2007–2026
-in `observations/`, and `sites.json` names it in both project sites'
-`neighbor_refs` beside `COOPS:9410230` — which are one platform (doc 02), and
-depth-comparable to only one of the two deployments. What is still missing is
-the other neighbour — no satellite SST fetcher exists, and none for CO-OPS
-either (doc 02) — and, more immediately, the sensor side of it: **no
-project-sensor deployment has been ingested**, so there is nothing in
-`observations/` to validate. The three-week TidbiT record the QC thresholds
-above were sized against lives in `tests/fixtures/`, which is not a zone.
+**Comparable is a configured tolerance, and it is provisional.**
+`policy.neighbor_depth_tolerance_m` in `registry/features.json` sets the gap
+within which bias and RMSE are reported; it defaults to **5.0 m** and is absent
+from the file until someone disagrees with that. The default is not arbitrary
+but it is thin: it is set from the only two pairs this project has measured —
+`NDBC:LJAC1` at 3.4 m sits 4.83 m above `PROJ:TIDBIT-1` and runs about 1 °C
+warmer, and 13.36 m above `PROJ:TIDBIT-2` and runs about 5 °C warmer. So 5.0 m
+admits the first and refuses the second, which is the verdict this section
+already reached by hand. It is a stratification threshold standing on two
+observations of one summer, and it should be retuned against a record that spans
+a winter, when the water column is mixed and a 13 m gap may be no gap at all.
+
+**Both sides are reduced to a common cadence before comparing** — the coarser of
+the two median native intervals, each side contributing its mean within the bin.
+Doc 03 records that rule, the two alternatives rejected, and the caveat that a
+grab sample against a bin mean is not like for like.
+
+**Built** — `src/kelpcompare/features/validation.py`, written by `kelpcompare
+validate` into `features/validation.parquet` (doc 03). It is its own command
+rather than part of `kelpcompare features`, because it needs the site registry
+and `features` deliberately does not take one: `neighbor_refs`,
+`same_platform_as` and `sensor_depths_m` are all registry facts, and the
+quarterly builder is written so it can never come to depend on them.
+
+What remains missing is the *other* neighbour this section asks for. There is no
+satellite SST fetcher and none for CO-OPS (doc 02), so a project sensor today has
+exactly one independent reference: `NDBC:LJAC1`, which `COOPS:9410230` folds
+into. A validation table with one reference can say a sensor tracks its
+neighbour; it cannot yet say the sensor captures local signal the network misses,
+which is the more interesting claim and the one §4.5 is for.
 
 ## 2. Quarterly feature definitions
 

@@ -34,6 +34,7 @@ from kelpcompare.features.kelp import (
     build_kelp,
 )
 from kelpcompare.features.quarterly import QUARTERLY_KEY, feature_columns
+from kelpcompare.features.validation import VALIDATION_KEY, build_validation
 from kelpcompare.fetchers import cache, kelpwatch, ndbc, sd_rtoms, sio_shore_stations
 from kelpcompare.fetchers.base import NotModified, SourceUnavailable, land
 from kelpcompare.manifest import RunManifest
@@ -734,6 +735,100 @@ def _report_features(
 
     if run.warnings:
         raise SystemExit(1)
+
+
+@main.command()
+@click.option(
+    "--data-root",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Root of the docs/03 data zones. Defaults to ./data.",
+)
+@click.option(
+    "--registry",
+    "registry_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Site registry. Defaults to {data-root}/registry/sites.json.",
+)
+@click.option(
+    "--qc-max-flag",
+    type=click.IntRange(FLAG_PASS, FLAG_MISSING),
+    default=FLAG_NOT_EVALUATED,
+    show_default=True,
+    help="Keep rows at or below this QC flag on both sides of every comparison.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Report what would be compared; write no files, not even the manifest.",
+)
+def validate(
+    data_root: Path | None, registry_path: Path | None, qc_max_flag: int, dry_run: bool
+) -> None:
+    """Compare each project deployment against its neighbours (docs/04 s1).
+
+    Writes `features/validation.parquet`: one row per deployment x reference x
+    parameter x depth pair, carrying correlation always and bias and RMSE only
+    where the depth gap allows. A null bias is a refusal, not missing data --
+    `n_pairs` is populated either way, and `depth_gap_m` says why.
+
+    Its own command rather than part of `kelpcompare features`, because it needs
+    the site registry and that one deliberately does not take a `--registry`:
+    `neighbor_refs`, `same_platform_as` and the sensor geometry are registry
+    facts, and the quarterly builder is written so it can never depend on them.
+
+    Regenerated wholesale, so a pair the registry no longer declares loses its
+    row rather than keeping it forever.
+    """
+    zones = Zones.at(data_root)
+    registry = load_registry(registry_path or zones.sites_json)
+    config = load_feature_config(zones.features_json)
+
+    run = RunManifest.start(
+        "validate", argv=[f"--qc-max-flag={qc_max_flag}"], sources=list(stored_sources(zones))
+    )
+    try:
+        frame, warnings = build_validation(
+            read_observations(zones),
+            registry,
+            tolerance_m=config.neighbor_depth_tolerance_m,
+            qc_max_flag=qc_max_flag,
+        )
+    except Exception as error:  # noqa: BLE001 -- report it, keep the manifest
+        run.note_warning(f"validation: {type(error).__name__}: {error}")
+        frame, warnings = None, ()
+
+    for warning in warnings:
+        run.note_warning(warning)
+
+    if frame is None or frame.empty:
+        for warning in run.warnings:
+            click.echo(f"     warning  {warning}")
+        click.echo("nothing to validate")
+        return
+
+    for row in frame.to_dict("records"):
+        verdict = (
+            f"bias {row['bias']:+.2f} rmse {row['rmse']:.2f}"
+            if row["depth_comparable"]
+            else f"bias/rmse refused across {row['depth_gap_m']:.2f} m"
+        )
+        click.echo(
+            f"{row['site_id']:>16} vs {row['reference_site_id']:<16} "
+            f"{row['n_pairs']} pairs  r {row['correlation']:.3f}  {verdict}"
+        )
+    for warning in run.warnings:
+        click.echo(f"     warning  {warning}")
+
+    if dry_run:
+        click.echo("dry run: nothing written, no manifest")
+        return
+
+    path = replace_features(frame, zones, table="validation", key=VALIDATION_KEY)
+    run.add_series(source="validation", rows=len(frame))
+    click.echo(f"wrote {path}")
+    click.echo(f"manifest: {run.write(zones)}")
 
 
 @main.command()

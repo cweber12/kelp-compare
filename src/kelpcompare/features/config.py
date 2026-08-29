@@ -42,7 +42,22 @@ IMPLEMENTED_FEATURE_SETS: dict[str, tuple[str, ...]] = {
 #: (docs/02). Listed so the refusal can say "not yet" rather than "no such thing".
 DEFERRED_FEATURE_SETS = ("waves", "water_level")
 
-_POLICY_KEYS = frozenset({"coverage_floor", "baseline"})
+#: The gap, in metres, within which docs/04 s1 lets a neighbor validation report
+#: bias and RMSE. Provisional, and thin: set from the only two pairs measured so
+#: far -- NDBC:LJAC1 sits 4.83 m above PROJ:TIDBIT-1 and runs about 1 degC
+#: warmer, and 13.36 m above PROJ:TIDBIT-2 and runs about 5 degC warmer -- both
+#: in one stratified summer. Retune it against a winter record.
+DEFAULT_NEIGHBOR_DEPTH_TOLERANCE_M = 5.0
+
+#: Required in every `policy` block: nothing can be built without them.
+_REQUIRED_POLICY_KEYS = frozenset({"coverage_floor", "baseline"})
+
+#: Accepted, defaulted when absent. Optional rather than required because the
+#: default is a documented number rather than a guess a run has to make, and
+#: requiring it would invalidate every features.json written before it existed.
+_OPTIONAL_POLICY_KEYS = frozenset({"neighbor_depth_tolerance_m"})
+
+_POLICY_KEYS = _REQUIRED_POLICY_KEYS | _OPTIONAL_POLICY_KEYS
 _BASELINE_KEYS = frozenset({"start_year", "end_year", "min_years"})
 _PARAMETER_KEYS = frozenset({"feature_set", "thresholds"})
 
@@ -99,6 +114,7 @@ class FeatureConfig:
     coverage_floor: float
     baseline: Baseline
     parameters: dict[str, ParameterFeatures]
+    neighbor_depth_tolerance_m: float = DEFAULT_NEIGHBOR_DEPTH_TOLERANCE_M
 
     def __contains__(self, name: object) -> bool:
         return name in self.parameters
@@ -118,23 +134,24 @@ def load_feature_config(path: Path | str | None = None) -> FeatureConfig:
         payload = _uncommented(json.load(handle))
 
     _reject_unknown(payload, {"policy", "parameters"}, what="top-level key", path=resolved)
-    floor, baseline = _policy(payload.get("policy"), path=resolved)
+    floor, baseline, tolerance = _policy(payload.get("policy"), path=resolved)
     return FeatureConfig(
         path=resolved,
         coverage_floor=floor,
         baseline=baseline,
         parameters=_parameters(payload.get("parameters"), path=resolved),
+        neighbor_depth_tolerance_m=tolerance,
     )
 
 
-def _policy(block, *, path: Path) -> tuple[float, Baseline]:
+def _policy(block, *, path: Path) -> tuple[float, Baseline, float]:
     if not block:
         raise ValueError(
             f"{path} declares no `policy`; the coverage floor and the baseline are required"
         )
     _reject_unknown(block, _POLICY_KEYS, what="policy key", path=path)
 
-    missing = sorted(_POLICY_KEYS - set(block))
+    missing = sorted(_REQUIRED_POLICY_KEYS - set(block))
     if missing:
         raise ValueError(f"{path} `policy` is missing {missing}")
 
@@ -143,7 +160,29 @@ def _policy(block, *, path: Path) -> tuple[float, Baseline]:
         raise ValueError(
             f"{path} `policy.coverage_floor` is {floor}, which is not a fraction between 0 and 1"
         )
-    return floor, _baseline(block["baseline"], path=path)
+    return floor, _baseline(block["baseline"], path=path), _tolerance(block, path=path)
+
+
+def _tolerance(block, *, path: Path) -> float:
+    """The docs/04 s1 depth tolerance, or the documented default.
+
+    Negative is refused rather than clamped: a negative tolerance would make
+    every pair incomparable and report a table of nulls that looks like a record
+    of disagreement rather than of a misconfiguration. Zero is allowed and means
+    exactly what it says -- report bias and RMSE only against a reference at the
+    same depth -- which is a defensible position, not a mistake.
+    """
+    if "neighbor_depth_tolerance_m" not in block:
+        return DEFAULT_NEIGHBOR_DEPTH_TOLERANCE_M
+    value = _number(
+        block["neighbor_depth_tolerance_m"], where="policy.neighbor_depth_tolerance_m", path=path
+    )
+    if value < 0.0:
+        raise ValueError(
+            f"{path} `policy.neighbor_depth_tolerance_m` is {value}, which is negative; "
+            "0 means same-depth-only and is the strictest meaningful value"
+        )
+    return value
 
 
 def _baseline(block, *, path: Path) -> Baseline:
