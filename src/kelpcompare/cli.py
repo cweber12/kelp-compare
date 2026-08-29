@@ -34,7 +34,7 @@ from kelpcompare.features.kelp import (
     build_kelp,
 )
 from kelpcompare.features.quarterly import QUARTERLY_KEY, feature_columns
-from kelpcompare.fetchers import cache, kelpwatch, ndbc, sd_rtoms
+from kelpcompare.fetchers import cache, kelpwatch, ndbc, sd_rtoms, sio_shore_stations
 from kelpcompare.fetchers.base import NotModified, SourceUnavailable, land
 from kelpcompare.manifest import RunManifest
 from kelpcompare.normalize import to_observations
@@ -69,7 +69,11 @@ ADAPTERS = (hobo_xlsx,)
 #: docs/03 source vocabulary -> its raw landing directory. The names differ for
 #: project sensors on purpose: the source is `project`, the directory is
 #: `project_sensors/`.
-RAW_DIRECTORY = {"project": "project_sensors", kelpwatch.SOURCE: kelpwatch.SOURCE}
+RAW_DIRECTORY = {
+    "project": "project_sensors",
+    kelpwatch.SOURCE: kelpwatch.SOURCE,
+    sio_shore_stations.SOURCE: sio_shore_stations.SOURCE,
+}
 
 #: Sources that are pulled rather than dropped. A new public source is one
 #: fetcher module and one entry here (docs/02). Keyed by the docs/03 source name,
@@ -164,6 +168,11 @@ def ingest(
     so its rows are built by `kelpcompare features` from the landing plus
     `polygons.geojson` -- which also means re-running the build after a registry
     edit needs no second download (docs/02, docs/03).
+
+    Three file-drop sources now, and they differ in how a file is attributed. A
+    HOBO export carries a serial and is matched to a deployment; a Kelp Watch
+    export carries nothing at all and is claimed by filename; a Shore Stations
+    archive declares its own position and is matched on that (docs/02).
     """
     if source in FETCHERS:
         if path is not None:
@@ -190,6 +199,11 @@ def ingest(
 
     if source == kelpwatch.SOURCE:
         return _ingest_kelpwatch(path=path, data_root=data_root, dry_run=dry_run)
+
+    if source == sio_shore_stations.SOURCE:
+        return _ingest_shore_stations(
+            path=path, data_root=data_root, registry_path=registry_path, dry_run=dry_run
+        )
 
     zones = Zones.at(data_root)
     registry = load_registry(registry_path or zones.sites_json)
@@ -837,6 +851,159 @@ def _land_export(path: Path, zones: Zones, polygons: Polygons, polygon, *, dry_r
         / polygons.kelp_watch.label
         / polygon.polygon_id.replace(":", "_")
         / f"{digest}__{path.name}"
+    )
+    if dry_run or target.exists():
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, target)
+    return target
+
+
+# --------------------------------------------------------------------------
+# SIO Shore Stations archives: matched by position, pinned by archive date
+# --------------------------------------------------------------------------
+
+
+def _ingest_shore_stations(
+    *, path: Path | None, data_root: Path | None, registry_path: Path | None, dry_run: bool
+) -> None:
+    """Land every dropped archive whose station and pin the registry agrees with.
+
+    A third shape of file drop, and what makes it its own path is how a file is
+    attributed and how it is versioned. A HOBO export is matched to a deployment
+    by the serial inside it; a Kelp Watch export names nothing and is claimed by
+    filename. This one declares its own position, its own station and its own
+    archive date, so the registry is *checked against* the file rather than
+    consulted about it -- and a disagreement quarantines (docs/02).
+
+    Unlike Kelp Watch, the run does not refuse up front when nothing is pinned.
+    The pin is per site here rather than one global revision, so an unpinned site
+    is one file's problem: it is recorded as a quarantine with its reason, which
+    is more use to the operator than a run that ends before it says which file
+    it was about.
+    """
+    zones = Zones.at(data_root)
+    registry = load_registry(registry_path or zones.sites_json)
+    parameters = load_parameters(zones.parameters_json)
+    stations = find_stations(registry, sio_shore_stations.SOURCE)
+
+    source = sio_shore_stations.SOURCE
+    inputs = _discover(path or zones.raw_source(source) / INCOMING)
+    if not inputs:
+        click.echo(f"nothing to ingest for {source!r}")
+        return
+
+    run = RunManifest.start("ingest", argv=[f"--source={source}"], sources=[source])
+    for candidate in inputs:
+        _ingest_archive(
+            candidate,
+            zones=zones,
+            stations=stations,
+            parameters=parameters,
+            run=run,
+            dry_run=dry_run,
+        )
+
+    _report(run, zones, dry_run=dry_run)
+
+
+def _ingest_archive(
+    path: Path,
+    *,
+    zones: Zones,
+    stations,
+    parameters,
+    run: RunManifest,
+    dry_run: bool,
+) -> None:
+    """One archive, start to finish. Never raises (docs/02 fail-soft rule)."""
+    source = sio_shore_stations.SOURCE
+    if not sio_shore_stations.sniff(path):
+        run.add_file(
+            path,
+            "skipped",
+            reason="not a Shore Stations temperature archive (columns do not match); the "
+            "salinity file in the same download looks like this and is not ingested",
+        )
+        return
+
+    entry = run.add_file(path, "failed", fetcher=sio_shore_stations.FETCHER_NAME)
+    try:
+        header = sio_shore_stations.read_header(path)
+        entry.dataset_revision = header.archived
+
+        site, matched = sio_shore_stations.select_site(header, stations)
+        checks = (
+            (matched,) if site is None else (matched, *sio_shore_stations.validate(header, site))
+        )
+        entry.record_checks(checks)
+        if site is not None:
+            entry.site_id = site.site_id
+
+        blocking = next((c for c in checks if c.status == "fail"), None)
+        if blocking is not None:
+            entry.outcome = "quarantined"
+            entry.reason = f"{blocking.name}: {blocking.detail}"
+            entry.quarantined_to = _as_text(_quarantine(path, zones, dry_run=dry_run))
+            return
+
+        parsed = sio_shore_stations.parse(
+            path,
+            parameters,
+            site_id=site.site_id,
+            declared_depths=site.declared_depths(sio_shore_stations.PARAMETER),
+            measured_parameters=site.measured_parameters,
+            run_id=run.run_id,
+        )
+        entry.rows_in = parsed.rows_in
+        entry.rows_out = len(parsed.frame)
+        entry.qc_flags = parsed.flag_counts
+        entry.warnings.extend(parsed.warnings)
+        run.note_flags(parsed.flag_counts)
+        # Promoted to run level, where Kelp Watch's deliberately are not. None of
+        # these fires on a well-formed pinned archive: the imputation notice is
+        # the one that always fires, and it is the headline convention of the
+        # source rather than routine noise -- an operator reading a century of
+        # readings should be told two thirds of the timestamps are a convention.
+        for warning in parsed.warnings:
+            run.note_warning(f"{path.name}: {warning}")
+
+        if parsed.frame.empty:
+            entry.outcome = "failed"
+            entry.reason = (
+                f"{parsed.rows_in} data row(s) produced no observations: nothing "
+                f"{site.site_id} declares matched a series in this archive"
+            )
+            run.note_warning(f"{path.name}: {entry.reason}")
+            return
+
+        entry.landed = _as_text(_land_archive(path, zones, site, dry_run=dry_run))
+        if not dry_run:
+            written = write_observations(parsed.frame, zones, source=source, run_id=run.run_id)
+            entry.partitions = [str(p) for p in written]
+        entry.outcome = "ingested"
+
+    except Exception as error:  # noqa: BLE001 -- one bad archive must not end the run
+        entry.outcome = "failed"
+        entry.reason = f"{type(error).__name__}: {error}"
+        run.note_warning(f"{path.name}: {entry.reason}")
+
+
+def _land_archive(path: Path, zones: Zones, site: Station, *, dry_run: bool) -> Path:
+    """Copy the archive into `raw/sio_shore_stations/{archived}/`, content-addressed.
+
+    Segregated by archive date for the reason Kelp Watch landings are segregated
+    by revision: each download is a cumulative snapshot of the whole record, so
+    two of them must never be read as one series, and the directory is what makes
+    mixing them impossible rather than merely discouraged.
+
+    Content-addressed and never overwritten, like every other landing: re-dropping
+    identical bytes is a no-op, and two different files of one archive cannot
+    collide on a name.
+    """
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    target = (
+        zones.raw_source(sio_shore_stations.SOURCE) / site.archive.label / f"{digest}__{path.name}"
     )
     if dry_run or target.exists():
         return target

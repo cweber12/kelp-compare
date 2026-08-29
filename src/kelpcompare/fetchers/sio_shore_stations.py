@@ -82,10 +82,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from kelpcompare.adapters.base import Check
 from kelpcompare.fetchers.base import ParsedPayload
 from kelpcompare.normalize import convert_unit
 from kelpcompare.parameters import Parameters
 from kelpcompare.qc.flags import summarize
+from kelpcompare.registry import Station
 from kelpcompare.storage import (
     FLAG_FAIL,
     FLAG_MISSING,
@@ -219,6 +221,19 @@ POSITION_TOLERANCE_DEG = 5e-4
 #: Exact to the precision the title line prints them at; `depth_m` is part of
 #: `OBSERVATION_KEY` and is permanent, so this is not a place to be generous.
 DEPTH_TOLERANCE_M = 1e-6
+
+#: The docs/06 s5-style checks this source runs, and every one of them stops an
+#: ingest. Named here rather than in the CLI so the module that knows what they
+#: mean owns their spelling, the way `adapters.base` owns the HOBO gate's.
+SITE_MATCH = "site_match"
+ARCHIVE_PIN = "archive_pin"
+SENSOR_DEPTHS = "sensor_depths"
+
+#: In the order to report them. All three are blocking: an archive attributed to
+#: the wrong station, landed under the wrong pin, or landed at a depth nobody has
+#: reviewed is worse than one not landed at all -- and the last of the three is
+#: not correctable afterwards, since `depth_m` is part of `OBSERVATION_KEY`.
+QUARANTINE_CHECKS = (SITE_MATCH, ARCHIVE_PIN, SENSOR_DEPTHS)
 
 _ARCHIVED = re.compile(r"archived\s+(\d{4}-\d{2}-\d{2})")
 _AWARD = re.compile(r"Award#\s*([A-Za-z0-9]+)")
@@ -608,6 +623,135 @@ def position_matches(header: ArchiveHeader, lat: float | None, lon: float | None
 # --------------------------------------------------------------------------
 
 
+def select_site(header: ArchiveHeader, stations) -> tuple[Station | None, Check]:
+    """Which registered station this archive is, decided by its own position.
+
+    The docs/06 s5 check-4 gate for this source: no site record, no ingest
+    (hard rule 5). It is not the HOBO gate, because there is no serial and no
+    deployment to match -- and it is not the Kelp Watch gate either, which has
+    to claim an export by filename because a Kelp Watch export says nothing
+    about the geometry it describes. This file names its own position, so the
+    match is evidence rather than a naming convention.
+
+    Ambiguity quarantines rather than picking one, for the reason
+    `cli._select_deployment` does: two stations at one position is a registry
+    error, and attaching a century of readings to whichever came first would
+    hide it.
+    """
+    candidates = [site for site in stations if position_matches(header, site.lat, site.lon)]
+    where = f"{header.lat:.6f}, {header.lon:.6f}"
+
+    if not candidates:
+        placed = ", ".join(
+            f"{site.site_id} at {site.lat}, {site.lon}"
+            for site in stations
+            if site.lat is not None and site.lon is not None
+        )
+        return None, Check(
+            SITE_MATCH,
+            "fail",
+            f"this archive declares position {where} and no {SOURCE} site in the registry "
+            f"is there; registered: {placed or 'none with a position'} -- quarantine",
+        )
+    if len(candidates) > 1:
+        listed = ", ".join(site.site_id for site in candidates)
+        return None, Check(
+            SITE_MATCH,
+            "fail",
+            f"position {where} matches {len(candidates)} site records ({listed}); two "
+            "stations cannot be in one place, so this is a registry error -- quarantine",
+        )
+
+    site = candidates[0]
+    return site, Check(
+        SITE_MATCH,
+        "pass",
+        f"position {where} matches {site.site_id} ({site.name or site.station_code})",
+    )
+
+
+def validate(header: ArchiveHeader, site: Station) -> tuple[Check, ...]:
+    """The archive pin and the declared depths, as verdicts for the manifest.
+
+    Returns verdicts and does nothing about them. Moving a file into
+    `data/quarantine/` is the ingest CLI's job (docs/03): one place decides what
+    happens to a file, the way `adapters.base.registry_gate` is arranged.
+    """
+    return (_archive_check(header, site), _depth_check(header, site))
+
+
+def _archive_check(header: ArchiveHeader, site: Station) -> Check:
+    """The pin, checked against the archive date the file declares itself.
+
+    An unpinned site cannot accept a file at all. Each download is a cumulative
+    snapshot of the whole record, so a landing made without a pin could never be
+    traced to a citable dataset afterwards and "whatever was on the site that
+    day" would have become the source of record -- the reason
+    `cli._ingest_kelpwatch` refuses without a revision, reached the same way.
+    """
+    if site.archive is None:
+        return Check(
+            ARCHIVE_PIN,
+            "fail",
+            f"{site.site_id} pins no archive.archived; each download is a cumulative "
+            "snapshot of the whole record, so a landing without a pin could not be traced "
+            f"to a citable dataset. This file declares {header.archived} -- quarantine",
+        )
+    if site.archive.archived != header.archived:
+        return Check(
+            ARCHIVE_PIN,
+            "fail",
+            f"this archive declares {header.archived} and {site.site_id} pins "
+            f"{site.archive.archived}. Two snapshots of one cumulative record must not be "
+            "read as one series; bump the pin deliberately, or drop the pinned file "
+            "-- quarantine",
+        )
+    return Check(
+        ARCHIVE_PIN,
+        "pass",
+        f"archive {header.archived} is the one {site.site_id} pins"
+        + (f" (DOI {header.doi})" if header.doi else ""),
+    )
+
+
+def _depth_check(header: ArchiveHeader, site: Station) -> Check:
+    """The file's two nominal depths against the reviewed set.
+
+    A verdict here and a raise in `parse`, deliberately: this one decides the
+    file's fate and is recorded in the manifest, and that one is the guard for a
+    caller that never asked. `depth_m` is part of `OBSERVATION_KEY`, so a series
+    landed at an unreviewed depth is permanent.
+    """
+    declared = site.declared_depths(PARAMETER)
+    found = ", ".join(f"{series.name} {header.depth_for(series):g} m" for series in SERIES)
+
+    if not declared:
+        return Check(
+            SENSOR_DEPTHS,
+            "fail",
+            f"{site.site_id} declares no sensor_depths_m for {PARAMETER!r} and this archive "
+            f"reports {found}. depth_m is part of the storage key and cannot be corrected "
+            "once rows have landed, so it is reviewed before the first landing rather than "
+            "after -- quarantine",
+        )
+
+    surprises = [
+        f"{series.name} {header.depth_for(series):g} m"
+        for series in SERIES
+        if not any(abs(header.depth_for(series) - d) <= DEPTH_TOLERANCE_M for d in declared)
+    ]
+    if surprises:
+        return Check(
+            SENSOR_DEPTHS,
+            "fail",
+            f"this archive reports {', '.join(surprises)}, which {site.site_id} does not "
+            f"declare ({', '.join(f'{d:g}' for d in declared)} m). A re-sounded depth is a "
+            "new series, permanently -- review it and update the registry first "
+            "-- quarantine",
+        )
+    return Check(SENSOR_DEPTHS, "pass", f"the registry declares both depths this file has: {found}")
+
+
 def _read(path: Path) -> pd.DataFrame:
     """Every cell as text, with pandas' own NA tokens left alone.
 
@@ -854,13 +998,17 @@ def _elsewhere(flags: pd.Series, dates: pd.Series, series: Series, header: Archi
 
 
 __all__ = [
+    "ARCHIVE_PIN",
     "COLUMNS",
     "FETCHER_NAME",
     "FLAG_MEANING",
     "NOMINAL_LOCAL_TIME",
     "PARAMETER",
+    "QUARANTINE_CHECKS",
     "SAMPLE_TIME_TEST",
+    "SENSOR_DEPTHS",
     "SERIES",
+    "SITE_MATCH",
     "SOURCE",
     "SOURCE_FLAG_TEST",
     "STATUS_BY_SOURCE_FLAG",
@@ -869,5 +1017,7 @@ __all__ = [
     "parse",
     "position_matches",
     "read_header",
+    "select_site",
     "sniff",
+    "validate",
 ]
