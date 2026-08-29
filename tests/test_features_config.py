@@ -380,3 +380,21 @@ def test_a_role_does_not_change_what_gets_built(tmp_path):
 
     assert demoted.feature_set == kept.feature_set
     assert demoted.thresholds == kept.thresholds
+
+
+def test_the_committed_configuration_demotes_the_met_parameters():
+    """docs/04 s5: air temperature re-measures the water at r = 0.857, and scalar
+    wind speed averages upwelling-favorable stress against its own negation."""
+    loaded = load_feature_config(COMMITTED)
+
+    assert loaded.controls == ("air_temperature", "wind_speed")
+    assert "sea_water_temperature" in loaded.predictors
+
+
+def test_the_demoted_parameters_are_still_built():
+    """The demotion is a claim being withheld, not a row. A control keeps its
+    feature set, so `kelpcompare features` aggregates it exactly as before."""
+    loaded = load_feature_config(COMMITTED)
+
+    for name in loaded.controls:
+        assert loaded.get(name).feature_set == "statistics"
