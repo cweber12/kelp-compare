@@ -59,13 +59,24 @@ looked good, and the resulting p-values would mean nothing.
 **Nothing is pre-registered yet.** The list below is what `01-lag-screen.ipynb`
 surfaced, for the operator to choose from — being on it is not registration.
 
+**Only predictors are eligible.** docs/04 §5 makes `air_temperature` and
+`wind_speed` **controls**: screened and reported, never pre-registered. The
+reasons are mechanistic and prior to any coefficient — air temperature
+correlates with sea water temperature at r = 0.857 and so re-measures it more
+noisily, and scalar wind speed averages upwelling-favorable alongshore stress
+against downwelling-favorable Santa Ana wind, leaving it no sign to predict.
+`features.json` records the decision; `01-lag-screen.ipynb` reads it from there
+rather than restating it. Half the grid — 330 of 660 cells — is withheld on
+those grounds before anything below is ranked.
+
 Candidates from the screen at `sha256:7d2c62503276e7be`. The rule, which
 `01-lag-screen.ipynb` §6 now applies rather than leaving to be re-derived by
-hand: drop anything the input audit flagged `low_resolution`, keep what rests
-on an effective sample of at least 30 with Pearson and Spearman agreeing to
-within 0.05, and take the **three strongest by |r|**.
+hand: over the predictor cells only, drop anything the input audit flagged
+`low_resolution`, keep what rests on an effective sample of at least 30 with
+Pearson and Spearman agreeing to within 0.05, and take the **three strongest
+by |r|**.
 
-That last step is a cut, not a criterion. 233 cells clear the conditions before
+That last step is a cut, not a criterion. 160 cells clear the conditions before
 it, so what makes these three the list is that they are the top of a ranking —
 which is exactly the kind of choice this section exists to make visible.
 
@@ -73,13 +84,23 @@ which is exactly the kind of choice this section exists to make visible.
 |---|---|---|---|---|---|---|
 | `KELP:ENCINITAS` | LJAC1 sea water temp | `days_below_14c` | 4 | +0.42 | 50.6 | The cold-water/nitrate association docs/04 §2 predicts, at a one-year lag |
 | `KELP:SOLANA-BEACH` | LJAC1 sea water temp | `days_below_14c` | 4 | +0.35 | 49.8 | The same relationship in a neighbouring bed, at the same lag |
-| `KELP:IMPERIAL-BEACH` | LJAC1 wind speed | `variance` | 2 | −0.38 | 50.0 † | Not predicted by docs/04; treat with more suspicion, not less |
+| `KELP:ENCINITAS` | LJAC1 sea water temp | `min` | 4 | −0.31 | 36.9 | The coldest water of the quarter, in the same bed and at the same lag as the row above it |
 
 What to weigh before registering any of them:
 
-- **The two `days_below_14c` cells are the same station against two adjacent
-  beds**, so they are not independent evidence. They agreeing is mild
-  reassurance that the signal is not one bed's noise; it is not two findings.
+- **All three cells are one station against one parameter**, which is what the
+  control demotion costs. The two `days_below_14c` cells are two adjacent beds,
+  so they are not independent evidence — them agreeing is mild reassurance that
+  the signal is not one bed's noise, not two findings. The third is a third
+  reading of the same cold-water association, at the same bed and lag as the
+  first, so this list is nearer one hypothesis than three.
+- **The controls rank alongside them, and that is the warning they exist for.**
+  On the cells the candidate rule keeps, the strongest control coefficient is
+  |r| = 0.38 against the strongest predictor's 0.42, and the medians are
+  indistinguishable — 0.07 either way. A screen in which a variable withheld on
+  mechanistic grounds performs about as well as the one under test may be
+  recovering shared seasonality rather than mechanism. That does not revive the
+  controls; it discounts the predictors.
 - **Every candidate here is against `NDBC:LJAC1`**, the public station. The
   project sensor has three weeks of record, so docs/04 §4.5 — whether the
   project's own sensors beat the public station — cannot be attempted yet.
@@ -89,49 +110,52 @@ What to weigh before registering any of them:
   and the kelp anomaly is still autocorrelated at 0.26 to 0.35 four quarters
   out across the six beds. Under a higher-order Bartlett correction, truncated
   at *K* = ⌊*n*/4⌋ with the (1 − *k*/*n*) taper, the three rows above fall to
-  **41.7, 41.1 and 36.7**. Register them on the understanding that their
-  evidence is nearer 37–42 quarters than 50.
+  **41.7, 36.7 and 28.9**. Register them on the understanding that their
+  evidence is nearer 29–42 quarters than 50.
 - **Read that as a range, not as three numbers.** `01-lag-screen.ipynb` §6
   computes the figures above rather than restating them, and prints them across
   other truncations too, because they move with *K*: Solana Beach spans 48.7 at
-  *K* = 4 down to 36.7 at *K* = 17, and Imperial Beach is not even monotonic in
-  *K*. That is a noise-dominated tail, not a precise effective sample size. The
-  correction is a note on these cells and deliberately not a column across the
-  grid — over all 660 cells it exceeds `n` in 152 of them and is undefined in 6
+  *K* = 4 down to 36.7 at *K* = 17. That is a noise-dominated tail, not a
+  precise effective sample size. The correction is a note on these cells and
+  deliberately not a column across the grid — over all 660 screened cells it
+  exceeds `n` in 152 of them and is undefined in 6
   ([#35](https://github.com/cweber12/kelp-compare/issues/35)).
-- **† The wind speed candidate was never discounted at all.** Its lag-1 product
-  came out at or below zero, so `effective_n` handed back the raw quarter
-  count: that 50.0 is 50, not a corrected 50, and it sits in the table beside a
-  genuinely discounted 50.6 with only the marker separating them. It is the row
-  where "ceiling, not an estimate" is doing the most work. The screen's
-  `discounted` column carries this, for these three and for the 130 of 660
-  cells in the same position.
-- **230 cells clear every condition above and were cut by the top-three rule**,
+- **All three were genuinely discounted**, which the previous list's third row
+  was not: it carried a raw quarter count under an adjusted column's name. That
+  row was a control and is gone, but the trap it illustrated is not. `n_eff ==
+  n` can mean the correction ran and found nothing to take, or that it never
+  ran, and nothing in the number separates them. The screen's `discounted`
+  column does, for 130 of the 660 screened cells.
+- **157 cells clear every condition above and were cut by the top-three rule**,
   which is the size of the choice being made here. The two strongest of them,
-  named so the cut is visible rather than silent: `KELP:ENCINITAS` sea water
-  temp `min` at lag 4 (r −0.31) and `KELP:IMPERIAL-BEACH` wind speed `mean` at
-  lag 2 (r −0.34); and — dropped one step earlier, for `low_resolution` rather
-  than by the cut — `KELP:SOLANA-BEACH` wind speed `p05` at lag 3 (r +0.35).
-  The first is the cold-water association the two listed `days_below_14c` cells
-  already carry and the second is the same station, lag and quarter-set as the
-  wind speed row above it, so on this reading neither adds an independent
-  candidate. That is a judgement, and it is the operator's to overturn.
+  named so the cut is visible rather than silent: `KELP:SOLANA-BEACH` sea water
+  temp `min` at lag 4 (r −0.30) and `KELP:SAN-DIEGO` sea water temp `min` at
+  lag 4 (r −0.28). Both are the quarterly minimum at lag 4 in a third and a
+  fourth bed — the same association this list already carries three times over —
+  so on this reading neither adds an independent candidate. That is a
+  judgement, and it is the operator's to overturn.
 
-Excluded from consideration on inspection rather than on their coefficients:
+Two exclusions predate the control demotion and stay on the record, because
+both are now over-determined and would otherwise look as though the role had
+done all the work:
 
 - Anything on `wind_speed` `min`, whose quarterly minimum takes two values at
   LJAC1 (the anemometer's resolution floor). It produced the largest
   coefficients in the grid, |r| up to 0.74, and they are artefacts. The screen
-  now excludes it and says why.
+  drops it in §2, one step before any role is consulted, and says why.
 - `air_temperature` `p95` at Imperial Beach, lag 2: r = +0.38 but ρ = +0.04.
   A rank gap that size means a handful of points, which at n ≈ 50 is the
-  common failure rather than an unusual one.
+  common failure rather than an unusual one. It is still the strongest air
+  temperature cell in the screen, and now sits among the controls.
 
 ## Known gaps that shape what can be asked
 
-- **`air_temperature` and `wind_speed` have no Q2 anomaly at any polygon** —
-  their Q2 baseline holds 9 years against the 10-year minimum
-  ([#30](https://github.com/cweber12/kelp-compare/issues/30)).
+- **One predictor family, on one station.** `air_temperature` and `wind_speed`
+  are controls (docs/04 §5), so every registrable cell is `NDBC:LJAC1` sea water
+  temperature and the screen can no longer disagree with itself across families.
+  Their missing Q2 anomaly — a 9-year Q2 baseline against a 10-year minimum,
+  [#30](https://github.com/cweber12/kelp-compare/issues/30) — now bears on how
+  to read a control rather than on what may be registered.
 - **Every environmental anomaly is against `NDBC:LJAC1` alone.** No other
   public-source fetcher exists (docs/02), so there is no second reference.
 - **docs/04 §4.5, the project's key question, cannot run.** It needs polygon

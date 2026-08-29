@@ -21,6 +21,8 @@ from pathlib import Path
 import pytest
 
 from kelpcompare.features.config import (
+    ANALYSIS_ROLES,
+    DEFAULT_ANALYSIS_ROLE,
     DEFAULT_NEIGHBOR_DEPTH_TOLERANCE_M,
     load_feature_config,
 )
@@ -296,3 +298,103 @@ def test_the_committed_configuration_ships_the_default_tolerance():
     loaded = load_feature_config(COMMITTED)
 
     assert loaded.neighbor_depth_tolerance_m == DEFAULT_NEIGHBOR_DEPTH_TOLERANCE_M
+
+
+# --------------------------------------------------------------------------
+# The analysis role (docs/04 s5)
+# --------------------------------------------------------------------------
+
+
+def test_a_parameter_with_no_role_is_a_predictor(tmp_path):
+    """Opt-out, not opt-in: a parameter nobody has argued about yet is one the
+    screen surfaces, which fails louder than one silently withheld."""
+    loaded = config(tmp_path)
+
+    assert loaded.get("sea_water_temperature").role == DEFAULT_ANALYSIS_ROLE
+    assert loaded.get("sea_water_temperature").is_control is False
+
+
+def test_a_declared_control_is_read_as_one(tmp_path):
+    loaded = config(
+        tmp_path,
+        parameters={"air_temperature": {"feature_set": "statistics", "role": "control"}},
+    )
+
+    assert loaded.get("air_temperature").is_control is True
+
+
+def test_a_misspelled_role_is_refused_rather_than_defaulted(tmp_path):
+    """Silent in both directions and visible in no output column: `controls`
+    would leave a demoted parameter in the pre-registration pool."""
+    message = refuses(
+        tmp_path,
+        parameters={"air_temperature": {"feature_set": "statistics", "role": "controls"}},
+    )
+
+    assert "controls" in message
+    assert all(role in message for role in ANALYSIS_ROLES)
+
+
+def test_the_pool_and_the_controls_partition_the_parameters(tmp_path):
+    """Every declared parameter is in exactly one of them, so a reader cannot
+    lose one to a role that was never considered."""
+    loaded = config(
+        tmp_path,
+        parameters={
+            "sea_water_temperature": TEMPERATURE,
+            "air_temperature": {"feature_set": "statistics", "role": "control"},
+            "wind_speed": {"feature_set": "statistics", "role": "control"},
+        },
+    )
+
+    assert loaded.predictors == ("sea_water_temperature",)
+    assert loaded.controls == ("air_temperature", "wind_speed")
+    assert sorted([*loaded.predictors, *loaded.controls]) == list(loaded.names)
+
+
+def test_roles_reports_every_parameter_including_the_defaulted_ones(tmp_path):
+    """A screened row is labelled from whatever the table carries, so the
+    mapping has to answer for a parameter that declared nothing."""
+    loaded = config(
+        tmp_path,
+        parameters={
+            "sea_water_temperature": TEMPERATURE,
+            "wind_speed": {"feature_set": "statistics", "role": "control"},
+        },
+    )
+
+    assert loaded.roles() == {
+        "sea_water_temperature": "predictor",
+        "wind_speed": "control",
+    }
+
+
+def test_a_role_does_not_change_what_gets_built(tmp_path):
+    """A control is aggregated exactly as a predictor is; the role governs the
+    analysis, never the pipeline, so demoting one cannot delete a row."""
+    demoted = config(
+        tmp_path,
+        parameters={"sea_water_temperature": {**TEMPERATURE, "role": "control"}},
+    ).get("sea_water_temperature")
+    kept = config(tmp_path).get("sea_water_temperature")
+
+    assert demoted.feature_set == kept.feature_set
+    assert demoted.thresholds == kept.thresholds
+
+
+def test_the_committed_configuration_demotes_the_met_parameters():
+    """docs/04 s5: air temperature re-measures the water at r = 0.857, and scalar
+    wind speed averages upwelling-favorable stress against its own negation."""
+    loaded = load_feature_config(COMMITTED)
+
+    assert loaded.controls == ("air_temperature", "wind_speed")
+    assert "sea_water_temperature" in loaded.predictors
+
+
+def test_the_demoted_parameters_are_still_built():
+    """The demotion is a claim being withheld, not a row. A control keeps its
+    feature set, so `kelpcompare features` aggregates it exactly as before."""
+    loaded = load_feature_config(COMMITTED)
+
+    for name in loaded.controls:
+        assert loaded.get(name).feature_set == "statistics"
