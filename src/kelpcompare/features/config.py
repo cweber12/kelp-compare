@@ -19,6 +19,15 @@ itself.
 Threshold values are load-bearing beyond their arithmetic: the builder derives
 its column names from them (docs/03), so retuning a threshold renames its column
 rather than silently changing what an existing column means.
+
+One entry here answers a question the builder never asks: `role` says whether a
+parameter may be *pre-registered* (docs/04 s5), not what is computed off it. It
+lives beside `feature_set` because both are decisions the analysis makes about a
+measurement rather than properties of the measurement, which is the line ADR-006
+draws between this file and `parameters.json`. Nothing in the pipeline reads it
+-- a control is fetched, normalized, flagged, aggregated and stored exactly as a
+predictor is -- so demoting a parameter withholds it from a claim without ever
+withholding a row, which is hard rule 4's shape applied one layer up.
 """
 
 from __future__ import annotations
@@ -42,6 +51,20 @@ IMPLEMENTED_FEATURE_SETS: dict[str, tuple[str, ...]] = {
 #: (docs/02). Listed so the refusal can say "not yet" rather than "no such thing".
 DEFERRED_FEATURE_SETS = ("waves", "water_level")
 
+#: What a parameter is *for* in the docs/04 s5 screen, which is a different
+#: question from what gets computed off it. A `predictor` may be pre-registered
+#: and carried into docs/04 s4.3; a `control` is screened and reported but never
+#: registered, because its coefficient is evidence about the screen rather than
+#: about kelp. Both are built, stored and flagged identically -- the role governs
+#: the analysis, never the pipeline, so demoting a parameter cannot delete a row.
+ANALYSIS_ROLES = ("predictor", "control")
+
+#: What a parameter is when it says nothing. Predictor rather than control so
+#: that the pool is opt-out: a parameter nobody has thought about yet is one the
+#: screen will surface and the operator will have to argue with, which fails
+#: louder than one silently withheld.
+DEFAULT_ANALYSIS_ROLE = "predictor"
+
 #: The gap, in metres, within which docs/04 s1 lets a neighbor validation report
 #: bias and RMSE. Provisional, and thin: set from the only two pairs measured so
 #: far -- NDBC:LJAC1 sits 4.83 m above PROJ:TIDBIT-1 and runs about 1 degC
@@ -59,7 +82,7 @@ _OPTIONAL_POLICY_KEYS = frozenset({"neighbor_depth_tolerance_m"})
 
 _POLICY_KEYS = _REQUIRED_POLICY_KEYS | _OPTIONAL_POLICY_KEYS
 _BASELINE_KEYS = frozenset({"start_year", "end_year", "min_years"})
-_PARAMETER_KEYS = frozenset({"feature_set", "thresholds"})
+_PARAMETER_KEYS = frozenset({"feature_set", "thresholds", "role"})
 
 
 @dataclass(frozen=True)
@@ -100,10 +123,16 @@ class ParameterFeatures:
     parameter: str
     feature_set: str
     thresholds: dict[str, tuple[float, ...]] = field(default_factory=dict)
+    role: str = DEFAULT_ANALYSIS_ROLE
 
     def of(self, kind: str) -> tuple[float, ...]:
         """The thresholds declared for one kind, or none. Never a default."""
         return self.thresholds.get(kind, ())
+
+    @property
+    def is_control(self) -> bool:
+        """Screened and reported, never pre-registered (docs/04 s5)."""
+        return self.role == "control"
 
 
 @dataclass(frozen=True)
@@ -125,6 +154,25 @@ class FeatureConfig:
     @property
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self.parameters))
+
+    def roles(self) -> dict[str, str]:
+        """Every declared parameter against its analysis role, defaults included.
+
+        The mapping rather than the two lists, because a reader that wants to
+        *label* a screened row needs the role of whatever the table happens to
+        carry, and a parameter absent from this file has no role to report.
+        """
+        return {name: entry.role for name, entry in self.parameters.items()}
+
+    @property
+    def controls(self) -> tuple[str, ...]:
+        """The parameters docs/04 s5 keeps out of the pre-registration pool."""
+        return tuple(sorted(name for name, e in self.parameters.items() if e.is_control))
+
+    @property
+    def predictors(self) -> tuple[str, ...]:
+        """The pool itself: everything not demoted."""
+        return tuple(sorted(name for name, e in self.parameters.items() if not e.is_control))
 
 
 def load_feature_config(path: Path | str | None = None) -> FeatureConfig:
@@ -244,7 +292,27 @@ def _parameter(entry, *, name: str, path: Path) -> ParameterFeatures:
         parameter=name,
         feature_set=feature_set,
         thresholds=_thresholds(entry.get("thresholds"), kinds, name=name, path=path),
+        role=_role(entry.get("role"), name=name, path=path),
     )
+
+
+def _role(value, *, name: str, path: Path) -> str:
+    """The docs/04 s5 analysis role, defaulted when absent and refused when wrong.
+
+    Optional for the same reason the depth tolerance is: the default is a
+    documented position rather than a guess, and requiring it would invalidate
+    every features.json written before roles existed. Refused when misspelled
+    because the failure is silent in both directions -- `"controls"` would leave
+    a demoted parameter in the pre-registration pool, and there is no output
+    column in which that is visible.
+    """
+    if value is None:
+        return DEFAULT_ANALYSIS_ROLE
+    if value not in ANALYSIS_ROLES:
+        raise ValueError(
+            f"{name!r} in {path} declares role {value!r}; known roles are {sorted(ANALYSIS_ROLES)}"
+        )
+    return value
 
 
 def _kinds(feature_set: str, *, name: str, path: Path) -> tuple[str, ...]:
