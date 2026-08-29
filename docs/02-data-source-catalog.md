@@ -571,8 +571,10 @@ loggers, whose deployments begin in July 2026, after every RTOMS record ends.
 
 ## SIO Shore Stations — La Jolla, Scripps Pier
 
-Everything below was verified against the fourteen downloaded snapshots on
-2026-08-28.
+**Implemented** — `src/kelpcompare/fetchers/sio_shore_stations.py`,
+`kelpcompare ingest --source sio_shore_stations`. Everything below was verified
+against the fourteen downloaded snapshots on 2026-08-28; excerpts of two of them
+are recorded in `tests/fixtures/sio_shore_stations/`.
 
 **The longest in-situ temperature record in the study area: one daily grab
 sample at Scripps Pier, surface and bottom, since 22 August 1916.** 40,034
@@ -736,11 +738,12 @@ Alternatives, and why not:
 - **A null timestamp.** Not available: `timestamp` is not nullable in doc 03 and
   is part of `OBSERVATION_KEY`.
 
-The cost, stated plainly: 27,561 of 76,448 stored observations — 36% — carry a
-timestamp this project assigned rather than one the observer wrote down.
-Everything the project does with these rows is quarterly, and a quarter is 90
-days, so the assignment changes no feature. It would matter to any day-matched
-or hour-matched comparison, which is why the imputed rows are identifiable.
+The cost, stated plainly: **27,561 of 40,034 days carry no time**, which is
+51,502 of the 76,448 stored observations — 67% — with a timestamp this project
+assigned rather than one the observer wrote down. Everything the project does
+with these rows is quarterly, and a quarter is 90 days, so the assignment
+changes no feature. It would matter to any day-matched or hour-matched
+comparison, which is why the imputed rows are identifiable.
 
 **How to tell an imputed timestamp from a measured one.** A row whose `qc_tests`
 records a `sample_time` verdict had a time in the file; a row with no
@@ -812,9 +815,10 @@ time. Use `--qc-max-flag 3` to get them back.
 
 - **39,919 of 40,034 surface readings carry flag 0.** Only 115 surface and 112
   bottom readings are flagged at all, across 110 years.
-- Landed: **76,448 observations** — 40,034 surface and 36,414 bottom. By
-  `qc_flag`: 72,635 pass, 227 suspect, 3,586 missing, before the `sample_time`
-  verdicts move a further handful to suspect.
+- Landed: **76,448 observations** — 40,034 surface and 36,414 bottom, from
+  40,034 daily rows. By `qc_flag` at ingest: 72,436 pass, 426 suspect, 3,586
+  missing. 266 of the suspects are the `sample_time` verdict rather than the
+  data flag.
 - 30 of 30 years are usable in every quarter, surface and bottom, for both the
   1984–2013 and 1991–2020 baselines (≥60% of days at flag 0).
 - Against `NDBC:LJAC1` over 5,822 overlapping days, 2007–2025: **bottom ~5 m
@@ -834,6 +838,19 @@ source is put beside one from a continuous source, that has to be said. Doc 04's
 neighbor-validation caveat about depth is the same shape of problem: the number
 computes fine and means something different.
 
+**The QARTOD thresholds in `parameters.json` are the same problem, and they are
+live.** They are keyed by parameter and were tuned against a 10-minute logger,
+so on this daily series `spike` flags **3,043 of 34,158 bottom readings (8.9%)**
+as suspect or failed — the threshold of 1.5 °C sits near the 88th percentile of
+ordinary day-to-day variation at 5 m, which off this pier is upwelling rather
+than instrument error — while `rate_of_change` cannot fail at all and records a
+`pass` on 70,462 rows regardless. **Do not run `kelpcompare qc` over
+`source=sio_shore_stations`** until that is resolved: the ingest-time flags from
+the program's own vocabulary are correct and sufficient, and a qc run would
+overwrite 3,043 good readings with a suspect verdict that the default
+`qc_flag <= 2` filter then drops. Tracked, with the measured percentiles and the
+options, at https://github.com/cweber12/kelp-compare/issues/68.
+
 ### Co-located with `NDBC:LJAC1`, but not the same instrument
 
 The header position, `32°52'01.0"N 117°15'25.7"W` → 32.866944, −117.257139, is
@@ -848,7 +865,10 @@ What follows is that doc 04's neighbor validation would count them as two
 independent references for a project sensor, and spatially they are one place.
 It is not a `neighbor_ref` for either project logger anyway, for a simpler
 reason: this record ends 2026-03-31 and both deployments begin in July 2026, so
-there is nothing to compare.
+there is nothing to compare. That is a reprieve rather than an answer — the next
+quarterly archive may end the gap, and at 5 m this is the most depth-comparable
+reference the project has for `PROJ:TIDBIT-1`. Tracked at
+https://github.com/cweber12/kelp-compare/issues/69.
 
 ### Temperature only
 
