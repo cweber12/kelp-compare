@@ -20,7 +20,10 @@ from pathlib import Path
 
 import pytest
 
-from kelpcompare.features.config import load_feature_config
+from kelpcompare.features.config import (
+    DEFAULT_NEIGHBOR_DEPTH_TOLERANCE_M,
+    load_feature_config,
+)
 from kelpcompare.parameters import load_parameters
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -252,3 +255,44 @@ def test_the_committed_configuration_covers_every_controlled_parameter():
 def test_air_temperature_is_not_given_the_kelp_stress_thresholds():
     """Same unit as sea water, different feature set. Never inferred from `degC`."""
     assert load_feature_config(COMMITTED).get("air_temperature").feature_set == "statistics"
+
+
+def test_the_neighbor_depth_tolerance_defaults_when_absent(tmp_path):
+    """Optional rather than required: the default is a documented number, and
+    requiring it would invalidate every features.json written before it."""
+    loaded = config(tmp_path)
+
+    assert loaded.neighbor_depth_tolerance_m == DEFAULT_NEIGHBOR_DEPTH_TOLERANCE_M
+
+
+def test_the_neighbor_depth_tolerance_is_read_when_declared(tmp_path):
+    loaded = config(tmp_path, policy={**POLICY, "neighbor_depth_tolerance_m": 2.5})
+
+    assert loaded.neighbor_depth_tolerance_m == 2.5
+
+
+def test_a_zero_neighbor_depth_tolerance_is_allowed(tmp_path):
+    """Same-depth-only is a defensible position, not a mistake."""
+    loaded = config(tmp_path, policy={**POLICY, "neighbor_depth_tolerance_m": 0})
+
+    assert loaded.neighbor_depth_tolerance_m == 0.0
+
+
+def test_a_negative_neighbor_depth_tolerance_is_refused(tmp_path):
+    """It would make every pair incomparable, so the table would read as a record
+    of disagreement rather than of a misconfigured file."""
+    with pytest.raises(ValueError, match="neighbor_depth_tolerance_m"):
+        config(tmp_path, policy={**POLICY, "neighbor_depth_tolerance_m": -1.0})
+
+
+def test_a_missing_required_policy_key_is_still_refused(tmp_path):
+    """Splitting required from optional must not make the required ones optional."""
+    with pytest.raises(ValueError, match="missing"):
+        config(tmp_path, policy={"coverage_floor": 0.6})
+
+
+def test_the_committed_configuration_ships_the_default_tolerance():
+    """docs/04 s1 says the file is silent on it until someone disagrees."""
+    loaded = load_feature_config(COMMITTED)
+
+    assert loaded.neighbor_depth_tolerance_m == DEFAULT_NEIGHBOR_DEPTH_TOLERANCE_M
