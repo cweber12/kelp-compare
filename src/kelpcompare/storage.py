@@ -104,6 +104,7 @@ FEATURE_TABLES = (
     "quarterly_kelp",
     "climatology_kelp",
     "comparison",
+    "validation",
 )
 
 
