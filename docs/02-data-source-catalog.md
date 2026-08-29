@@ -777,6 +777,14 @@ rule the RTOMS parser applies when a provider's flag vocabulary changes.
 | `5` | Pier Chlorophyll Program **or a different location** | `source_flag:fail` | 4 fail |
 | flag is `NaN`, value is not | *(never observed)* | no verdict | 2 not evaluated |
 
+**That last column is what this test contributes, not always the stored flag.**
+`qc_flag` is the roll-up of every verdict on the row, so a `sample_time:suspect`
+beside a `source_flag:pass` stores 3 — and in the one row above where the data
+flag is absent, a `sample_time:pass` alone stores 1 rather than 2, because it is
+then the only verdict that reached a conclusion. That case has never occurred,
+and it costs nothing if it does: both 1 and 2 pass the default `qc_flag <= 2`
+filter, so the label differs and the analysis does not.
+
 **An absent reading is `missing` whatever the flag column says.** The source
 writes `0` — good data — beside 1,330 absent surface readings and 2,256 absent
 bottom ones. Doc 03 gives 9 to a row with no value and there is nothing in an
