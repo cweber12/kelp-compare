@@ -93,6 +93,68 @@ def test_a_declared_depth_is_returned_and_an_undeclared_one_is_none(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# A moored string -- one parameter at many depths, declared as a set
+# --------------------------------------------------------------------------
+
+
+def test_a_depth_set_makes_the_station_self_describing_and_supplies_no_depth(tmp_path):
+    """The whole point of the list form: the payload carries the depth, not the registry.
+
+    `depth_for` returning None here is the load-bearing half. A fetcher that fell
+    back to it would write one depth for every sensor on the string, collapsing
+    eleven series into one -- and `depth_m` is part of `OBSERVATION_KEY`, so that
+    is not a mistake a later run can correct (docs/03).
+    """
+    found = station(tmp_path, sensor_depths_m={"sea_water_temperature": [1.0, 10.0, 18.0]})
+    assert found.describes_own_depth("sea_water_temperature")
+    assert found.depth_for("sea_water_temperature") is None
+    assert found.declared_depths("sea_water_temperature") == (1.0, 10.0, 18.0)
+
+
+def test_a_scalar_depth_is_not_self_describing_and_still_answers_as_a_set(tmp_path):
+    """The two declaration forms flatten to one shape, so callers need only one path."""
+    found = station(tmp_path, sensor_depths_m={"sea_water_temperature": 3.4})
+    assert not found.describes_own_depth("sea_water_temperature")
+    assert found.declared_depths("sea_water_temperature") == (3.4,)
+
+
+def test_an_undeclared_parameter_declares_no_depths_at_all(tmp_path):
+    found = station(tmp_path, sensor_depths_m={"sea_water_temperature": 3.4})
+    assert found.declared_depths("air_temperature") == ()
+    assert not found.describes_own_depth("air_temperature")
+
+
+def test_a_depth_set_is_read_as_floats_whatever_the_editor_typed(tmp_path):
+    """Same reason `_depth` coerces: a string depth splits a series and nothing raises."""
+    found = station(tmp_path, sensor_depths_m={"sea_water_temperature": [1, "10.0", 18.5]})
+    depths = found.declared_depths("sea_water_temperature")
+    assert depths == (1.0, 10.0, 18.5)
+    assert all(isinstance(depth, float) for depth in depths)
+
+
+def test_a_depth_set_that_is_not_a_number_is_refused_by_name(tmp_path):
+    with pytest.raises(ValueError, match="sensor_depths_m.*not a number"):
+        station(tmp_path, sensor_depths_m={"sea_water_temperature": [1.0, "deep"]})
+
+
+def test_an_empty_depth_set_is_refused_rather_than_read_as_undeclared(tmp_path):
+    """It would reach the fetcher looking exactly like a source that changed every depth."""
+    with pytest.raises(ValueError, match="empty list"):
+        station(tmp_path, sensor_depths_m={"sea_water_temperature": []})
+
+
+def test_the_two_declaration_forms_coexist_on_one_station(tmp_path):
+    """A string carrying a met sensor at a fixed height is the ordinary mixed case."""
+    found = station(
+        tmp_path,
+        sensor_depths_m={"sea_water_temperature": [1.0, 10.0], "water_level": 0.0},
+    )
+    assert found.describes_own_depth("sea_water_temperature")
+    assert not found.describes_own_depth("water_level")
+    assert found.depth_for("water_level") == 0.0
+
+
+# --------------------------------------------------------------------------
 # Measured parameters -- "no instrument" versus "nobody checked"
 # --------------------------------------------------------------------------
 

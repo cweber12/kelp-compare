@@ -60,6 +60,13 @@ _UNIT_ALIASES = {
     "c": "degC",
     "degc": "degC",
     "celsius": "degC",
+    # The CF spelling, which is what a CIF-conformant ERDDAP feed declares in its
+    # units line -- CeNCOOS serves the San Diego RTOMS moorings as
+    # `degree_Celsius` (docs/02). Folded here rather than special-cased in that
+    # fetcher, so the next CF source gets it for free and the file keeps saying
+    # what it says.
+    "degreecelsius": "degC",
+    "degreescelsius": "degC",
     # NDBC spells these in its units line as `sec` and `m/s`, while
     # `parameters.json` stores the CF forms `s` and `m s-1`. Both sides fold to
     # the same token here rather than either side being rewritten to match the

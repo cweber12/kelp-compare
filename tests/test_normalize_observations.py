@@ -161,6 +161,18 @@ def test_celsius_passes_through_unchanged(spelling):
     assert convert_unit(pd.Series([14.0]), spelling, "degC").tolist() == [14.0]
 
 
+@pytest.mark.parametrize("spelling", ["degree_Celsius", "degrees Celsius"])
+def test_the_cf_celsius_spellings_convert(spelling):
+    """What a CF-conformant feed declares in its units line.
+
+    CeNCOOS serves the San Diego RTOMS moorings as `degree_Celsius` and the
+    City's own CSV export writes `degrees Celsius` (docs/02). Folded here rather
+    than in the fetcher, so the next CF source gets it without a second special
+    case and the file keeps saying what it says.
+    """
+    assert convert_unit(pd.Series([14.0]), spelling, "degC").tolist() == [14.0]
+
+
 def test_an_unknown_unit_refuses_rather_than_guesses():
     """A Fahrenheit value stored as Celsius survives into a publication."""
     with pytest.raises(ValueError, match="cannot convert"):

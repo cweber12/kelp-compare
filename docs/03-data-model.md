@@ -252,7 +252,7 @@ One record per station or deployment location.
 | `deployments[]` | For project sensors: instrument model, serial, depth_m, start/end, calibration dates, clock-sync events |
 | `neighbor_refs[]` | Ordered public stations used for validation of this site |
 | `erddap_dataset_id` / `station_code` | Pinned source identifiers |
-| `sensor_depths_m` | For public stations: `{parameter: depth}`, positive down. What a fetcher writes into `depth_m` |
+| `sensor_depths_m` | For public stations: `{parameter: depth}`, positive down. A number is what the fetcher writes into `depth_m`; a **list** means the payload carries the depth and these are the ones seen so far |
 | `measured_parameters` | For public stations: the controlled parameters this station carries an instrument for. A fetcher stores only these |
 | `same_platform_as[]` | Other `site_id`s that are the same physical instrument package under another provider's identifier |
 
@@ -276,6 +276,46 @@ is what the fetcher writes into each row's `depth_m`. A parameter absent from
 that map gets a null depth — correct for a met parameter, and equally correct
 for a water parameter whose depth the provider has not published. Neither is
 guessed.
+
+### A source may be self-describing on depth
+
+The paragraph above assumes one depth per parameter, which a shore station
+satisfies and a **moored string does not**. A mooring measures one parameter at
+many depths at once — City of San Diego RTOMS carries `sea_water_temperature`
+at eleven depths off Point Loma — so there is no single value for
+`sensor_depths_m` to hold and no way for the registry to supply the depth at
+all. The depth is on the payload, per row.
+
+So `sensor_depths_m` takes two forms, and the form *is* the distinction:
+
+| Declared as | Meaning | `depth_for` | `declared_depths` |
+|---|---|---|---|
+| a number, `3.4` | the registry supplies the depth | `3.4` | `(3.4,)` |
+| a list, `[1.0, 10.0]` | the payload supplies it; these are the depths seen | `None` | `(1.0, 10.0)` |
+| absent | undeclared | `None` | `()` |
+
+`depth_for` returning `None` for the list form is load-bearing rather than
+incidental. A fetcher that fell back to it would write one depth for every
+sensor on the string, and because `depth_m` is part of the observation key that
+collapses eleven series into one — silently, and not fixably by a later run
+(see "Partition files and idempotence" above). `describes_own_depth` is how a
+fetcher asks which world it is in, and it must read the depth from the payload
+when the answer is yes.
+
+What the registry still owes the reader in the list form is **which depths
+anyone has looked at**. That is what the list is: not a value the fetcher
+consumes, but a declaration a fetcher checks its payload against, so a mooring
+that comes back from a refit with a sensor at a new depth is reported rather
+than landed as a twelfth series nobody has seen. It is the depth-side
+counterpart of `measured_parameters`, and an absent list means undeclared for
+the same reason — the fetcher stores what arrives and the run warns.
+
+A nominal depth that drifts between deployments is **two depths, not one**.
+RTOMS reports 9 m on one deployment and 10 m on the next for what is
+physically the same position on the string; both are declared, both land, and
+the record for that position is split at the deployment boundary. Rounding them
+together would write a depth the mooring never reported into a field the schema
+treats as ground truth, permanently — see doc 02, "City of San Diego RTOMS".
 
 `measured_parameters` is a separate field for that exact reason: absence from
 `sensor_depths_m` means "no depth published", never "no sensor", so the two

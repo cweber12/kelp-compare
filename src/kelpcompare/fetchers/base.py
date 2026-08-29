@@ -33,11 +33,47 @@ something that retries.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pandas as pd
+
 from kelpcompare.storage import Zones
+
+
+@dataclass(frozen=True)
+class ParsedPayload:
+    """Observation rows plus what the run manifest should hear about them.
+
+    Shared rather than per-source because it is the second half of the fetcher
+    contract this module states: `fetch` returns a `Payload` and `parse` returns
+    this. A source that invented its own would still have to satisfy the ingest
+    CLI's expectations of it, so the type belongs where the contract is.
+
+    `layout` is whatever the source calls the shape it just parsed -- NDBC's
+    `realtime` or `archive`, an ERDDAP dataset ID. It reaches the manifest as a
+    label and nothing branches on it.
+    """
+
+    frame: pd.DataFrame
+    station: str
+    layout: str
+    rows_in: int
+    warnings: tuple[str, ...] = ()
+    unmapped_columns: tuple[str, ...] = ()
+    undeclared_parameters: tuple[str, ...] = ()
+    missing_counts: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def flag_counts(self) -> dict[str, int]:
+        """The docs/03 flag histogram, shaped as `NormalizedBatch` reports it.
+
+        Same shape on purpose: the manifest should not be able to tell whether a
+        run's rows arrived through an adapter or a fetcher.
+        """
+        counts = self.frame["qc_flag"].value_counts().to_dict()
+        return {str(flag): int(n) for flag, n in sorted(counts.items())}
 
 
 class NotModified(Exception):
