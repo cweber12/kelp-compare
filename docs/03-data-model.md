@@ -15,6 +15,8 @@ data/
   raw/                      # immutable; exactly what the source sent
     kelpwatch/              # incoming/ then ver{n}/{polygon_id}/{digest}__{name}
     ndbc/  coops/  sccoos/  cdip/  gis/  project_sensors/
+    sd_rtoms/               # source={name} for every pulled source
+    sio_shore_stations/     # incoming/ then {archived}/{digest}__{name}
     _manifests/             # one JSON manifest per ingest run
   observations/             # partitioned: source={name}/year={yyyy}/part-{run_id}.parquet
   features/
@@ -147,7 +149,7 @@ becomes new rows, not a schema migration.
 | `depth_m` | DOUBLE | Positive down; null for met parameters |
 | `qc_flag` | TINYINT | QARTOD roll-up: 1 pass, 2 not eval, 3 suspect, 4 fail, 9 missing |
 | `qc_tests` | VARCHAR | Compact per-test results for audit, `name:status` joined by `;` |
-| `source` | VARCHAR | `kelpwatch, ndbc, coops, sccoos, cdip, project, oisst, ...` |
+| `source` | VARCHAR | `kelpwatch, ndbc, coops, sccoos, cdip, project, sd_rtoms, sio_shore_stations, oisst, ...` |
 | `fetch_run_id` | VARCHAR | FK to run manifest |
 
 Partitioned by `source` and `year(timestamp)`. Rule: rows are never
@@ -252,6 +254,7 @@ One record per station or deployment location.
 | `deployments[]` | For project sensors: instrument model, serial, depth_m, start/end, calibration dates, clock-sync events |
 | `neighbor_refs[]` | Ordered public stations used for validation of this site |
 | `erddap_dataset_id` / `station_code` | Pinned source identifiers |
+| `archive` | Hand-downloaded stations only: which snapshot the landings came from, and how to cite it. See below |
 | `sensor_depths_m` | For public stations: `{parameter: depth}`, positive down. A number is what the fetcher writes into `depth_m`; a **list** means the payload carries the depth and these are the ones seen so far |
 | `measured_parameters` | For public stations: the controlled parameters this station carries an instrument for. A fetcher stores only these |
 | `same_platform_as[]` | Other `site_id`s that are the same physical instrument package under another provider's identifier |
@@ -276,6 +279,43 @@ is what the fetcher writes into each row's `depth_m`. A parameter absent from
 that map gets a null depth — correct for a met parameter, and equally correct
 for a water parameter whose depth the provider has not published. Neither is
 guessed.
+
+### A hand-downloaded station pins the archive it was downloaded from
+
+`station_code` is enough for a station a fetcher can ask for: the identifier is
+the version, because the provider serves whatever is current. A station that can
+only be **downloaded by hand** has no such guarantee — what arrives is one
+cumulative snapshot of the whole record, and the next one may revise it. So the
+site record pins which snapshot the landings came from, in an `archive` block:
+
+```json
+"archive": {
+  "archived": "2026-06-30",
+  "source_file": "LaJolla_TEMP_1916-202603.csv",
+  "doi": "10.6075/J06T0K0M",
+  "citation": "Carter, Melissa L.; ... Award# C22820005."
+}
+```
+
+This is the Kelp Watch revision pin (doc 02, "The revision is pinned in the
+registry") applied to a site rather than to a polygon, and it earns its place
+for the same reason: **an ingest refuses to run without one**, because a landing
+made against "whatever was on the site that day" can never be traced to a
+citable dataset afterwards. `archived` is the landing directory, so
+`raw/{source}/{archived}/` keeps two archives from interleaving the way
+`raw/kelpwatch/ver{n}/` does.
+
+Two differences from Kelp Watch, both in this source's favour. The file
+**declares its own archive date** in its header, so the pin is checked at ingest
+and a file from another snapshot is quarantined rather than silently landed
+under the wrong pin. And `citation` is carried here because the funding award in
+the citation text changes between snapshots, which makes the citation a property
+of the pinned archive rather than of the program.
+
+`source_file` is the name the archive arrives under. Unlike a Kelp Watch export
+— which says nothing at all about which geometry it describes — this file names
+its own station and position in its header, so the filename is recorded as
+provenance rather than used to decide what the file is.
 
 ### A source may be self-describing on depth
 
