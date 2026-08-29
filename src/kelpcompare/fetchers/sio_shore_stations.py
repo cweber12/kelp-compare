@@ -565,6 +565,27 @@ def _check_legend(header: ArchiveHeader) -> None:
         )
 
 
+def _undeclared_depths(header: ArchiveHeader, declared: tuple[float, ...]) -> list[str]:
+    """Which of the file's series sit at a depth the registry has not reviewed.
+
+    One comparison for two callers that do different things with the answer:
+    `validate` turns it into a quarantine verdict for the manifest, and
+    `_check_depths` raises for a caller that never asked for one. Sharing the
+    predicate is what keeps them from drifting into disagreeing about which
+    depths are acceptable -- which would show up as a file that passes the gate
+    and then fails in the parser.
+    """
+    return [
+        f"{series.name} {header.depth_for(series):g} m"
+        for series in SERIES
+        if not any(abs(header.depth_for(series) - d) <= DEPTH_TOLERANCE_M for d in declared)
+    ]
+
+
+def _listed(depths: tuple[float, ...]) -> str:
+    return ", ".join(f"{depth:g}" for depth in depths) + " m"
+
+
 def _check_depths(header: ArchiveHeader, declared: tuple[float, ...]) -> list[str]:
     """The file's two nominal depths against the ones the registry has reviewed.
 
@@ -584,17 +605,13 @@ def _check_depths(header: ArchiveHeader, declared: tuple[float, ...]) -> list[st
             )
         ]
 
-    surprises = [
-        f"{series.name} {header.depth_for(series):g} m"
-        for series in SERIES
-        if not any(abs(header.depth_for(series) - d) <= DEPTH_TOLERANCE_M for d in declared)
-    ]
+    surprises = _undeclared_depths(header, declared)
     if surprises:
         raise ValueError(
             f"{header.path}: this archive reports {', '.join(surprises)}, which "
-            f"sensor_depths_m does not declare ({', '.join(f'{d:g}' for d in declared)} m). "
-            "depth_m is part of the storage key and cannot be corrected once rows have "
-            "landed, so review the change and update the registry first"
+            f"sensor_depths_m does not declare ({_listed(declared)}). depth_m is part of the "
+            "storage key and cannot be corrected once rows have landed, so review the change "
+            "and update the registry first"
         )
     return []
 
@@ -735,19 +752,14 @@ def _depth_check(header: ArchiveHeader, site: Station) -> Check:
             "after -- quarantine",
         )
 
-    surprises = [
-        f"{series.name} {header.depth_for(series):g} m"
-        for series in SERIES
-        if not any(abs(header.depth_for(series) - d) <= DEPTH_TOLERANCE_M for d in declared)
-    ]
+    surprises = _undeclared_depths(header, declared)
     if surprises:
         return Check(
             SENSOR_DEPTHS,
             "fail",
             f"this archive reports {', '.join(surprises)}, which {site.site_id} does not "
-            f"declare ({', '.join(f'{d:g}' for d in declared)} m). A re-sounded depth is a "
-            "new series, permanently -- review it and update the registry first "
-            "-- quarantine",
+            f"declare ({_listed(declared)}). A re-sounded depth is a new series, permanently "
+            "-- review it and update the registry first -- quarantine",
         )
     return Check(SENSOR_DEPTHS, "pass", f"the registry declares both depths this file has: {found}")
 
