@@ -35,6 +35,9 @@ doc in the same PR. Docs and code must not drift.
 - `data/` — gitignored except `data/registry/`; zones per docs/03
 - `notebooks/` — analyses of record; must run top-to-bottom from `comparison.parquet`
 - `dashboard/` — Streamlit; reads Layer-2 Parquet only, computes no statistics of record
+- `scripts/` — operator tooling, never pipeline: `run-notebook.py` re-executes an
+  analysis of record without the encoding and line-ending damage `jupyter execute`
+  does silently on Windows
 - `tests/fixtures/` — includes the two reference HOBO files (original + hand-edited)
 
 ## Commands
@@ -43,6 +46,8 @@ doc in the same PR. Docs and code must not drift.
 - Tests: `pytest` — run before reporting any task complete
 - Lint/format: `ruff check . && ruff format .`
 - Pipeline: `kelpcompare ingest --source <name>`, `kelpcompare rebuild`
+- Notebooks: `python scripts/run-notebook.py` — never `jupyter execute` directly
+  (notebooks/README.md, "Re-running one")
 
 ## Hard rules (also enforced by tests/hooks where possible)
 
