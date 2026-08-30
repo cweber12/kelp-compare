@@ -40,7 +40,32 @@ yet; when something is, seed it in the first cell.
 **These do not run in CI.** They depend on `data/`, which is gitignored — the
 data zones are local by design (docs/01 §2). Re-run them by hand after
 `kelpcompare features`, and commit the executed notebook so the outputs are part
-of the record.
+of the record. How to do that safely is the next section, and it is not
+optional reading: the obvious command corrupts the file without saying so.
+
+## Re-running one
+
+    python scripts/run-notebook.py                       # every notebook here
+    python scripts/run-notebook.py notebooks/01-lag-screen.ipynb
+
+**Use the script rather than `jupyter execute` directly.** `nbclient` opens the
+notebook with the platform's default encoding instead of UTF-8, so on Windows
+every em dash and section sign in the markdown comes back as mojibake, the run
+succeeds, and `--inplace` writes the damage back with **exit code 0**. The
+script sets UTF-8 mode for the child process that actually does the reading,
+normalises the line endings afterwards, and then checks the invariant that
+catches the whole class of failure: executing a notebook rewrites outputs and
+must never change a cell's *source*. If a source changed, it refuses and tells
+you to restore the file.
+
+**Or run it in the editor**, which has neither problem. In VS Code a `.ipynb`
+opened as text is JSON and has no kernel picker — use *Open in Notebook
+Editor*, select the `.venv` interpreter (nothing else has `kelpcompare`
+installed), Run All, and save. The outputs only reach the file when you save.
+
+Either way, check afterwards that the digest the notebook prints is the digest
+of the `comparison.parquet` you meant to run against. A notebook whose gate
+cell reports an older digest did not pick up the rebuilt table.
 
 ## Index
 
