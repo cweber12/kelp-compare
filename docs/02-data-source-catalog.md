@@ -1027,13 +1027,58 @@ maximum event duration per quarter.
 
 ## CDFW / marineBIOS
 
-GIS context rather than time series: MPA boundaries, administrative kelp
-bed designations, and CDFW's historical aerial/multispectral kelp canopy
-surveys (irregular years). Landed once as shapefiles/GeoJSON into
-`raw/gis/`, loaded with geopandas. Two uses: spatial joins (which MPA/kelp
-bed contains each polygon and sensor) and an independent cross-check of
-Kelp Watch canopy in overlapping years — agreement there strengthens any
-claim built on the Landsat product.
+GIS context rather than time series: substrate, kelp persistence, MPA
+boundaries, administrative kelp bed designations, and CDFW's historical
+aerial/multispectral kelp canopy surveys (irregular years). Landed once as
+shapefiles/GeoJSON into `raw/gis/`, loaded with geopandas. Two uses: spatial
+joins (which MPA/kelp bed contains each polygon and sensor) and an independent
+cross-check of Kelp Watch canopy in overlapping years — agreement there
+strengthens any claim built on the Landsat product.
+
+**Nothing here is built.** `raw/gis/` appears in the docs/03 layout and is
+empty; no fetcher reads BIOS, and no code in the package performs a spatial
+join against anything but `polygons.geojson`. The layers below are recorded so
+that which ones get adopted is a reviewable decision rather than whichever a
+browser session happened to have switched on.
+
+### The layers, and what each would settle
+
+| Layer | What it would settle |
+|---|---|
+| Predicted Nearshore Benthic Substrates `[ds3091]` | Which water can hold kelp at all. docs/04 §4.5 fits kelp against polygons at increasing distance from a sensor, and rings drawn without substrate will include sand — which holds no canopy for reasons that have nothing to do with distance, and which therefore reads as decay. |
+| Kelp Persistence `[ds3151]` | Whether the six reconstructed outlines enclose real kelp habitat, judged from something that is not Kelp Watch. |
+| MPA boundaries | A step change in January 2012, inside the 2007–2019 climatology baseline. Protection status alters urchin and predator dynamics, so it is a confounder no temperature feature can absorb. |
+| Administrative kelp beds and harvest status | Point Loma was commercially harvested for decades. Harvest is direct canopy removal and would read as environmental decline in an anomaly series — on `KELP:SAN-DIEGO`, the largest polygon in the registry. |
+
+**The persistence layer corroborates the outlines; it must never redraw them.**
+The `_verified` claims in `polygons.geojson` are circular by construction —
+outlines derived from Kelp Watch cells, checked against the Kelp Watch aggregate
+endpoint — so an independent layer is worth having. But an outline's one
+binding property is that it reproduces its landed export line for line, and a
+shape nudged toward another publisher's idea of where the bed stops would lose
+that while still looking like an improvement.
+
+### What is deliberately not adopted
+
+Eelgrass `[ds1503]`, Shoreline Types `[ds3115]`, Saline Wetlands `[ds2864]` and
+Estuarine Biotic Habitat `[ds2793]` describe habitats a giant kelp bed is not
+in. They are named here because they sit adjacent in the BIOS habitat tree and
+will be offered again to anyone who opens it.
+
+**`EXTERNAL — West Coast Nearshore CMECS Substrate Habitat` is not a CDFW
+dataset**, and neither is the DEM Global Mosaic; BIOS surfaces both from other
+publishers. A revision pinned against BIOS for either would name the wrong
+custodian, and for San Diego the CMECS layer is redundant with `ds3091`
+besides. If bathymetry is wanted later, NOAA/NCEI is the custodian to pin.
+
+### Access is unverified, and checking it is implementation's first job
+
+BIOS publishes through ArcGIS REST services, which return GeoJSON for a bbox
+query — so the existing fetcher contract and `geopandas` cover it with no new
+dependency (hard rule 8). No endpoint is recorded here because none has been
+called. Unlike the CNRA entry below, nothing in this section has been measured
+against a live service, and every access detail in it is a claim to check
+rather than a finding.
 
 ## Supplementary sources (recommended additions)
 
