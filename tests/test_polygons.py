@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import geopandas as gpd
 import pytest
 from shapely.geometry import Point
 
@@ -83,6 +84,32 @@ def refuses(tmp_path: Path, *features: dict, **collection) -> str:
     with pytest.raises(ValueError) as raised:
         load(tmp_path, *features, **collection)
     return str(raised.value)
+
+
+#: The projection both registries quote their distances in -- `polygons.geojson`
+#: for how far the reference stations sit outside the La Jolla bed, `sites.json`
+#: for how near the two outfall moorings sit to two others. UTM zone 11N's
+#: central meridian is 117 W, within a few kilometres of every site here, so its
+#: scale error is negligible at these ranges: the geodesic distances differ from
+#: these by at most 13 m in 32 km. Nothing in `src/` reprojects -- these are
+#: claims the registries make in prose, and this is where they are checked.
+UTM11N = "EPSG:32611"
+
+
+def metres_to_each_bed() -> dict[str, dict[str, float]]:
+    """Nearest-point distance from every placed site to every committed bed."""
+    beds = load_polygons(COMMITTED).frame.to_crs(UTM11N)
+    registry = json.loads((REPO_ROOT / "data" / "registry" / "sites.json").read_text("utf-8"))
+    placed = [site for site in registry["sites"] if "lat" in site]
+    points = gpd.GeoSeries(
+        [Point(site["lon"], site["lat"]) for site in placed],
+        index=[site["site_id"] for site in placed],
+        crs=WGS84,
+    ).to_crs(UTM11N)
+    return {
+        bed.polygon_id: {name: bed.geometry.distance(point) for name, point in points.items()}
+        for bed in beds.itertuples()
+    }
 
 
 # --------------------------------------------------------------------------
@@ -327,6 +354,45 @@ def test_only_the_project_sensors_are_inside_the_la_jolla_bed():
     assert contains("PROJ:TIDBIT-2")
     assert not contains("NDBC:LJAC1")
     assert not contains("SIO:LAJOLLA-PIER")
+
+
+def test_the_two_outfall_moorings_are_the_nearest_station_to_two_of_the_beds():
+    """The distance claims `sites.json` makes, computed rather than repeated.
+
+    Both were written by eye while every polygon carried a null geometry, and
+    both were wrong: `SDRTOMS:SBOO` was recorded as "~15 km" from Imperial Beach
+    and is 3.0 km from it, a factor of five. That mattered because the number
+    was the stated reason for an exclusion -- neither mooring is in any
+    polygon's `site_ids`, and the notes said distance was why. The exclusion now
+    rests on the outfall diffuser instead, and the pairing itself is
+    https://github.com/cweber12/kelp-compare/issues/86.
+
+    Pinned because the failure is silent and the margins are wide enough to hide
+    it. These two are the nearest site of any kind to two of the six beds, by
+    factors of 2.3 and 5.9 over the runner-up, so an outline redrawn from a
+    later Kelp Watch revision or a corrected mooring position could move a
+    distance by kilometres without changing which station is nearest -- leaving
+    the registry asserting a number nothing measures, exactly as it did before.
+    """
+    metres = metres_to_each_bed()
+
+    def ranked(bed: str) -> list[str]:
+        return sorted(metres[bed], key=metres[bed].get)
+
+    # SBOO is 2968 m from Imperial Beach and nothing else is within 17 km.
+    assert ranked("KELP:IMPERIAL-BEACH")[:2] == ["SDRTOMS:SBOO", "SDRTOMS:PLOO"]
+    assert metres["KELP:IMPERIAL-BEACH"]["SDRTOMS:SBOO"] == pytest.approx(2968, abs=5)
+    assert metres["KELP:IMPERIAL-BEACH"]["SDRTOMS:PLOO"] == pytest.approx(17629, abs=5)
+
+    # PLOO is 5264 m from San Diego, the bed the old note never measured against.
+    assert ranked("KELP:SAN-DIEGO")[:2] == ["SDRTOMS:PLOO", "PROJ:TIDBIT-1"]
+    assert metres["KELP:SAN-DIEGO"]["SDRTOMS:PLOO"] == pytest.approx(5264, abs=5)
+    assert metres["KELP:SAN-DIEGO"]["PROJ:TIDBIT-1"] == pytest.approx(11892, abs=5)
+
+    # And the reference both beds *are* paired with is an order of magnitude out
+    # at Imperial Beach, which is the comparison the notes now draw.
+    assert metres["KELP:IMPERIAL-BEACH"]["SIO:LAJOLLA-PIER"] == pytest.approx(32313, abs=5)
+    assert metres["KELP:SAN-DIEGO"]["SIO:LAJOLLA-PIER"] == pytest.approx(13535, abs=5)
 
 
 # --------------------------------------------------------------------------
