@@ -1,3 +1,10 @@
 # Recorded source payloads are evidence: never line-ending-converted, on any
 # platform, so a fixture stays byte-identical to what the provider sent.
 tests/fixtures/** -text
+
+# An executed notebook is the analysis of record, and re-running it rewrites the
+# whole file. Pinning it to LF keeps that diff to the cells whose outputs really
+# changed, instead of to every line of JSON a Windows tool just re-wrote with
+# CRLF -- which is how a corrupted markdown cell hides in plain sight.
+# See https://github.com/cweber12/kelp-compare/issues/83
+*.ipynb text eol=lf
