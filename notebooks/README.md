@@ -183,11 +183,12 @@ done all the work:
   to read a control rather than on what may be registered.
 - **Every environmental anomaly is against `NDBC:LJAC1` alone.** No other
   public-source fetcher exists (docs/02), so there is no second reference.
-- **docs/04 §4.5, the project's key question, cannot run.** It needs polygon
-  geometry, which `polygons.geojson` records as `null` for all six beds, and
-  project-sensor rows, which `observations/` does not yet hold. The sensor
-  positions it also needs were surveyed and recorded in `sites.json` on
-  2026-08-27, so the registry is no longer one of the blockers.
+- **docs/04 §4.5, the project's key question, cannot run.** It needs
+  project-sensor rows, which `observations/` does not yet hold, and that is now
+  the only thing it is waiting on. The registry has caught up: the sensor
+  positions were surveyed into `sites.json` on 2026-08-27 and all six bed
+  outlines were recorded in `polygons.geojson` on 2026-08-30, each verified
+  cell-for-cell against its landed Kelp Watch export (docs/02).
 - **The 2007–2019 baseline contains the 2014–2016 marine heatwave** on both
   sides of every comparison, damping the anomalies the analysis most wants to
   detect (docs/04 §3).

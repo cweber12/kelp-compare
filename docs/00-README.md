@@ -136,13 +136,13 @@ Not built yet: the climatology and flat-line QC tests and neighbor validation
 dashboard.
 
 Not yet possible: doc 04 §4.5's spatial signal test, the project's key question.
-It needs polygon geometry, which `polygons.geojson` records as null for all six
-beds — they are Kelp Watch's own named bed selections and their outlines have
-not been recorded here — and it needs project-sensor rows, which
-`observations/` does not yet hold: no project-sensor deployment has been
-ingested (doc 04, "Neighbor validation"). The sensor positions it also needs
-are no longer missing: both TidbiT sites were surveyed and recorded in
-`sites.json` on 2026-08-27, so the registry is no longer one of the blockers.
+It needs project-sensor rows, which `observations/` does not yet hold: no
+project-sensor deployment has been ingested (doc 04, "Neighbor validation").
+That is now the only blocker. The sensor positions it also needs were surveyed
+into `sites.json` on 2026-08-27, and the polygon geometry it also needs was
+recorded on 2026-08-30 — all six beds carry a reconstructed outline verified
+cell-for-cell against its landed export (doc 02, "How the six bed outlines were
+reconstructed"), so the registry is no longer one of the blockers at all.
 
 Deferred rather than abandoned: fetching the published SBC LTER data package
 directly. It carries giant and bull kelp separately plus biomass, at per-pixel
