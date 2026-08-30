@@ -355,6 +355,18 @@ def test_only_the_project_sensors_are_inside_the_la_jolla_bed():
     assert not contains("NDBC:LJAC1")
     assert not contains("SIO:LAJOLLA-PIER")
 
+    # And *how far* outside, because both registries now quote the figure in
+    # prose -- `_provisional` and this feature's own `notes`. A boolean cannot
+    # tell 1.7 km from 17 m, and 17 m would make the exclusion an artefact of
+    # where the 90 m dilation happened to stop rather than a fact about where
+    # Scripps Pier is.
+    metres = metres_to_each_bed()["KELP:LA-JOLLA"]
+
+    assert metres["NDBC:LJAC1"] == pytest.approx(1731, abs=5)
+    assert metres["SIO:LAJOLLA-PIER"] == pytest.approx(1718, abs=5)
+    assert metres["PROJ:TIDBIT-1"] == 0.0
+    assert metres["PROJ:TIDBIT-2"] == 0.0
+
 
 def test_the_two_outfall_moorings_are_the_nearest_station_to_two_of_the_beds():
     """The distance claims `sites.json` makes, computed rather than repeated.
