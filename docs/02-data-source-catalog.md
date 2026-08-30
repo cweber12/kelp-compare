@@ -35,9 +35,19 @@ Everything below the next two subsections was verified against real exports on
 
 **The operator selects a kelp bed on kelpwatch.org, exports its quarterly CSV,
 and drops the file in `raw/kelpwatch/incoming/`.** This is a file-drop source
-like the project sensors, not a pulled one — there is no fetcher and no network
-path, and `ingest --source kelpwatch` lands the file and writes a manifest
-exactly as the HOBO ingest does.
+like the project sensors, not a pulled one — there is no fetcher, and
+`ingest --source kelpwatch` lands the file and writes a manifest exactly as the
+HOBO ingest does.
+
+**There is a network path, though, and this section used to say there was not.**
+kelpwatch.org's own download button calls a public, unauthenticated endpoint
+that takes a geometry and returns the same CSV, and the site serves the
+classified cells the CSV is summed from as vector tiles. Both are described
+under "The cells behind the export" below. Nothing in the pipeline uses either
+yet — whether a fetcher is built on them is
+`https://github.com/cweber12/kelp-compare/issues/85`. They were used once, as
+measurement instruments, to reconstruct and verify the bed outlines now recorded
+in `polygons.geojson`.
 
 This is a deliberate retreat from the published data package, and the reason is
 access rather than preference. The source of record *ought* to be SBC LTER
@@ -165,6 +175,112 @@ Two smaller consequences of the same row: the last year carries no `max` row at
 all while it is in progress, so the `max` rows cannot be used to enumerate the
 years either; and the token makes `quarter` a text column on the way in, so it
 must not be parsed as an integer before the row is dropped.
+
+### The cells behind the export
+
+Verified 2026-08-30. Everything here is a development-time finding used to
+reconstruct the bed outlines; **no pipeline code calls either endpoint**, and
+tests never reach the network.
+
+**The aggregate endpoint takes our geometry.**
+
+```
+GET https://kelp-production-agg.kelpwatch.org/aggregate?geom=<WKT or GeoJSON>
+```
+
+Both geometry encodings are accepted. `start` / `end` / `source` are ignored
+here — it always returns the whole 1984→present record, in the exact layout
+above. They belong to the `/aggregate/id` upload path instead. Send a
+`User-Agent` naming the project, per the cross-cutting rules at the end of this
+document.
+
+**The tiles carry the unaggregated cells.**
+
+```
+GET https://data-production.kelpwatch.org/california/latest.tiles/{z}/{x}/{y}.pbf
+```
+
+Mapbox Vector Tiles, tippecanoe-built, maxzoom 13, single layer `cog`. Despite
+the `latest` in the path, a z13 tile carries the **whole quarterly record**, not
+the current quarter: each feature is one 30 m cell whose properties are 170 keys
+`1984_01` … `2026_02`, and whose value is that cell's canopy area in m² for that
+quarter, or **`-1` for a quarter with no cloud-free observation**. That is the
+same missing-versus-empty distinction the CSV hides inside
+`count_cells_no_clouds`, made explicit per cell.
+
+Four facts a reader of those tiles needs, each measured rather than assumed:
+
+- **The cells are a UTM 11N grid at 30 m.** Cell corners land on a 30 m lattice
+  in EPSG:32611 to within 0.9 m; in California Albers or Web Mercator they
+  scatter across the full 30 m. So a cell has an exact integer grid index, which
+  is what makes an inventory of them exact rather than approximate.
+- **A cell straddling a tile boundary appears in both tiles**, clipped
+  differently in each, so deduplicating by geometry or by centroid double-counts
+  it. Snapping each fragment's centroid to the UTM grid index collapses the two
+  onto one cell: 36,732 fragments over 324 tiles became 32,294 cells.
+- **Every cell in the layer is a footprint cell.** All 32,294 have at least one
+  quarter with canopy, which is the same population
+  `count_cells_historic_footprint` counts.
+- **The four aggregate columns are reproducible from the cells**, and this is
+  the check that the tiles really are what the export is summed from. For a
+  selection of cells, `kelp_area_m2` is the sum of the positive values,
+  `count_cells_kelp` the count of them, `count_cells_no_clouds` the count of
+  values ≥ 0, and `count_cells_historic_footprint` the size of the selection.
+  Reconstructed that way the La Jolla selection reproduces `kelp_lajolla.csv`
+  **line for line — all 213 lines, the derived `max` rows included, zero
+  differences.**
+
+### How the six bed outlines were reconstructed
+
+The originals are not recoverable. Kelp Watch has no named-bed catalogue — its
+`/db/region` endpoint returns continental regions only, and the bed names appear
+nowhere in the site's JS bundle — so area selection there is draw-on-map or
+upload-a-file, and the six outlines existed only in a browser session that is
+gone.
+
+What replaces recovery is derivation. Over the harvested region the footprint
+cells form spatially isolated clusters, and **six of those clusters carry exactly
+the cell counts the six landed exports record**, with no fitting involved:
+
+| Bed | Latitude band of the cluster | Cells | Recorded footprint |
+|---|---|---|---|
+| Del Mar | 32.94436 – 32.96031 | 130 | 130 |
+| Solana Beach | 32.97897 – 33.00305 | 1,040 | 1,040 |
+| Encinitas | 33.00818 – 33.03927 | 1,239 | 1,239 |
+| Imperial Beach | 32.55160 – 32.58842 | 3,019 | 3,019 |
+| La Jolla | 32.80009 – 32.85611 | 8,309 | 8,309 |
+| San Diego (Point Loma) | 32.63806 – 32.74411 | 14,635 | 14,635 |
+
+Each cluster is separated from the nearest cell of any other bed by at least
+677 m, so the divisions the operator drew by judgement fall in real gaps rather
+than cutting a continuous strip. Del Mar, Solana Beach and Encinitas are three
+clusters with 2.1 km and 0.6 km of empty water between them, not one bed divided
+three ways. Bounding-box probes that returned 119 and 161 cells for Del Mar were
+cutting at 32.96 and 32.98 — either side of a cluster that ends at 32.96031 —
+and were also picking up a single isolated cell 2.3 km further south that the
+bed does not include.
+
+The recorded outline is each cluster's dissolved 30 m footprint **dilated by
+90 m and simplified to 40 m**, which trades an exact but 3,153-vertex cell
+boundary for a 23–191 vertex one that a human can review in a diff. The dilation
+is what makes the outline robust rather than merely convenient: every cell of
+the bed ends up at least 49 m inside it and every cell of every other bed at
+least 537 m outside, so no plausible point-in-polygon rule — cell centre, cell
+corner, intersects — can select a different set.
+
+**Verification, all six beds, against the aggregate endpoint on 2026-08-30:**
+the recorded outline returns the recorded `count_cells_historic_footprint`, and
+the 213-line response is identical to the landed export in
+`raw/kelpwatch/incoming/`. Zero differing lines, on every bed. The per-bed
+record lives in each feature's `_verified` key in `polygons.geojson`.
+
+Two costs of this route, stated rather than left to be discovered. The outline
+is a **reconstruction, not the original**: it selects the same water, which is
+the only property any number depends on, but it is not the shape the operator
+drew and must not be cited as one. And the derivation reads `latest.tiles`,
+which carries no revision — that it agreed line for line with the ver 23 export
+is evidence the tiles were at ver 23 on 2026-08-30, not a promise about any
+later day.
 
 ### Other quirks
 

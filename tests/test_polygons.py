@@ -19,8 +19,10 @@ import json
 from pathlib import Path
 
 import pytest
+from shapely.geometry import Point
 
 from kelpcompare.polygons import (
+    POLYGON_GEOMETRIES,
     POLYGON_PURPOSES,
     WGS84,
     load_polygons,
@@ -192,7 +194,10 @@ def test_the_committed_registry_loads():
     assert all(p.source_file.endswith(".csv") for p in loaded)
     assert all(p.site_ids for p in loaded)
 
-    # Exactly one bed holds a station; the rest are its controls.
+    # The labels as they stand. What they *say* -- that La Jolla is the bed
+    # holding a reference station -- is false against the recorded outlines, and
+    # relabelling is https://github.com/cweber12/kelp-compare/issues/86 rather
+    # than a correction to make here.
     assert [p.polygon_id for p in loaded if p.purpose == "regional"] == ["KELP:LA-JOLLA"]
     assert loaded.for_file("kelp_lajolla.csv").polygon_id == "KELP:LA-JOLLA"
 
@@ -237,6 +242,91 @@ def test_the_committed_registry_claims_every_recorded_fixture():
 def test_comment_keys_inside_the_pinned_revision_are_not_configuration():
     loaded = load_polygons(COMMITTED)
     assert loaded.kelp_watch.revision == 23  # the shipped block carries a _comment
+
+
+# --------------------------------------------------------------------------
+# The recorded outlines -- what a reconstruction has to keep being true
+# --------------------------------------------------------------------------
+
+
+def test_every_committed_bed_carries_a_real_outline():
+    """No bed may quietly go back to `null`.
+
+    The outlines were reconstructed from Kelp Watch's own classified cells and
+    each one was checked against the /aggregate endpoint (docs/02, "How the six
+    bed outlines were reconstructed"). That check cannot run here -- tests never
+    reach the network -- so what is asserted is the part a later hand-edit could
+    break without anyone noticing: that an outline is still there, that it still
+    encloses area, and that it still says how it was verified.
+    """
+    loaded = load_polygons(COMMITTED)
+
+    assert all(polygon.has_geometry for polygon in loaded)
+    assert set(loaded.frame.geometry.geom_type) <= set(POLYGON_GEOMETRIES)
+    assert loaded.frame.geometry.is_valid.all()
+    assert (~loaded.frame.geometry.is_empty).all()
+
+    recorded = json.loads(COMMITTED.read_text(encoding="utf-8"))
+    assert all("_verified" in feature["properties"] for feature in recorded["features"])
+
+
+def test_the_committed_outlines_are_off_san_diego_and_not_transposed():
+    """A lon/lat swap or a reprojection survives every other check in this file.
+
+    It produces a perfectly valid polygon of the wrong water -- the failure the
+    CRS refusal exists for, arriving through the coordinates instead of through
+    the `crs` member. San Diego county's kelp sits between 32.4 and 33.1 N and
+    -117.4 and -117.0 E; a transposed outline lands in the Mediterranean.
+    """
+    bounds = load_polygons(COMMITTED).frame.total_bounds  # minx, miny, maxx, maxy
+
+    assert -117.4 < bounds[0] and bounds[2] < -117.0
+    assert 32.4 < bounds[1] and bounds[3] < 33.1
+
+
+def test_no_two_committed_beds_overlap():
+    """Six exports, six disjoint areas, and no cell counted twice.
+
+    The beds were derived as spatially isolated clusters at least 677 m apart,
+    so an overlap here is not a near-miss -- it means an outline was widened or
+    moved onto a neighbour, and the two beds' canopy series would then share
+    cells while still reading as independent controls in docs/04 s4.5.
+    """
+    frame = load_polygons(COMMITTED).frame
+    geometries = list(frame.geometry)
+
+    overlaps = [
+        (frame.polygon_id.iloc[i], frame.polygon_id.iloc[j])
+        for i in range(len(geometries))
+        for j in range(i + 1, len(geometries))
+        if geometries[i].intersects(geometries[j])
+    ]
+    assert overlaps == []
+
+
+def test_only_the_project_sensors_are_inside_the_la_jolla_bed():
+    """The containment `_provisional` asserts, computed rather than repeated.
+
+    This is the claim the registry got wrong until the outlines landed: it said
+    NDBC:LJAC1's published position is inside the La Jolla bed, and it is 1.7 km
+    north of it. Both project sensors *are* inside, which is what makes
+    `near_site` declarable and is the open question in
+    https://github.com/cweber12/kelp-compare/issues/86. Pinning it here means a
+    later edit to either registry has to face the pairing rather than silently
+    invert it.
+    """
+    frame = load_polygons(COMMITTED).frame
+    bed = frame.loc[frame.polygon_id == "KELP:LA-JOLLA", "geometry"].iloc[0]
+    sites = json.loads((REPO_ROOT / "data" / "registry" / "sites.json").read_text(encoding="utf-8"))
+    placed = {s["site_id"]: (s["lon"], s["lat"]) for s in sites["sites"] if "lat" in s}
+
+    def contains(site_id: str) -> bool:
+        return bed.contains(Point(*placed[site_id]))
+
+    assert contains("PROJ:TIDBIT-1")
+    assert contains("PROJ:TIDBIT-2")
+    assert not contains("NDBC:LJAC1")
+    assert not contains("SIO:LAJOLLA-PIER")
 
 
 # --------------------------------------------------------------------------
