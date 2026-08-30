@@ -612,7 +612,7 @@ Six degrees over twenty-five metres. That is the number the whole entry is for:
 `NDBC:LJAC1` measures 3.4 m and nothing else, `PROJ:TIDBIT-2` sits at 16.76 m,
 and `sites.json` currently explains the ~5 °C gap between them in prose. It is
 also why these moorings are a depth reference and not a neighbor — the gradient
-is the signal, and 25-40 km of coastline is the confound.
+is the signal, and 21-38 km of coastline is the confound.
 
 **None of this reaches `comparison.parquet`, by construction.** The features
 run that landed these series left the comparison table byte-identical
@@ -675,15 +675,28 @@ list.
 They remain the only route to 2020 and most of 2021 for South Bay, since that
 window exists on ERDDAP only in the dataset described above.
 
-### Distance is the standing caveat
+### Distance is the standing caveat — for the loggers, not for every bed
 
-These moorings are 25-40 km south of La Jolla and sit on outfall diffusers.
-They are a **depth reference, not a neighbor**: doc 04's neighbor validation
-compares an instrument against a nearby one, and nothing here is nearby. What
-they can support is the question `sites.json` currently answers in prose — how
-far a 3.4 m shore reading sits from water at thermocline depth in this region,
-and how that gap moves with season. They also cannot validate the project's own
-loggers, whose deployments begin in July 2026, after every RTOMS record ends.
+These moorings are 21-38 km south of the La Jolla instruments and sit on
+outfall diffusers. They are a **depth reference, not a neighbor**: doc 04's
+neighbor validation compares an instrument against a nearby one, and neither
+mooring is near a project logger. What they can support is the question
+`sites.json` currently answers in prose — how far a 3.4 m shore reading sits
+from water at thermocline depth in this region, and how that gap moves with
+season. They also cannot validate the project's own loggers, whose deployments
+begin in July 2026, after every RTOMS record ends.
+
+**That caveat is about the loggers, not about the study area**, and this entry
+used to state it as though it were about both. Measured against the bed
+outlines now recorded in `polygons.geojson` — UTM 11N, nearest point on the
+outline — `SDRTOMS:SBOO` is **2,968 m** from `KELP:IMPERIAL-BEACH` and
+`SDRTOMS:PLOO` **5,264 m** from `KELP:SAN-DIEGO`. Each is the nearest site of
+any kind to that bed, and Imperial Beach has nothing else within 17 km. Neither
+mooring is in those polygons' `site_ids`, and after the correction to
+`sites.json` the reason is the diffuser rather than the range: whether outfall
+water represents the bed's is a question about representativeness, and it is
+the pairing rule filed as
+https://github.com/cweber12/kelp-compare/issues/86.
 
 ## SIO Shore Stations — La Jolla, Scripps Pier
 
