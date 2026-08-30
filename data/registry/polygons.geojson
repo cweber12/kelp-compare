@@ -17,7 +17,7 @@
         "site_ids": ["NDBC:LJAC1", "SIO:LAJOLLA-PIER", "PROJ:TIDBIT-1", "PROJ:TIDBIT-2"],
         "source_file": "kelp_lajolla.csv",
         "_verified": "Reconstructed outline, verified 2026-08-30: encloses all 8309 cells of this bed's historic footprint and no cell of any other bed, whose nearest is 6239 m away. Queried against kelpwatch.org's /aggregate endpoint it returns count_cells_historic_footprint = 8309, matching kelp_lajolla.csv, and all 213 lines of the response are identical to that landed file.",
-        "notes": "The bed containing NDBC:LJAC1, whose published position sits inside it. Both project sensors are recorded as deployed in this bed, ~2.0 km from LJAC1. Their positions are surveyed (sites.json) and containment is now computed rather than taken from the deployment record: both fall inside this outline. Note the reference stations do not -- LJAC1 is 1731 m north of it."
+        "notes": "The bed both project sensors sit in, and neither public reference. Their positions are surveyed (sites.json) and containment is computed rather than taken from the deployment record: PROJ:TIDBIT-1 and PROJ:TIDBIT-2 both fall inside this outline, ~2.0 km from NDBC:LJAC1 -- which sits 1731 m north of it, as SIO:LAJOLLA-PIER does at 1718 m, because Scripps Pier is north of the La Jolla kelp forest. Until 9220aef this note opened by calling it the bed containing NDBC:LJAC1. That was the premise the recorded outlines falsified, and the correction reached _provisional without reaching here. What it means for the purpose label is https://github.com/cweber12/kelp-compare/issues/86, as _provisional records."
       },
       "geometry": {
         "type": "Polygon",
