@@ -197,6 +197,28 @@ def test_the_committed_registry_loads():
     assert loaded.for_file("kelp_lajolla.csv").polygon_id == "KELP:LA-JOLLA"
 
 
+def test_the_committed_registry_pairs_every_bed_with_both_public_references():
+    """Pairing is what lets a series reach the docs/04 s4.1 screen, and losing
+    one is silent. A station no polygon names is still fetched, flagged and
+    aggregated into `quarterly_env`; it is only at the comparison join that it
+    pairs with nothing, and the result is a `comparison.parquet` that is simply
+    smaller than it should be, with no column anywhere saying why. The Shore
+    Stations record sat in that state through a rebuild, which is why the
+    pairing is asserted here rather than left to the file to remember.
+
+    The registry names sites, not series, so naming the pier pairs every series
+    it produced -- both sensor depths. That is the decision, and it is the one
+    an edit trimming this list back to a single depth would quietly reverse.
+    """
+    for polygon in load_polygons(COMMITTED):
+        assert set(polygon.site_ids) == {
+            "NDBC:LJAC1",
+            "SIO:LAJOLLA-PIER",
+            "PROJ:TIDBIT-1",
+            "PROJ:TIDBIT-2",
+        }
+
+
 def test_the_committed_registry_pins_the_revision_the_exports_came_from():
     kelp_watch = load_polygons(COMMITTED).kelp_watch
     assert kelp_watch.revision == 23
