@@ -307,8 +307,11 @@ def test_the_comparison_is_written_when_both_halves_exist(data_root, with_enviro
     comparison = table(with_both_halves(data_root), "comparison")
 
     assert not comparison.empty
-    # Two polygons x three LJAC1 parameters x 170 kelp quarters x five lags.
-    assert len(comparison) == 2 * 3 * 170 * len(LAGS)
+    # Every declared series x every kelp quarter x every lag, with no gaps. The
+    # series count is read off the table rather than written down, so a station
+    # added to a polygon's site_ids changes the size without editing this case.
+    series = comparison[["polygon_id", "site_id", "parameter", "depth_m"]].drop_duplicates()
+    assert len(comparison) == len(series) * 170 * len(LAGS)
     assert sorted(set(comparison["lag"])) == list(LAGS)
     assert set(comparison["polygon_id"]) == {"KELP:LA-JOLLA", "KELP:DEL-MAR"}
 
@@ -316,9 +319,19 @@ def test_the_comparison_is_written_when_both_halves_exist(data_root, with_enviro
 def test_only_the_pairs_the_registry_declares_appear(data_root, with_environment):
     """docs/03 integrity rule, at the far end: no analysis code has to match a
     polygon name against a station name, because nothing here did."""
-    comparison = table(with_both_halves(data_root), "comparison")
-    assert set(comparison["site_id"]) == {"NDBC:LJAC1"}
-    assert set(comparison["env_source"]) == {"ndbc"}
+    root = with_both_halves(data_root)
+    comparison = table(root, "comparison")
+    declared = {
+        (feature["properties"]["polygon_id"], site)
+        for feature in json.loads(
+            (root / "registry" / "polygons.geojson").read_text(encoding="utf-8")
+        )["features"]
+        for site in feature["properties"]["site_ids"]
+    }
+
+    appeared = set(zip(comparison["polygon_id"], comparison["site_id"]))
+    assert appeared <= declared, f"undeclared pairs reached the table: {appeared - declared}"
+    assert "NDBC:LJAC1" in set(comparison["site_id"])
 
 
 def test_the_environment_leads_kelp_by_the_lag_on_the_row(data_root, with_environment):
@@ -344,7 +357,14 @@ def test_a_lag_reaching_past_the_environmental_record_keeps_its_row(data_root, w
     comparison = table(with_both_halves(data_root), "comparison")
 
     unmatched = comparison.loc[comparison["env_usable"].isna()]
-    assert len(unmatched) == len(comparison) - 2 * 3 * len(LAGS)
+    matched = comparison.loc[comparison["env_usable"].notna()]
+
+    # Every series that has an environmental record contributes one matched row
+    # per lag; everything else is kept with a null environmental side.
+    with_record = matched[["polygon_id", "site_id", "parameter", "depth_m"]].drop_duplicates()
+    assert len(matched) == len(with_record) * len(LAGS)
+    assert len(unmatched) == len(comparison) - len(matched)
+    assert not unmatched.empty
     assert unmatched["kelp_area_m2_anom"].notna().any()  # the kelp side is intact
 
 

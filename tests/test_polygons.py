@@ -710,18 +710,70 @@ def test_the_two_waveriders_are_the_nearest_public_station_to_two_of_the_beds():
     assert metres["KELP:DEL-MAR"]["NDBC:LJAC1"] == pytest.approx(8574, abs=5)
 
 
-def test_neither_waverider_is_paired_into_a_polygon_yet():
-    """Placed but unpaired, deliberately.
+#: The public references able to supply a climatology, and therefore the only
+#: ones whose anomalies can reach the docs/04 s4.1 screen. Leg (c) of the
+#: pairing rule: they pair with every bed regardless of range, because a nearer
+#: station with no baseline contributes nothing an anomaly screen can use.
+LONG_RECORD_REFERENCES = ("NDBC:LJAC1", "SIO:LAJOLLA-PIER")
 
-    Which polygon a station joins follows the pairing rule
-    https://github.com/cweber12/kelp-compare/issues/86 owns; landing the
-    stations was not licence to invent a second one. Pinned so the pairing
-    arrives as a reviewed change rather than by drift, and because being
-    nearest is exactly what makes the omission look like an oversight.
+#: Leg (b)'s radius. Not tuned: every bed's nearest public stations sit at or
+#: below 5625 m and the next is at or above 8369 m, so any value in that band
+#: produces the same pairings. Asserted below rather than trusted.
+NEAR_STATION_RADIUS_M = 8000.0
+
+
+def test_the_pairing_radius_sits_in_a_gap_rather_than_on_a_boundary():
+    """A threshold chosen inside an 2.7 km gap is a decision; one chosen on a
+    boundary is a coincidence waiting to be broken by a redrawn outline."""
+    metres = metres_to_each_bed()
+    public = [site for site in next(iter(metres.values())) if not site.startswith("PROJ:")]
+    inside = [
+        d
+        for by_site in metres.values()
+        for s, d in by_site.items()
+        if s in public and d <= NEAR_STATION_RADIUS_M
+    ]
+    outside = [
+        d
+        for by_site in metres.values()
+        for s, d in by_site.items()
+        if s in public and d > NEAR_STATION_RADIUS_M
+    ]
+
+    assert max(inside) < NEAR_STATION_RADIUS_M < min(outside)
+    assert min(outside) - max(inside) > 2000, "the gap the radius sits in has closed"
+
+
+def test_every_paired_public_station_satisfies_the_rule():
+    """Leg (b) or leg (c) -- a public station is never paired for a third reason.
+
+    True of the registry before the rule was applied as well as after, because
+    the rule was chosen to be additive: it explains the pairings that already
+    existed rather than replacing them.
+    """
+    metres = metres_to_each_bed()
+
+    for polygon in load_polygons(COMMITTED):
+        for site in polygon.site_ids:
+            if site.startswith("PROJ:"):
+                continue  # leg (a): every bed, by construction
+            near = metres[polygon.polygon_id][site] <= NEAR_STATION_RADIUS_M
+            assert near or site in LONG_RECORD_REFERENCES, (
+                f"{polygon.polygon_id} pairs {site} at "
+                f"{metres[polygon.polygon_id][site]:.0f} m for no reason the rule gives"
+            )
+
+
+def test_a_station_without_an_ingested_record_is_not_paired():
+    """Leg (b) has two halves and range is only one of them.
+
+    `SDRTOMS:PLOO` and `SDRTOMS:SBOO` are the nearest sites of any kind to two
+    beds, and `COOPS:9410230` is within range of a third. All three are held out
+    for want of a record rather than for want of range, which is a different
+    reason and has to survive a redrawn outline.
     """
     paired = {site for polygon in load_polygons(COMMITTED) for site in polygon.site_ids}
 
-    assert "NDBC:46254" not in paired
-    assert "NDBC:46266" not in paired
-    # The precedent: two more placed-but-unpaired sites, for a different reason.
-    assert "SDRTOMS:PLOO" not in paired and "SDRTOMS:SBOO" not in paired
+    assert "SDRTOMS:PLOO" not in paired
+    assert "SDRTOMS:SBOO" not in paired
+    assert "COOPS:9410230" not in paired
