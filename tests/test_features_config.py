@@ -492,8 +492,25 @@ def test_the_error_names_the_site_whose_override_is_wrong(tmp_path):
     assert "NDBC:46254" not in message
 
 
-def test_the_committed_configuration_declares_no_overrides():
-    """Shipped inert: the canonical window is still the only one in play."""
-    loaded = load_feature_config(COMMITTED)
+def test_every_committed_baseline_override_is_well_formed():
+    """The invariants any declared window must satisfy, whatever is declared.
 
-    assert loaded.baseline_overrides == {}
+    Asserted over whatever the file holds rather than against a written list of
+    sites, so declaring a window for a station does not edit this case. What it
+    still catches is the two ways an override goes wrong silently: naming a
+    site the site registry does not have, so the window applies to nothing; and
+    drifting away from the project-wide minimum, which docs/04 s3 keeps a
+    property of the method rather than of a station.
+    """
+    loaded = load_feature_config(COMMITTED)
+    sites = {
+        site["site_id"]
+        for site in json.loads(
+            (REPO_ROOT / "data" / "registry" / "sites.json").read_text(encoding="utf-8")
+        )["sites"]
+    }
+
+    for site_id, window in loaded.baseline_overrides.items():
+        assert site_id in sites, f"{site_id} has a baseline window but no site record"
+        assert window.min_years == loaded.baseline.min_years
+        assert window.span >= window.min_years
