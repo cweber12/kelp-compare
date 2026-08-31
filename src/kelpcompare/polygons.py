@@ -196,6 +196,21 @@ class Polygons:
                 return polygon
         return None
 
+    def geometry_for(self, polygon_id: str):
+        """One polygon's outline, or None if it has none or is not here.
+
+        Both absences answer `None` on purpose. A caller that needs an outline
+        cannot proceed either way, and the two are told apart where it matters:
+        `get` answers whether the polygon exists at all, and `has_geometry` on
+        the record answers whether anyone has drawn it. Splitting that here
+        would put a two-branch lookup at every call site to serve one message.
+        """
+        frame = self.frame[self.frame["polygon_id"] == polygon_id]
+        if frame.empty:
+            return None
+        geometry = frame.iloc[0].geometry
+        return None if geometry is None or geometry.is_empty else geometry
+
     def for_site(self, site_id: str) -> tuple[Polygon, ...]:
         """Every polygon that declares a relationship to one site.
 

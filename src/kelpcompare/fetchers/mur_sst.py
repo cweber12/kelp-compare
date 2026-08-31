@@ -87,6 +87,14 @@ SOURCE = "mur_sst"
 
 FETCHER_NAME = "mur_sst"
 
+#: This fetcher's source is a grid, so what it is handed to build a URL from is
+#: a bed's request box rather than a station code, and its `parse` needs the
+#: outline to reduce over. Read by `cli._request_context`; the ingest CLI
+#: branches on the module rather than on the site, so a registry typo cannot
+#: silently choose the other contract -- the same reasoning
+#: `READS_DEPTH_FROM_PAYLOAD` follows in the RTOMS module.
+REDUCES_OVER_POLYGON = True
+
 #: The ERDDAP dataset, pinned. Every derived site's `station_code` repeats it,
 #: which is what makes the identifier a registry fact rather than a constant
 #: only this module knows.

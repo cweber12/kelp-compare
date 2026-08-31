@@ -166,12 +166,28 @@ and `features` deliberately does not take one: `neighbor_refs`,
 `same_platform_as` and `sensor_depths_m` are all registry facts, and the
 quarterly builder is written so it can never come to depend on them.
 
-What remains missing is the *other* neighbour this section asks for. There is no
-satellite SST fetcher and none for CO-OPS (doc 02), so a project sensor today has
-exactly one independent reference: `NDBC:LJAC1`, which `COOPS:9410230` folds
-into. A validation table with one reference can say a sensor tracks its
-neighbour; it cannot yet say the sensor captures local signal the network misses,
-which is the more interesting claim and the one §4.5 is for.
+What remains missing is the *other* neighbour this section asks for, and the
+reason is now narrower than it was. There is a satellite SST fetcher — JPL MUR
+L4, doc 02 — but it produces a series **per kelp bed**, which is what §4.5
+needs and is not what this section asks for. This section asks for satellite SST
+*at the sensor location*, and at MUR's 1 km those are different numbers: a bed
+mean is an average over 5–34 cells, and `PROJ:TIDBIT-1` sits in one of them.
+
+So a project sensor today still has exactly one independent reference:
+`NDBC:LJAC1`, which `COOPS:9410230` folds into. A validation table with one
+reference can say a sensor tracks its neighbour; it cannot yet say the sensor
+captures local signal the network misses, which is the more interesting claim
+and the one §4.5 is for.
+
+Building the sensor-location series is a small change to the fetcher and a
+larger question to this table, which is why it was scoped out rather than
+folded in: it has to be decided whether a satellite series enters
+`neighbor_refs` at all, and **what depth it is comparable at**. MUR publishes
+`sea_surface_foundation_temperature` and no depth, so the bed rows land with a
+null `depth_m` (doc 02). Against `PROJ:TIDBIT-1` at 8.23 m the
+`neighbor_depth_tolerance_m` rule above has nothing to compare, and a null is
+not a gap this table may fill with a guess — the whole point of the rule is that
+an unstated depth must not become an assumed one.
 
 ## 2. Quarterly feature definitions
 
@@ -528,6 +544,12 @@ local information beyond NOAA/SCCOOS. This comparison (project sensor vs.
 public neighbor vs. satellite SST as competing predictors for the same
 kelp series) is the analysis the whole system is built to support.
 
+**All three legs now exist.** The satellite leg is JPL MUR L4 SST reduced to one
+series per bed (doc 02), landing as six derived sites — `SST:LA-JOLLA` … — each
+paired with its own bed by leg (d) of the doc 03 pairing rule. It is the only
+leg that reaches all six beds with a series measured *at* the bed rather than
+borrowed from up the coast, which matters most for the two below.
+
 *Which* public station plays the neighbor is not a free choice, and it is
 recorded rather than made per analysis. `polygons.geojson` pairs each polygon
 with the project sensors, with every public station within 8 km that has an
@@ -540,7 +562,11 @@ consequences bear on how a §4.5 result is read.
 because the only nearer sites are outfall moorings without a usable record. The
 neighbor leg of the comparison is correspondingly weak for those two, and a
 result that reads as "the project sensor beats the public station" there is
-partly a statement about how far away the public station is. The stations
+partly a statement about how far away the public station is. The satellite leg
+does not inherit that weakness — `SST:SAN-DIEGO` and `SST:IMPERIAL-BEACH` are
+over those beds — which cuts the other way too: on those two beds the satellite
+is the *better-placed* predictor, so it beating a 32 km station is not evidence
+about what a satellite can see. The stations
 nearest them are held out on a written gate — a record overlapping the kelp
 series, and evidence of tracking regional forcing — not on distance.
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import click
@@ -35,7 +36,7 @@ from kelpcompare.features.kelp import (
 )
 from kelpcompare.features.quarterly import QUARTERLY_KEY, feature_columns
 from kelpcompare.features.validation import VALIDATION_KEY, build_validation
-from kelpcompare.fetchers import cache, kelpwatch, ndbc, sd_rtoms, sio_shore_stations
+from kelpcompare.fetchers import cache, kelpwatch, mur_sst, ndbc, sd_rtoms, sio_shore_stations
 from kelpcompare.fetchers.base import NotModified, SourceUnavailable, land
 from kelpcompare.manifest import RunManifest
 from kelpcompare.normalize import to_observations
@@ -80,7 +81,7 @@ RAW_DIRECTORY = {
 #: fetcher module and one entry here (docs/02). Keyed by the docs/03 source name,
 #: which is also the raw landing directory for these -- the asymmetry above is
 #: peculiar to project sensors.
-FETCHERS = {ndbc.SOURCE: ndbc, sd_rtoms.SOURCE: sd_rtoms}
+FETCHERS = {ndbc.SOURCE: ndbc, sd_rtoms.SOURCE: sd_rtoms, mur_sst.SOURCE: mur_sst}
 
 #: Where a file-drop source expects its files (docs/02 "Project sensors").
 INCOMING = "incoming"
@@ -1132,6 +1133,17 @@ def _ingest_pulled(
     parameters = load_parameters(zones.parameters_json)
     fetcher = FETCHERS[source]
 
+    # Only a fetcher whose source is a grid needs the outlines, and it is asked
+    # for once per run rather than per window. Not loaded for the others at all:
+    # a station fetcher that could reach the polygon registry could come to
+    # depend on it, which is the coupling `features` is deliberately built
+    # without on the site registry (docs/04 s1).
+    polygons = (
+        load_polygons(zones.polygons_geojson)
+        if getattr(fetcher, "REDUCES_OVER_POLYGON", False)
+        else None
+    )
+
     declared = find_stations(registry, source)
     wanted = _select_stations(declared, stations)
     if not wanted:
@@ -1157,6 +1169,7 @@ def _ingest_pulled(
                 run=run,
                 source=source,
                 fetcher=fetcher,
+                polygons=polygons,
                 session=session,
                 dry_run=dry_run,
             )
@@ -1173,6 +1186,7 @@ def _ingest_window(
     run: RunManifest,
     source: str,
     fetcher,
+    polygons: Polygons | None = None,
     session=None,
     dry_run: bool,
 ) -> None:
@@ -1191,16 +1205,32 @@ def _ingest_window(
     not this one's -- which is what makes skipping an unchanged window correct
     rather than merely cheap.
     """
-    label = f"{site.station_code} {year if year is not None else 'realtime'}"
-    entry = run.add_file(label, "failed", fetcher=getattr(fetcher, "FETCHER_NAME", source))
+    window = year if year is not None else "realtime"
+    entry = run.add_file(
+        f"{site.site_id} {window}", "failed", fetcher=_fetcher_name(fetcher, source)
+    )
     entry.site_id = site.site_id
 
-    url = (
-        fetcher.archive_url(site.station_code, year)
-        if year is not None
-        else fetcher.realtime_url(site.station_code)
-    )
-    entry.path = url
+    try:
+        # Inside the try, and that is a fix rather than tidiness. This function's
+        # contract is that it never raises (docs/02 fail-soft), and resolving
+        # what to ask for can now fail on a registry fact -- a derived site
+        # naming a polygon that carries no outline. Left outside, one bad
+        # registry record would end a six-bed run at the first bed instead of
+        # costing it that bed.
+        request = _request_context(site, fetcher, polygons)
+        label = f"{request.label} {window}"
+        url = (
+            fetcher.archive_url(request.handle, year)
+            if year is not None
+            else fetcher.realtime_url(request.handle)
+        )
+        entry.path = url
+    except Exception as error:  # noqa: BLE001 -- one window must not end the run
+        entry.outcome = "failed"
+        entry.reason = f"{type(error).__name__}: {error}"
+        run.note_warning(f"{site.site_id}: {entry.reason}")
+        return
 
     try:
         # What a previous run recorded about this URL, if anything. Looked up
@@ -1208,9 +1238,13 @@ def _ingest_window(
         # raw zone and which has no other use for storage.
         validators = cache.validators_for(zones, url)
         payload = (
-            fetcher.fetch_archive(site.station_code, year, session=session, validators=validators)
+            fetcher.fetch_archive(
+                request.handle, year, session=session, validators=validators, **request.fetch
+            )
             if year is not None
-            else fetcher.fetch_realtime(site.station_code, session=session, validators=validators)
+            else fetcher.fetch_realtime(
+                request.handle, session=session, validators=validators, **request.fetch
+            )
         )
     except NotModified:
         entry.outcome = "unchanged"
@@ -1252,6 +1286,7 @@ def _ingest_window(
             measured_parameters=site.measured_parameters,
             run_id=run.run_id,
             **depth_argument,
+            **request.parse,
         )
         entry.rows_in = parsed.rows_in
         entry.rows_out = len(parsed.frame)
@@ -1301,6 +1336,75 @@ def _ingest_window(
         entry.outcome = "failed"
         entry.reason = f"{type(error).__name__}: {error}"
         run.note_warning(f"{label}: {entry.reason}")
+
+
+@dataclass(frozen=True)
+class _Request:
+    """What one window's fetch is addressed by, and what its parse still needs.
+
+    A station fetcher is addressed by the code its provider knows it by. A
+    fetcher whose source is a *grid* has no such code -- every derived site
+    shares one dataset id -- and is addressed by the box its bed occupies, so
+    the handle is a property of the source's shape rather than of the site.
+
+    `label` is carried because the manifest's is no longer derivable from
+    `station_code`: six derived sites share `jplMURSST41`, so labelling by it
+    would give six windows the same name in one run.
+    """
+
+    handle: object
+    label: str
+    fetch: dict = field(default_factory=dict)
+    parse: dict = field(default_factory=dict)
+
+
+def _request_context(site: Station, fetcher, polygons: Polygons | None) -> _Request:
+    """How to address one window, decided by the fetcher's shape not the site's.
+
+    Branching on the module rather than on the registry record, as the depth
+    argument above does and for the same reason: a registry typo must not be
+    able to select the other contract silently.
+
+    Everything a grid fetcher needs is refused loudly when it is missing. A
+    derived source whose site declares no `derived_from`, or names a polygon
+    with no recorded outline, cannot produce a number anyone could reproduce --
+    and a fetch that went ahead would land bytes under a bed nothing reduces.
+    """
+    if not getattr(fetcher, "REDUCES_OVER_POLYGON", False):
+        return _Request(handle=site.station_code, label=site.station_code)
+
+    if not site.is_derived:
+        raise ValueError(
+            f"{site.site_id} is registered under a source that reduces a grid over a polygon, "
+            "but declares no `derived_from` block; there is nothing to say which bed its rows "
+            "would be about (docs/03)"
+        )
+    polygon_id = site.derived_from.polygon_id
+    if polygons is None or polygons.get(polygon_id) is None:
+        raise ValueError(
+            f"{site.site_id} derives from {polygon_id!r}, which polygons.geojson does not "
+            "declare; the site registry and the polygon registry disagree"
+        )
+    geometry = polygons.geometry_for(polygon_id)
+    if geometry is None:
+        raise ValueError(
+            f"{site.site_id} derives from {polygon_id!r}, whose outline has not been recorded; "
+            "docs/03 makes geometry optional and this is the stage that cannot proceed without "
+            "one, because there is nothing to reduce the grid over"
+        )
+
+    # The landing directory, spelled as the Kelp Watch landings spell a polygon.
+    station = polygon_id.replace(":", "_")
+    return _Request(
+        handle=fetcher.request_bounds(geometry),
+        label=station,
+        fetch={"station": station},
+        parse={"geometry": geometry},
+    )
+
+
+def _fetcher_name(fetcher, source: str) -> str:
+    return getattr(fetcher, "FETCHER_NAME", source)
 
 
 def _session():
