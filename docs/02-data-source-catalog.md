@@ -1026,6 +1026,83 @@ loss would be misattributed to temperature. Ingested per-station like NDBC;
 the feature builder derives event counts above height thresholds and
 maximum event duration per quarter.
 
+### It is already reached through NDBC, and that changes what is worth building
+
+Verified 2026-08-31 against `https://www.ndbc.noaa.gov/data/stations/station_table.txt`.
+**NDBC redistributes the whole San Diego CDIP nearshore array**, each station
+carrying its CDIP number in the NDBC station name, so these buoys arrive through
+`fetchers/ndbc.py` with no new code and no new dependency:
+
+| NDBC | CDIP | Name |
+|---|---|---|
+| 46232 | 191 | Point Loma South |
+| 46235 | 155 | Imperial Beach Nearshore |
+| 46231 | 093 | Mission Bay |
+| 46225 | 100 | Torrey Pines Outer |
+| 46273 | 101 | Torrey Pines Inner |
+| 46226 | 095 | Point La Jolla |
+| 46227 | 091 | Point Loma |
+| 46258 | 220 | Mission Bay West |
+| 46254 | 201 | Scripps Nearshore — **ingested** |
+| 46266 | 153 | Del Mar Nearshore — **ingested** |
+
+Adding one is therefore a `data(registry)` change, not a fetcher. A THREDDS
+route to `191p1_historic.nc` would be a second way to the same numbers, and the
+argument for building it has to be made on something other than access.
+
+**All three carry exactly the parameters the two ingested Waveriders declare.**
+Sampled `46235h2019`, `46231h2012` and `46232h2019`: `WVHT`, `DPD`, `APD`, `MWD`
+and `WTMP` are real in essentially every row, while `WDIR`, `WSPD`, `GST`,
+`PRES`, `ATMP`, `DEWP`, `VIS` and `TIDE` are sentinel in all of them. So
+`measured_parameters` for any of these is the same three
+(`sea_water_temperature`, `wave_significant_height`, `wave_peak_period`) already
+declared for 46254 and 46266, and no `parameters.json` decision is involved.
+
+### Distance to each polygon, measured
+
+Nearest point on the recorded outline, UTM 11N — the same method the RTOMS entry
+uses. Ingested stations in bold.
+
+| Polygon | Nearest today | 46235 | 46231 | 46232 |
+|---|---|---|---|---|
+| `KELP:LA-JOLLA` | **46254** 1.4 km | 27.3 | 9.3 | 33.7 |
+| `KELP:DEL-MAR` | **46266** 0.0 km | 42.5 | 23.7 | 49.4 |
+| `KELP:SOLANA-BEACH` | **46266** 2.3 km | 46.3 | 26.9 | 52.9 |
+| `KELP:ENCINITAS` | **46266** 5.6 km | 49.7 | 29.8 | 55.8 |
+| `KELP:SAN-DIEGO` | **LJAC1** 13.5 km | 10.3 | **8.6** | 21.1 |
+| `KELP:IMPERIAL-BEACH` | **LJAC1** 32.3 km | **0.3** | 26.2 | 24.6 |
+
+**`NDBC:46235` sits 300 m off `KELP:IMPERIAL-BEACH`.** docs/04 §4.5 records that
+this bed and `KELP:SAN-DIEGO` "have no station in range", keep La Jolla
+references 32.3 km and 13.5 km away, and that a §4.5 result there "is partly a
+statement about how far away the public station is". That is a statement about
+`sites.json` rather than about the coast: two stations closer than anything
+currently declared have been sitting in NDBC's archive the whole time.
+
+Neither is free, and the costs are in the record rather than in the access:
+
+- **46235 has a seven-year hole.** Annual stdmet archives exist for 2007–2010
+  and 2018–2025 and for no year between, and the gap swallows the 2014–2016
+  marine heatwave — the event docs/04 §4.2 most wants. It also serves no
+  realtime feed, so there is no `--year`-less path to the current quarter.
+- **46231 ends in 2016** and likewise has no realtime feed. It is the better
+  neighbour for `KELP:SAN-DIEGO` by 4.9 km, over a decade that stops before the
+  kelp record does.
+- **46232 is the only one of the three that is both long and live** — archives
+  2006–2025 continuous, plus a realtime feed answering today. It is also 21 km
+  from the nearest polygon, which is further than `NDBC:LJAC1` already is. The
+  bundle reviewed under "Sources considered and set aside" dates this record to
+  "~2016/17"; through NDBC it starts in 2006.
+- **Pre-2007 years are refused by the parser** on the undocumented header layout
+  (`https://github.com/cweber12/kelp-compare/issues/20`), so 46231's 2005 and
+  2006 archives cannot be read today even though they exist.
+
+A gappy record is not a disqualification here — `pct_coverage` and the coverage
+floor already decide per quarter whether a series is worth believing, and a
+quarter below it is flagged unusable rather than dropped. What a hole does is
+decide which *quarters* the §4.5 comparison can run in, which is a different
+question from whether to declare the station.
+
 ## CDFW / marineBIOS
 
 GIS context rather than time series: substrate, kelp persistence, MPA
@@ -1072,14 +1149,63 @@ publishers. A revision pinned against BIOS for either would name the wrong
 custodian, and for San Diego the CMECS layer is redundant with `ds3091`
 besides. If bathymetry is wanted later, NOAA/NCEI is the custodian to pin.
 
-### Access is unverified, and checking it is implementation's first job
+### Access is unverified for BIOS, and checking it is implementation's first job
 
 BIOS publishes through ArcGIS REST services, which return GeoJSON for a bbox
 query — so the existing fetcher contract and `geopandas` cover it with no new
-dependency (hard rule 8). No endpoint is recorded here because none has been
-called. Unlike the CNRA entry below, nothing in this section has been measured
-against a live service, and every access detail in it is a claim to check
-rather than a finding.
+dependency (hard rule 8). No BIOS endpoint is recorded here because none has
+been called, and every BIOS access detail above is a claim to check rather than
+a finding.
+
+### Two of the four layers are already reachable on CNRA, and were measured
+
+The substrate and persistence layers do not have to come from BIOS. CNRA
+publishes both as ArcGIS REST map services, and unlike the BIOS claims above
+these were called on 2026-08-31:
+
+| Layer | Service (under `https://gis.cnra.ca.gov/arcgis/rest/services/Ocean/`) |
+|---|---|
+| Nearshore seafloor substrate | `CSMW_San_Diego_Nearshore_Seafloor_Substrate/MapServer` layer 0 |
+| Kelp persistence 1967–1999 | `CSMW_San_Diego_Kelp_Persistence/MapServer` layer 0 |
+
+Both answer `?f=json` with one polygon layer, `maxRecordCount` 2000 and a Web
+Mercator (3857) spatial reference, so a full pull paginates on `resultOffset`
+and asks for `outSR=4326`. The substrate layer classifies into `descrip`:
+Bedrock, Boulder, Cobble, Pebble/Gravel/Granule, Sand, Mud, Artificial
+Substrate, Kelp Canopy Obscuring Seafloor, and no data.
+
+**Both layers cover all six polygons**, counted by bbox intersect:
+
+| Polygon | Persistence | Substrate |
+|---|---|---|
+| `KELP:LA-JOLLA` | 4,433 | 5,648 |
+| `KELP:DEL-MAR` | 477 | 1,267 |
+| `KELP:SOLANA-BEACH` | 927 | 2,102 |
+| `KELP:ENCINITAS` | 1,197 | 2,705 |
+| `KELP:SAN-DIEGO` | 9,465 | 14,004 |
+| `KELP:IMPERIAL-BEACH` | 959 | 1,532 |
+
+That settles a coverage doubt worth recording, because it will be raised again:
+Mack (2022) states the SANDAG surveys did not cover his La Jolla Cove site, which
+would put the two largest beds outside the layer. Whatever is true of the Cove,
+it does not generalise to these outlines — La Jolla comes back 30.0% Bedrock and
+0.1% no data, Point Loma 44.5% Bedrock and 6.7% no data. A count is an intersect
+rather than a guarantee of usable classification, and the class breakdown is what
+makes it evidence.
+
+**`Kelp Canopy Obscuring Seafloor` is the trap in this layer, and it is large.**
+It is a mapping artifact — the backscatter could not see the bottom — and it is
+**33.7% of the La Jolla features and 24.3% of the Point Loma ones**. Counting it
+as non-rock would strip a third of the kelpiest water out of a rocky-substrate
+mask, which is the exact water docs/04 §4.5 is asking about, and would bias the
+distance rings in the direction that most looks like a result. It is not rock
+either. It is 2009-era evidence of canopy and has to be carried as its own class.
+
+Two costs before either layer is used. Neither publisher exposes a revision, so
+"what did this layer say when we used it" has no answer beyond a fetch date —
+the pinning question PRD #93 asks. And both are static single-epoch products
+(substrate ~2009, persistence 1967–1999), so neither can become a quarterly
+feature; they are polygon attributes or they are nothing.
 
 ## CNRA open data (data.cnra.ca.gov)
 
@@ -1247,6 +1373,73 @@ site rather than what is in the bed.
 **Rocky Intertidal Ecosystems (2001–2014)** is intertidal, and these beds are
 subtidal. Its span is the most tempting thing about it — fourteen years against
 the two the adopted baselines carry — and span is not relevance.
+
+### A San Diego source bundle, triaged 2026-08-31
+
+An external document-review hand-off (`kelp_data_bundle_2026-08-31`) catalogued
+~20 sources behind the **City of San Diego / SIO kelp forest monitoring
+program** — a different project, the same water. Everything in it that this
+project should adopt has been filed as an issue or recorded above; what follows
+is what it should *not* adopt, so that the same PDFs are not re-triaged later.
+
+**Already held here, and in a better form than the bundle recommends.** Its §4
+(Scripps Pier) and §7 (the Landsat canopy product) are the SIO Shore Stations
+and Kelp Watch entries above. Its §8 recommends the `seshat.datasd.org` per-year
+CSVs for RTOMS; the RTOMS entry above records why the CeNCOOS ERDDAP feeds beat
+them and should not be re-litigated. Its §7 processing recipe is bed bounding
+boxes, which `polygons.geojson` supersedes.
+
+**Its EDI access recipe does not work anonymously.** §7 marks the PASTA route
+`PUBLIC, VERIFIED` and gives programmatic endpoints. Re-checked 2026-08-31:
+`GET /package/eml/knb-lter-sbc/74` and `GET /package/eml` both still return
+**403**, unchanged from 2026-08-26 and 2026-08-28. The bundle verified a landing
+page, not the API. Nothing about
+`https://github.com/cweber12/kelp-compare/issues/25` has changed.
+
+**Not public, and with no home in the schema if it arrived.** Its §1b
+(quadrat-level City/SIO transects), §1c (the 2002–03 Sea Grant whole-forest
+survey), §1f (the 1990– urchin settlement series) and the 2016 canyon moorings
+behind §8b are all human-request-only. Access is the smaller problem: these are
+event-based, taxon-coded transect and size-frequency records with no
+`timestamp / site_id / parameter / value / qc_flag` shape and no QARTOD
+vocabulary. That is the same question
+`https://github.com/cweber12/kelp-compare/issues/95` raises for Reef Check and
+that PRD `https://github.com/cweber12/kelp-compare/issues/93` owns. None of them
+lands in `observations/` by default.
+
+**Literature constants, not data.** The bundle ships transcribed tables from
+Parnell et al. 2005, Couto et al. 2026 and Mack 2022. They are keyed by reserve
+or habitat, never by `site_id` or `polygon_id`, and they belong in a notebook's
+interpretation or a citation rather than in a registry. The exception is the
+Konotchick/Leichter temperature→nitrate constants, which are a derived-parameter
+question rather than a source.
+
+**Wrong subject or wrong coast**, and the bundle excludes them too — recorded
+only so they are not re-opened: Carbajal-Martínez 2026 (the "La Jolla Beach" in
+it is in Baja California), King 2022 (offshore groundwater), Timmer 2026
+(northern Salish Sea), Daly 2026 (kelp biomechanics, no San Diego content),
+Som 2015 (an intertidal management plan), Flick (a tidal-pattern explainer).
+
+**Set aside on merit.** USACE NCMP topo-bathy LiDAR (§9c) offers a reproducible
+roughness→rocky classifier, but it is calibrated at one site, stated valid only
+to −15 m, and its ~1000 m offshore limit does not span the Point Loma bed. The
+CNRA substrate layer recorded above answers the same question with less
+machinery and was measured over all six polygons. Its §1e mid-depth ROV baseline
+is the dataset already rejected under "Two CNRA South Coast baselines cover the
+wrong habitat" above.
+
+**The one it leaves genuinely open** is §1a, the Dryad archive for Parnell et al.
+2026 (`10.5061/dryad.fttdz096d`, CC0): in-water kelp density at 20 City/SIO
+transect sites, 1983–2023 — an independent measure of the *response variable
+itself*, over a longer span than anything else here. It is not adopted and not
+dismissed, because the sites are not the six Kelp Watch beds, the reports never
+publish their coordinates, and it is `.RData`. That is PRD #93's question asked
+on the response side, and it should be answered there rather than by a fetcher.
+
+Two of the bundle's own gaps bear on any later use of it: it is missing
+`san_diego_kelp_monitoring_site_tables.md`, the `site_code` legend everything in
+it joins through, and its Wirewalker `chla` / `par` / `backscatter` channels
+carry no units and are blocked behind an unanswered question to the authors.
 
 ## Cross-cutting fetcher rules
 
