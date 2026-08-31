@@ -98,8 +98,14 @@ def hobo(data_root: Path):
 
 
 def ljac1(data_root: Path, year: str = "2023"):
-    """Ingest and flag one recorded NDBC archive year."""
-    run(data_root, "ingest", "--source", "ndbc", "--year", year)
+    """Ingest and flag one recorded NDBC archive year, for LJAC1 alone.
+
+    Named for the station and now scoped to it. The registry declares three
+    NDBC stations, and these cases are about what the feature builder does with
+    one station's series -- not about how many the registry happens to hold, so
+    a station added to `sites.json` must not rewrite the assertions here.
+    """
+    run(data_root, "ingest", "--source", "ndbc", "--station", "LJAC1", "--year", year)
     run(data_root, "qc")
 
 

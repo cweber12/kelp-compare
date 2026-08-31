@@ -483,3 +483,50 @@ def test_the_committed_project_sites_both_name_one_platform_twice():
     ljac1 = find_station(loaded, "NDBC:LJAC1")
     assert ljac1.same_platform_as == ("COOPS:9410230",)
     assert ljac1.depth_for("sea_water_temperature") == 3.4
+
+
+# --------------------------------------------------------------------------
+# The two nearshore Waveriders (46254, 46266)
+# --------------------------------------------------------------------------
+
+WAVERIDERS = ("NDBC:46254", "NDBC:46266")
+
+
+@pytest.mark.parametrize("site_id", WAVERIDERS)
+def test_a_waverider_declares_the_three_parameters_it_reports(site_id):
+    """Checked against the payloads, not the header: the stdmet layout lists
+    every column whether the station has that sensor or not, and these two
+    carry data in five of them. `APD` and `MWD` are two of the five and have no
+    controlled name in `parameters.json`, so they are absent here rather than
+    invented (https://github.com/cweber12/kelp-compare/issues/97)."""
+    station = committed(site_id)
+
+    assert station.measured_parameters == (
+        "sea_water_temperature",
+        "wave_significant_height",
+        "wave_peak_period",
+    )
+    assert not station.measures("air_temperature")
+    assert not station.measures("wind_speed")
+
+
+@pytest.mark.parametrize("site_id", WAVERIDERS)
+def test_a_waverider_measures_at_the_surface_not_at_an_intake(site_id):
+    """0.46 m below the water line, from the NDBC station pages.
+
+    Pinned because the number is what stops this being compared to a logger at
+    another depth (docs/02). It is 2.9 m above LJAC1's intake and 7.8 m above
+    PROJ:TIDBIT-1, so these are the shallowest references in the registry --
+    nearest in plan distance is not nearest in depth, which bears on the
+    neighbour depth tolerance in
+    https://github.com/cweber12/kelp-compare/issues/73.
+    """
+    assert committed(site_id).depth_for("sea_water_temperature") == 0.46
+
+
+@pytest.mark.parametrize("site_id", WAVERIDERS)
+def test_a_waverider_is_its_own_platform(site_id):
+    """Neither is co-located with anything already recorded, so the
+    one-instrument-counted-twice problem
+    (https://github.com/cweber12/kelp-compare/issues/69) does not arise here."""
+    assert committed(site_id).same_platform_as == ()

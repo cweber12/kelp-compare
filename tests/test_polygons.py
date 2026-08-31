@@ -651,3 +651,44 @@ def test_an_empty_or_unknown_kelp_watch_block_is_refused(tmp_path):
 def test_an_unknown_top_level_member_is_refused(tmp_path):
     """A `kelpwatch` typo would otherwise leave the registry silently unpinned."""
     assert "kelpwatch" in refuses(tmp_path, feature(), kelpwatch={"revision": 23})
+
+
+def test_the_two_waveriders_are_the_nearest_public_station_to_two_of_the_beds():
+    """Why NDBC:46254 and NDBC:46266 are in `sites.json` at all.
+
+    Both distances are the reason the stations were sought, so both are
+    computed here from the committed registries rather than repeated from the
+    prose in `sites.json` -- the failure the two outfall moorings already
+    demonstrated is a registry asserting a number nothing measures.
+
+    46266's is the sharper one: a station *inside* the outline is not a
+    neighbour in the docs/04 §1 sense but a measurement of the water that bed's
+    canopy is in.
+    """
+    metres = metres_to_each_bed()
+
+    assert metres["KELP:LA-JOLLA"]["NDBC:46254"] == pytest.approx(1396, abs=5)
+    assert metres["KELP:DEL-MAR"]["NDBC:46266"] == 0.0
+
+    # Nearer than either reference KELP:LA-JOLLA is actually paired with.
+    assert metres["KELP:LA-JOLLA"]["NDBC:46254"] < metres["KELP:LA-JOLLA"]["SIO:LAJOLLA-PIER"]
+    assert metres["KELP:LA-JOLLA"]["NDBC:46254"] < metres["KELP:LA-JOLLA"]["NDBC:LJAC1"]
+    # And nearer to Del Mar than the station that bed is paired with, by 8.5 km.
+    assert metres["KELP:DEL-MAR"]["NDBC:LJAC1"] == pytest.approx(8574, abs=5)
+
+
+def test_neither_waverider_is_paired_into_a_polygon_yet():
+    """Placed but unpaired, deliberately.
+
+    Which polygon a station joins follows the pairing rule
+    https://github.com/cweber12/kelp-compare/issues/86 owns; landing the
+    stations was not licence to invent a second one. Pinned so the pairing
+    arrives as a reviewed change rather than by drift, and because being
+    nearest is exactly what makes the omission look like an oversight.
+    """
+    paired = {site for polygon in load_polygons(COMMITTED) for site in polygon.site_ids}
+
+    assert "NDBC:46254" not in paired
+    assert "NDBC:46266" not in paired
+    # The precedent: two more placed-but-unpaired sites, for a different reason.
+    assert "SDRTOMS:PLOO" not in paired and "SDRTOMS:SBOO" not in paired
