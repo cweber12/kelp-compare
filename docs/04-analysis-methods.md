@@ -67,6 +67,39 @@ Four properties to keep in mind when reading flags:
   grounds as climatology below: it needs a record that contains the events,
   and this one does not.
 
+**The wave parameters are flagged asymmetrically, and the asymmetry is the
+finding.** `wave_significant_height` carries spike thresholds and deliberately no
+rate of change; `wave_peak_period` carries neither. Both Waveriders report every 30
+minutes, and the ~292,000 readings behind this are a much larger record than the
+temperature thresholds above were sized on.
+
+Two windows of the same series decide it. A real storm build is a monotonic ramp —
+2.03, 2.39, 2.75, 2.99, 3.01, 3.89, 4.00, 4.16, 4.52, 4.86 m through 22 February
+2023 — whose steepest spike statistic is only 0.43 m, because the midpoint of a
+ramp's neighbours tracks the ramp. A fault is a single sample that departs and
+returns: 1.36, 1.26, 1.38, 1.33, **2.98**, 1.23, 1.27 m on 11 January 2018, a spike
+statistic of 1.70 m. Spike tells those apart by a factor of four. Rate of change
+cannot — that same real ramp steps at 1.76 m/h against the fault's 2.04–2.11 m/h —
+so a rate threshold placed between them would flag genuine storm growth, which is
+the event wave data exists to capture. That is this section's own worry about the
+temperature thresholds, arriving before the mistake rather than after it.
+
+`wave_peak_period` gets neither test for a different reason. The peak period is
+where the spectral maximum sits, so it hops discontinuously whenever two swell
+trains of similar energy compete: its spike statistic reaches 8.71 s at p99 and its
+rate of change 20.6 s/h. A neighbour-difference test has no power to separate that
+from a fault, and https://github.com/cweber12/kelp-compare/issues/68 is the record of what
+happens when one is applied anyway.
+
+Across both stations the spike block flags **1 suspect and 0 fail** in 291,883
+evaluated readings — the 2.98 m sample above, inside a 2018 Q1 the coverage floor
+already marks unusable. So it changes no feature value today; it is there for the
+next fault. A suspect of 0.75 would have caught all five of the January 2018
+excursions rather than one, and was rejected: it sits 1.19× above the worst real
+spike in eleven years (0.63 m) against 1.59× at 1.0, and a suspect flag *removes*
+data under the default filter, so the thin-headroom mistake this section already
+records against the temperature thresholds is not one to repeat knowingly.
+
 **Deferred, with reasons.** *Climatology* needs a multi-year per-quarter
 baseline that no series in this project yet has; running it against three weeks
 of data would test the data against itself. *Flat line* fires on genuinely
