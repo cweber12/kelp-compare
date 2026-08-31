@@ -439,6 +439,29 @@ local information beyond NOAA/SCCOOS. This comparison (project sensor vs.
 public neighbor vs. satellite SST as competing predictors for the same
 kelp series) is the analysis the whole system is built to support.
 
+*Which* public station plays the neighbor is not a free choice, and it is
+recorded rather than made per analysis. `polygons.geojson` pairs each polygon
+with the project sensors, with every public station within 8 km that has an
+ingested record, and with the references able to supply a climatology; doc 03
+states the rule and the registry's own `_provisional` block carries it. Two
+consequences bear on how a §4.5 result is read.
+
+**Two beds have no station in range.** `KELP:SAN-DIEGO` and
+`KELP:IMPERIAL-BEACH` keep La Jolla references 13.5 km and 32.3 km away,
+because the only nearer sites are outfall moorings without a usable record. The
+neighbor leg of the comparison is correspondingly weak for those two, and a
+result that reads as "the project sensor beats the public station" there is
+partly a statement about how far away the public station is. The stations
+nearest them are held out on a written gate — a record overlapping the kelp
+series, and evidence of tracking regional forcing — not on distance.
+
+**A near station need not carry anomalies.** `NDBC:46266` sits inside
+`KELP:DEL-MAR` and is the nearest station to three beds, but its record begins
+2019-12 and clears no baseline under §3, so it enters the §4.1 screen with a
+null environmental side. It is paired for the raw series and the depth
+comparison it does support; the anomaly comparison for those beds still rests
+on the long-record references.
+
 **Deferred:** machine-learning models (insufficient N for them to beat
 classical methods honestly), HF-radar transport analysis, and multi-species
 work — revisit if the sensor network or study area grows.

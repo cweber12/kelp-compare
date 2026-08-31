@@ -390,10 +390,53 @@ One GeoJSON `Feature` per polygon. Properties:
 | Property | Notes |
 |----------|-------|
 | `polygon_id` | Required, non-empty. The key every kelp and comparison row joins on |
-| `purpose` | Required, one of `near_site`, `control`, `regional` |
+| `purpose` | Required, one of `near_site`, `control`, `regional` — see below |
 | `site_ids[]` | Required, non-empty. The sites this polygon is compared against |
 | `source_file` | Required. The Kelp Watch export this polygon's rows arrive in |
 | `name`, `notes` | Optional human labels |
+
+### What decides `purpose` and `site_ids`
+
+Both are set by a rule recorded in the file's own `_provisional` block, so a
+later edit has something to be checked against rather than a precedent to copy.
+Doc 04 §4.5 is what they serve.
+
+**`purpose` is decided by containment**, which needs no threshold: the nearest
+project sensor is 0 m for the bed that contains one and 9.8 km for the next.
+
+| value | rule |
+|-------|------|
+| `near_site` | the polygon contains a project sensor |
+| `control` | it does not |
+| `regional` | a polygon representing a wider province rather than a site — **reserved, carried by nothing today** |
+
+`regional` is kept unoccupied on purpose. It is defined by *extent*, and every
+committed bed is local (0.44–18.20 km²); whether the project gains polygons that
+earn it is an open PRD. A vocabulary entry no row carries is normally the thing
+a closed vocabulary exists to prevent, so the distinction between a reservation
+and an orphan is recorded here and pinned by a test rather than left to be
+rediscovered.
+
+**`site_ids` is the union of three legs**, and a station is paired for one of
+them or not at all:
+
+- **(a) Both project sensors, on every polygon.** §4.5 is a distance-decay test,
+  so the far beds are the measurement rather than noise in it.
+- **(b) Public stations within 8 km that have an ingested record.** The radius
+  is not tuned — every bed's nearest public stations sit at ≤ 5625 m and the
+  next at ≥ 8369 m, so any value in that gap gives the same pairings, and a test
+  asserts the gap is still open. The *record* half matters as much as the range
+  half: the nearest site to two beds is an outfall mooring with no usable
+  history, and range alone would have paired it.
+- **(c) The public references able to supply a climatology.** A nearer station
+  whose record post-dates the baseline carries no anomaly at all (doc 04 §3), so
+  it cannot reach the §4.1 screen; pairing by distance alone would trade a
+  reference with anomalies for one without.
+
+A station within range but without a record is held out until it has one **and**
+has been shown to track regional forcing — correlation against the network, the
+reasoning `features/validation.py` already uses to report correlation across a
+depth gap while refusing bias.
 
 `source_file` is the registry gate for this source. A Kelp Watch export names
 the geometry it describes **nowhere in the file** (doc 02) — only in its
