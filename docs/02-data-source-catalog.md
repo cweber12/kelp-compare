@@ -22,7 +22,8 @@ implementation, since public endpoints and formats drift.
 | CDIP | Wave climate | THREDDS/ERDDAP NetCDF | 30 min | NetCDF |
 | CDFW / marineBIOS | GIS context, historical kelp surveys | Downloaded shapefiles/services | Static / annual | Shapefile, GeoJSON |
 | CNRA open data | Ecological context, independent canopy | CKAN portal downloads | Static (2011–2012) | CSV, PDF |
-| Supplementary (SST, indices) | Gap-filling, regional drivers | ERDDAP / flat files | Daily / monthly | NetCDF, text |
+| JPL MUR L4 SST | Spatially continuous SST per kelp bed | NOAA CoastWatch ERDDAP (griddap) | Daily | CSV |
+| Supplementary (indices) | Regional drivers | ERDDAP / flat files | Daily / monthly | NetCDF, text |
 
 ## Kelp Watch
 
@@ -1103,6 +1104,148 @@ quarter below it is flagged unusable rather than dropped. What a hole does is
 decide which *quarters* the §4.5 comparison can run in, which is a different
 question from whether to declare the station.
 
+## JPL MUR L4 SST
+
+**Implemented** — `src/kelpcompare/fetchers/mur_sst.py`, run as
+`kelpcompare ingest --source mur_sst`. The satellite leg of the doc 04 §4.5
+three-way comparison, and the only source in this catalogue that covers all six
+beds — including `KELP:SAN-DIEGO` and `KELP:IMPERIAL-BEACH`, which doc 04 §4.5
+records as having no station in range. It spans the whole 2007–2019 climatology
+baseline, and it is the leg with no substitute: a public neighbour can stand in
+for another neighbour, but nothing else here is spatially continuous.
+
+| | |
+|---|---|
+| Dataset | `jplMURSST41` (MUR-JPL-L4-GLOB-v4.1, NASA MEaSUREs) |
+| Host | `https://coastwatch.pfeg.noaa.gov/erddap` (`griddap`) |
+| Variable | `analysed_sst`, `standard_name = sea_surface_foundation_temperature` |
+| Unit as served | `degree_C` — no conversion, but checked at the boundary |
+| Resolution | 0.01° (~1 km), daily at 09:00:00Z |
+| Record | 2002-06-01 onward |
+| Licence | PO.DAAC data policy: free to use and redistribute |
+
+### MUR, not OISST — measured, not assumed
+
+Both were checked live on 2026-08-31 on the same ERDDAP.
+
+| | `ncdcOisst21Agg_LonPM180` | `jplMURSST41` |
+|---|---|---|
+| Resolution | 0.25° (~25 km) | 0.01° (~1 km) |
+| Record starts | 1981-09 | 2002-06 |
+| Distinct cells across the six beds | **3** | **6** |
+
+**OISST cannot tell the beds apart, which disqualifies it for §4.5.** At 0.25°,
+`KELP:LA-JOLLA` and `KELP:SAN-DIEGO` fall in one cell, and `KELP:DEL-MAR`,
+`KELP:SOLANA-BEACH` and `KELP:ENCINITAS` in another. A predictor that hands
+identical values to two beds cannot compete as a *per-bed* predictor against a
+sensor that distinguishes them; it would enter §4.5 guaranteed to lose for a
+reason about the grid rather than about the ocean.
+
+OISST's one advantage is length — 1981 against 2002 — and it buys nothing here.
+The baseline is fixed at 2007–2019, which MUR covers in full, and the kelp
+record's pre-2002 half has no environmental series to pair with regardless.
+
+### A bed is not a bbox, and it is not a cell either
+
+The request has to be a rectangle and every bed's rectangle contains shoreline,
+which arrives as `NaN`. So a bed's value is an aggregate over *water cells
+within the outline*, never over the box.
+
+**The reduction is the area-weighted mean over every cell the outline touches**,
+each weighted by the area of it inside the outline, over the cells that carry a
+value. That is the ordinary zonal mean, and choosing it over the obvious
+alternative was forced by a measurement rather than by taste:
+
+| Bed | cell centres inside | cells overlapping | bed area backed by a water cell |
+|---|---|---|---|
+| `KELP:LA-JOLLA` | 9 | 22 | 96.3 % |
+| `KELP:DEL-MAR` | **0** | 5 | 94.9 % |
+| `KELP:SOLANA-BEACH` | 2 | 5 | 83.0 % |
+| `KELP:ENCINITAS` | 2 | 7 | 91.2 % |
+| `KELP:SAN-DIEGO` | 15 | 34 | 100.0 % |
+| `KELP:IMPERIAL-BEACH` | 6 | 17 | 100.0 % |
+
+**`KELP:DEL-MAR` has no MUR cell centre inside it at all** — the bed is narrower
+than the grid along its whole length — so a centres-inside rule produces no
+series for one of the six beds, and the §4.5 satellite leg would have covered
+five. Area weighting needs no fallback rule for the small beds, and where both
+rules produce an answer they agree to within 0.03 °C. The choice therefore
+decides whether a bed has a series at all and barely moves the beds that already
+did. Measured 2020-07-01; the coverage column is from the same day and is
+essentially static, since MUR's land mask does not move.
+
+The within-bed spread is small — 0.009 to 0.26 °C across the six on that day —
+so the spread is **not** carried as a feature. It is an order of magnitude below
+the ~1 °C offset doc 04 §1 measures between `NDBC:LJAC1` and `PROJ:TIDBIT-1`,
+which is the scale a spatial-signal claim would have to clear.
+
+### Rows are keyed on a derived site, one per bed
+
+`observations/` is keyed on `site_id`, and a satellite value belongs to a
+polygon. Doc 03 "A site may be derived from a polygon" records the shape chosen
+and why the polygon-keyed alternative was rejected; the short version is that
+§4.5 scores three predictors against one kelp series and they must reach it by
+the same road. `sites.json` carries `SST:LA-JOLLA` … with a `derived_from` block
+naming the bed, and nothing reads a polygon out of a site's name.
+
+**`depth_m` is null, and that is the provider's answer rather than a gap.**
+PO.DAAC publishes `sea_surface_foundation_temperature` and no depth. A
+foundation SST is by definition the temperature free of diurnal stratification,
+not a reading at one depth, so `0.0` would assert a skin temperature this
+product explicitly is not. Doc 03 reserves a null depth for a water parameter
+whose depth the provider has not published. `depth_m` is part of
+`OBSERVATION_KEY`, so this is one-way: whether a foundation SST is
+depth-comparable to a project logger for the doc 04 §1 validation table is
+follow-on work and is deliberately not answered by the landed rows.
+
+### Conditional requests do not work here, and `now` is not available
+
+Both measured 2026-08-31 against this host.
+
+- **No `ETag` is served at all**, and the `Last-Modified` is the moment the
+  response was generated rather than a version of the data — two requests a
+  minute apart returned two different values. `If-Modified-Since` is answered
+  `200` with the whole body. The fetcher therefore records **neither**
+  validator: storing that header would put "when we asked" into the validator
+  cache wearing the costume of "what version this is". Re-runs are made cheap by
+  a narrower window, as the RTOMS entry describes for a different ERDDAP.
+- **`time>=now-45days` is rejected on a griddap time axis** with `Start=NaN`,
+  although the same form works on `tabledap`. The rolling window is an index
+  offset from the end of the record, `[last-44:1:last]` — 45 daily steps, which
+  cannot ask for a day the analysis has not published and cannot run off the
+  start of the record.
+
+### Volume, measured
+
+One calendar year of the largest bed's box (`KELP:SAN-DIEGO`, 98 cells) is
+35,870 rows, 1.5 MB, and 33.5 s. A full backfill is 6 beds × 24 years ≈ 144
+requests and roughly 150 MB in `raw/`, which is why the window is a year rather
+than the whole record.
+
+### Other quirks
+
+- The request box is the outline's bounds **padded by one whole cell**. A cell
+  whose centre is outside the bounds can still overlap them, so asking for
+  exactly the bounds would drop cells the reduction weights — and the same
+  outline would then reduce differently depending on where its edges fell
+  against the grid.
+- `analysed_sst` declares `_FillValue = -7.768`. ERDDAP writes `NaN` in CSV so
+  it should never arrive, and it is mapped to missing anyway: QC runs *after*
+  the reduction, so a fill that reached the weighted mean would already have
+  moved the stored value.
+- The grid step is checked against the payload. A regridded product would keep
+  every column name and every unit and change only this, and every cell would
+  then be weighted by a footprint of the wrong size.
+- A day the product covers nowhere over a bed is stored as a row flagged
+  missing, not dropped — a dropped day is a hole the doc 04 §3 coverage
+  arithmetic cannot see.
+- **QARTOD thresholds are per-parameter, not per-source**, so these rows inherit
+  bounds tuned for in-situ loggers. On a daily gap-filled L4 analysis the spike
+  and rate-of-change tests are effectively inert (consecutive samples are 24 h
+  apart against an 18 °C/h suspect rate). Gross range still applies. This is
+  recorded rather than fixed here, because narrowing them is a `parameters.json`
+  decision about evidence, not a parsing one.
+
 ## CDFW / marineBIOS
 
 GIS context rather than time series: substrate, kelp persistence, MPA
@@ -1294,9 +1437,8 @@ recorded per-source here rather than discovered at submission.
 
 ## Supplementary sources (recommended additions)
 
-Satellite SST (NOAA OISST or NASA MUR via NOAA CoastWatch ERDDAP) provides
-spatially continuous temperature to bridge point sensors and kelp polygons
-and to validate project sensors. Upwelling indices CUTI and BEUTI (NOAA
+Satellite SST is **no longer on this list** — it is built, as JPL MUR L4
+above. Upwelling indices CUTI and BEUTI (NOAA
 SWFSC) summarize upwelling strength and nitrate flux at 1° latitude bins —
 BEUTI is the closest available proxy for the nutrient supply that drives
 Southern California kelp. ENSO indices (ONI/MEI, monthly text products)

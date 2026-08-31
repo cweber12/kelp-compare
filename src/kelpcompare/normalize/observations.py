@@ -67,6 +67,14 @@ _UNIT_ALIASES = {
     # what it says.
     "degreecelsius": "degC",
     "degreescelsius": "degC",
+    # The UDUNITS spelling, which is the other thing an ERDDAP declares: NOAA
+    # CoastWatch serves `jplMURSST41` as `degree_C` where CeNCOOS serves
+    # `degree_Celsius` for the same quantity (docs/02). Two spellings of one
+    # unit from two ERDDAPs is exactly what this table is for -- the alternative
+    # is each fetcher rewriting its own file's header before checking it, which
+    # is how a real unit change gets absorbed.
+    "degreec": "degC",
+    "degreesc": "degC",
     # NDBC spells these in its units line as `sec` and `m/s`, while
     # `parameters.json` stores the CF forms `s` and `m s-1`. Both sides fold to
     # the same token here rather than either side being rewritten to match the
