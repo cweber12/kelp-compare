@@ -1149,14 +1149,63 @@ publishers. A revision pinned against BIOS for either would name the wrong
 custodian, and for San Diego the CMECS layer is redundant with `ds3091`
 besides. If bathymetry is wanted later, NOAA/NCEI is the custodian to pin.
 
-### Access is unverified, and checking it is implementation's first job
+### Access is unverified for BIOS, and checking it is implementation's first job
 
 BIOS publishes through ArcGIS REST services, which return GeoJSON for a bbox
 query — so the existing fetcher contract and `geopandas` cover it with no new
-dependency (hard rule 8). No endpoint is recorded here because none has been
-called. Unlike the CNRA entry below, nothing in this section has been measured
-against a live service, and every access detail in it is a claim to check
-rather than a finding.
+dependency (hard rule 8). No BIOS endpoint is recorded here because none has
+been called, and every BIOS access detail above is a claim to check rather than
+a finding.
+
+### Two of the four layers are already reachable on CNRA, and were measured
+
+The substrate and persistence layers do not have to come from BIOS. CNRA
+publishes both as ArcGIS REST map services, and unlike the BIOS claims above
+these were called on 2026-08-31:
+
+| Layer | Service (under `https://gis.cnra.ca.gov/arcgis/rest/services/Ocean/`) |
+|---|---|
+| Nearshore seafloor substrate | `CSMW_San_Diego_Nearshore_Seafloor_Substrate/MapServer` layer 0 |
+| Kelp persistence 1967–1999 | `CSMW_San_Diego_Kelp_Persistence/MapServer` layer 0 |
+
+Both answer `?f=json` with one polygon layer, `maxRecordCount` 2000 and a Web
+Mercator (3857) spatial reference, so a full pull paginates on `resultOffset`
+and asks for `outSR=4326`. The substrate layer classifies into `descrip`:
+Bedrock, Boulder, Cobble, Pebble/Gravel/Granule, Sand, Mud, Artificial
+Substrate, Kelp Canopy Obscuring Seafloor, and no data.
+
+**Both layers cover all six polygons**, counted by bbox intersect:
+
+| Polygon | Persistence | Substrate |
+|---|---|---|
+| `KELP:LA-JOLLA` | 4,433 | 5,648 |
+| `KELP:DEL-MAR` | 477 | 1,267 |
+| `KELP:SOLANA-BEACH` | 927 | 2,102 |
+| `KELP:ENCINITAS` | 1,197 | 2,705 |
+| `KELP:SAN-DIEGO` | 9,465 | 14,004 |
+| `KELP:IMPERIAL-BEACH` | 959 | 1,532 |
+
+That settles a coverage doubt worth recording, because it will be raised again:
+Mack (2022) states the SANDAG surveys did not cover his La Jolla Cove site, which
+would put the two largest beds outside the layer. Whatever is true of the Cove,
+it does not generalise to these outlines — La Jolla comes back 30.0% Bedrock and
+0.1% no data, Point Loma 44.5% Bedrock and 6.7% no data. A count is an intersect
+rather than a guarantee of usable classification, and the class breakdown is what
+makes it evidence.
+
+**`Kelp Canopy Obscuring Seafloor` is the trap in this layer, and it is large.**
+It is a mapping artifact — the backscatter could not see the bottom — and it is
+**33.7% of the La Jolla features and 24.3% of the Point Loma ones**. Counting it
+as non-rock would strip a third of the kelpiest water out of a rocky-substrate
+mask, which is the exact water docs/04 §4.5 is asking about, and would bias the
+distance rings in the direction that most looks like a result. It is not rock
+either. It is 2009-era evidence of canopy and has to be carried as its own class.
+
+Two costs before either layer is used. Neither publisher exposes a revision, so
+"what did this layer say when we used it" has no answer beyond a fetch date —
+the pinning question PRD #93 asks. And both are static single-epoch products
+(substrate ~2009, persistence 1967–1999), so neither can become a quarterly
+feature; they are polygon attributes or they are nothing.
 
 ## CNRA open data (data.cnra.ca.gov)
 
