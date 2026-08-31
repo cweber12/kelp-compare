@@ -21,6 +21,7 @@ them separately rather than treat realtime as a short archive file.
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 FIX = Path(__file__).parent / "fixtures" / "ndbc"
 ARCHIVE = FIX / "ljac1h2023_excerpt.txt"
@@ -129,3 +130,86 @@ def test_realtime_is_newest_first_and_uses_mm():
     water = pd.to_numeric(frame["WTMP"], errors="coerce")
     assert (water.min(), water.max()) == (16.0, 21.8)
     assert frame["PTDY"].str.startswith(("+", "-")).any()  # signed, unlike every other column
+
+
+# --------------------------------------------------------------------------
+# The two nearshore Waveriders (46254, 46266)
+# --------------------------------------------------------------------------
+
+#: The five columns both Waveriders carry data in. Everything else in the
+#: stdmet layout is sentinel in every row of both files.
+WAVERIDER_REPORTS = {"WVHT", "DPD", "APD", "MWD", "WTMP"}
+
+WAVERIDERS = {
+    "46254": (FIX / "46254h2015_excerpt.txt", FIX / "46254_realtime_excerpt.txt"),
+    "46266": (FIX / "46266h2019_excerpt.txt", FIX / "46266_realtime_excerpt.txt"),
+}
+
+#: Where each station's stdmet archive actually begins -- the fact the archive
+#: excerpts are cut from row 1 to preserve. Neither reaches back into the
+#: 2007-2019 climatology baseline, which is what docs/04 s3 and ADR-007 are
+#: about, and 46266's does not reach it at all.
+ARCHIVE_STARTS = {"46254": (2015, 2, 12), "46266": (2019, 12, 6)}
+
+
+def _sentinel_columns(path):
+    """Which columns hold nothing but this layout's missing tokens."""
+    names, _, frame = _read(path)
+    missing = {"MM", "999.0", "99.0", "999", "99.00", "9999.0", "999.00", "99"}
+    empty = set()
+    for name in names:
+        if name in ("YY", "MM", "DD", "hh", "mm"):
+            continue
+        if set(frame[name].unique()) <= missing:
+            empty.add(name)
+    return empty
+
+
+@pytest.mark.parametrize("station", sorted(WAVERIDERS))
+def test_a_waverider_reports_waves_and_water_temperature_and_nothing_else(station):
+    """The opposite shape from LJAC1, and the reason these got their own fixtures.
+
+    `sites.json` declares `measured_parameters` for these two from this fact
+    rather than from the header, which lists every stdmet column whether the
+    station has the sensor or not.
+    """
+    for path in WAVERIDERS[station]:
+        names, _, _ = _read(path)
+        reported = {n for n in names if n not in ("YY", "MM", "DD", "hh", "mm")}
+        reported -= _sentinel_columns(path)
+        assert reported == WAVERIDER_REPORTS, f"{path.name} reports {sorted(reported)}"
+
+
+@pytest.mark.parametrize("station", sorted(WAVERIDERS))
+def test_a_waverider_carries_no_air_temperature_or_wind(station):
+    """The three parameters LJAC1 declares, none of which these two have."""
+    for path in WAVERIDERS[station]:
+        assert {"ATMP", "WSPD", "WDIR"} <= _sentinel_columns(path)
+
+
+@pytest.mark.parametrize("station", sorted(WAVERIDERS))
+def test_the_archive_excerpt_begins_where_the_station_record_begins(station):
+    """Cut from row 1 on purpose: the first timestamp is the load-bearing fact.
+
+    These two dates are why neither station can supply the 2007-2019 baseline
+    (docs/04 s3). A window taken from the middle of the record would not show
+    it, and 46266's start in particular is easy to misread -- its 2019 file
+    covers 6-31 December, so "the record starts in 2019" is true and suggests a
+    baseline year that does not exist.
+    """
+    archive, _ = WAVERIDERS[station]
+    _, _, frame = _read(archive)
+    first = _timestamps(frame).iloc[0]
+
+    year, month, day = ARCHIVE_STARTS[station]
+    assert (first.year, first.month, first.day) == (year, month, day)
+
+
+@pytest.mark.parametrize("station", sorted(WAVERIDERS))
+def test_the_waverider_water_temperature_is_never_a_sentinel(station):
+    """No missing WTMP anywhere in either excerpt, so a parse that drops rows
+    for the wrong reason has nowhere to hide behind a real gap."""
+    for path in WAVERIDERS[station]:
+        _, _, frame = _read(path)
+        assert set(frame["WTMP"]) & {"MM", "999.0"} == set()
+        assert frame["WTMP"].astype(float).between(5.0, 35.0).all()

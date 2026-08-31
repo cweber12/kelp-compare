@@ -571,3 +571,86 @@ def test_the_url_helpers_agree_with_what_the_fetchers_request():
     ndbc.fetch_archive("LJAC1", 2023, session=session)
 
     assert session.urls == [ndbc.realtime_url("LJAC1"), ndbc.archive_url("ljac1", 2023)]
+
+
+# --------------------------------------------------------------------------
+# The two nearshore Waveriders parse with no change to this module
+# --------------------------------------------------------------------------
+
+WAVERIDER_DEPTHS = {"sea_water_temperature": 0.46}  # station pages: 0.46 m below water line
+WAVERIDER_DECLARES = ("sea_water_temperature", "wave_significant_height", "wave_peak_period")
+
+WAVERIDER_FILES = [
+    ("NDBC:46254", FIX / "46254h2015_excerpt.txt", True),
+    ("NDBC:46254", FIX / "46254_realtime_excerpt.txt", False),
+    ("NDBC:46266", FIX / "46266h2019_excerpt.txt", True),
+    ("NDBC:46266", FIX / "46266_realtime_excerpt.txt", False),
+]
+
+
+def _parse_waverider(site_id, path, parameters, *, gzipped):
+    body = path.read_bytes()
+    payload = new_payload(
+        "ndbc",
+        site_id.split(":")[1],
+        path.name,
+        f"https://www.ndbc.noaa.gov/data/{path.name}",
+        gzip.compress(body) if gzipped else body,
+    )
+    return ndbc.parse(
+        payload,
+        parameters,
+        site_id=site_id,
+        depths_m=WAVERIDER_DEPTHS,
+        run_id=RUN,
+        measured_parameters=WAVERIDER_DECLARES,
+    )
+
+
+@pytest.mark.parametrize(
+    ("site_id", "path", "gzipped"), WAVERIDER_FILES, ids=lambda v: getattr(v, "name", v)
+)
+def test_a_waverider_payload_parses_with_no_change_to_this_module(
+    site_id, path, gzipped, parameters
+):
+    """The claim that landing these two stations needed no fetcher work.
+
+    Both layouts, both stations, through the same `parse` LJAC1 goes through.
+    """
+    parsed = _parse_waverider(site_id, path, parameters, gzipped=gzipped)
+    frame = parsed.frame
+
+    assert not frame.empty
+    assert set(frame["site_id"]) == {site_id}
+    assert set(frame["parameter"]) == set(WAVERIDER_DECLARES)
+
+
+@pytest.mark.parametrize(
+    ("site_id", "path", "gzipped"), WAVERIDER_FILES, ids=lambda v: getattr(v, "name", v)
+)
+def test_a_waverider_water_temperature_survives_the_parse_intact(
+    site_id, path, gzipped, parameters
+):
+    """No sentinel reaches the record as a measurement, and the surface depth
+    the registry declares is what lands on the row."""
+    frame = _parse_waverider(site_id, path, parameters, gzipped=gzipped).frame
+    water = frame.loc[frame["parameter"] == "sea_water_temperature"]
+
+    assert water["value"].notna().all()
+    assert water["value"].between(5.0, 35.0).all()
+    assert set(water["depth_m"]) == {0.46}
+
+
+@pytest.mark.parametrize(
+    ("site_id", "path", "gzipped"), WAVERIDER_FILES, ids=lambda v: getattr(v, "name", v)
+)
+def test_a_waverider_lands_no_rows_for_the_sensors_it_does_not_have(
+    site_id, path, gzipped, parameters
+):
+    """`measured_parameters` is the gate: the met columns are present in the
+    layout and sentinel in every row, and must produce no observations at all
+    rather than a column of nulls."""
+    frame = _parse_waverider(site_id, path, parameters, gzipped=gzipped).frame
+
+    assert "air_temperature" not in set(frame["parameter"])
+    assert "wind_speed" not in set(frame["parameter"])
