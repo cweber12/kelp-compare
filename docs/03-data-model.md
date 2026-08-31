@@ -645,7 +645,7 @@ feature in `quarterly_env`.
 | `source`, `site_id`, `parameter`, `depth_m` | The QC series key |
 | `quarter` | Quarter of the year, 1–4; **not** a year-quarter |
 | `feature` | Which measured feature this baseline is for |
-| `baseline_start_year`, `baseline_end_year` | The window applied, inclusive |
+| `baseline_start_year`, `baseline_end_year` | The window applied, inclusive; per series, so an override is readable here |
 | `n_years` | Contributing years for this feature |
 | `baseline_mean`, `baseline_std` | Sample convention; `std` null below two years |
 
@@ -658,7 +658,8 @@ otherwise-usable quarter.
 
 Only **usable, complete** quarters inside the window contribute. A cell with
 no contributing year gets no row — an empty row would claim a baseline
-exists. Doc 04 §3 records the window and why it is what it is.
+exists. Doc 04 §3 records the window and why it is what it is, including when
+a series takes a declared window of its own rather than the canonical one.
 
 ### One climatology implementation, two series keys
 
@@ -693,7 +694,10 @@ stress thresholds.
 ```json
 "policy": {
   "coverage_floor": 0.6,
-  "baseline": {"start_year": 2007, "end_year": 2019, "min_years": 10}
+  "baseline": {"start_year": 2007, "end_year": 2019, "min_years": 10},
+  "baseline_overrides": {
+    "NDBC:46254": {"start_year": 2016, "end_year": 2025}
+  }
 },
 "parameters": {
   "sea_water_temperature": {
@@ -712,6 +716,24 @@ an empty block, thresholds on a set that takes none, or a feature set the
 builder does not implement all raise, naming the file and the key. A
 parameter with **no** entry is skipped, named in a manifest warning, and sets
 the run's exit code.
+
+`baseline_overrides` is optional and empty in the committed file. It names a
+**fixed** window per `site_id` for a series whose record post-dates the
+canonical one, so that a station installed after 2019 can carry an anomaly at
+all. It is declared, never derived from the years that happen to have landed —
+a derived window would grow with each backfill and move every anomaly taken
+against it (doc 04 §3, ADR-007). An override carries no `min_years`: that
+comes from the canonical window and is not per-station. A window narrower than
+`min_years` raises, for the reason the canonical window does — it could
+produce nothing but nulls, and no output column would say why.
+
+Overrides are resolved by `site_id`, and only where `site_id` is part of the
+series key. The kelp half is keyed on `polygon_id`, so no override can reach
+it and every kelp row takes the canonical window. An override applied to a
+series that **already** covers the canonical window does not raise — the
+condition is data-dependent, and a backfill crossing the minimum would
+otherwise start failing every rebuild — but it is reported as a manifest
+warning naming both windows.
 
 ### Writing the features zone
 

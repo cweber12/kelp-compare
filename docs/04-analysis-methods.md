@@ -313,6 +313,35 @@ complete quarters contribute** — a half-observed quarter cannot drag the
 baseline it is later compared against, and an in-progress quarter cannot bias
 it toward whatever part of the year the run happened in.
 
+**A series that cannot cover the window may be given its own, declared in
+`features.json`.** The window above is an artifact of one station's record —
+it is 2007–2019 *because* LJAC1 begins in 2007 — so every newer nearshore
+station is otherwise structurally ineligible for an anomaly. The nearest
+public stations to two of the beds begin in 2015-02 and 2019-12; neither can
+supply this baseline, and both would otherwise be inert in §4.1 and §4.5.
+
+An override is **declared, never derived**. A window computed from whatever
+years have landed would grow with every backfill and move every anomaly ever
+taken against it, which is the one thing the fixed window exists to prevent.
+The alternative was measured before being rejected: Scripps Pier's record
+begins in 1916, and its own full record as a baseline shifts the climatology
+by 0.77–1.02 °C in every quarter — larger than most anomalies being studied.
+ADR-007 records the decision.
+
+`min_years` is **not** overridable and is taken from the canonical window. How
+thin is too thin for a climatology belongs to the method rather than to a
+station, and per-station minimums would make the weakest baselines the ones
+nearest the beds. So a station with six usable years stays null whatever
+window is declared for it.
+
+**The cost, documented rather than mitigated: two windows can coexist in one
+screen.** Anomalies taken against different baselines are not strictly
+comparable, which matters most in §4.5, where the whole point is to compare
+what a project sensor and a public station each explain. The window is stamped
+on every climatology row, so a reader can see which baseline produced a number
+and exclude it — the same "make it visible rather than filter it" posture §1
+takes with QC flags. Any §4.5 result that mixes windows must say so.
+
 Every measured feature gets an `_anom` twin; bookkeeping columns do not, so
 the table never offers the anomaly of a row count. Anomalies *are* computed
 for unusable quarters, because `usable` is already the single gate on the
