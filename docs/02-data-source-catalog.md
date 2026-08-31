@@ -1026,6 +1026,83 @@ loss would be misattributed to temperature. Ingested per-station like NDBC;
 the feature builder derives event counts above height thresholds and
 maximum event duration per quarter.
 
+### It is already reached through NDBC, and that changes what is worth building
+
+Verified 2026-08-31 against `https://www.ndbc.noaa.gov/data/stations/station_table.txt`.
+**NDBC redistributes the whole San Diego CDIP nearshore array**, each station
+carrying its CDIP number in the NDBC station name, so these buoys arrive through
+`fetchers/ndbc.py` with no new code and no new dependency:
+
+| NDBC | CDIP | Name |
+|---|---|---|
+| 46232 | 191 | Point Loma South |
+| 46235 | 155 | Imperial Beach Nearshore |
+| 46231 | 093 | Mission Bay |
+| 46225 | 100 | Torrey Pines Outer |
+| 46273 | 101 | Torrey Pines Inner |
+| 46226 | 095 | Point La Jolla |
+| 46227 | 091 | Point Loma |
+| 46258 | 220 | Mission Bay West |
+| 46254 | 201 | Scripps Nearshore — **ingested** |
+| 46266 | 153 | Del Mar Nearshore — **ingested** |
+
+Adding one is therefore a `data(registry)` change, not a fetcher. A THREDDS
+route to `191p1_historic.nc` would be a second way to the same numbers, and the
+argument for building it has to be made on something other than access.
+
+**All three carry exactly the parameters the two ingested Waveriders declare.**
+Sampled `46235h2019`, `46231h2012` and `46232h2019`: `WVHT`, `DPD`, `APD`, `MWD`
+and `WTMP` are real in essentially every row, while `WDIR`, `WSPD`, `GST`,
+`PRES`, `ATMP`, `DEWP`, `VIS` and `TIDE` are sentinel in all of them. So
+`measured_parameters` for any of these is the same three
+(`sea_water_temperature`, `wave_significant_height`, `wave_peak_period`) already
+declared for 46254 and 46266, and no `parameters.json` decision is involved.
+
+### Distance to each polygon, measured
+
+Nearest point on the recorded outline, UTM 11N — the same method the RTOMS entry
+uses. Ingested stations in bold.
+
+| Polygon | Nearest today | 46235 | 46231 | 46232 |
+|---|---|---|---|---|
+| `KELP:LA-JOLLA` | **46254** 1.4 km | 27.3 | 9.3 | 33.7 |
+| `KELP:DEL-MAR` | **46266** 0.0 km | 42.5 | 23.7 | 49.4 |
+| `KELP:SOLANA-BEACH` | **46266** 2.3 km | 46.3 | 26.9 | 52.9 |
+| `KELP:ENCINITAS` | **46266** 5.6 km | 49.7 | 29.8 | 55.8 |
+| `KELP:SAN-DIEGO` | **LJAC1** 13.5 km | 10.3 | **8.6** | 21.1 |
+| `KELP:IMPERIAL-BEACH` | **LJAC1** 32.3 km | **0.3** | 26.2 | 24.6 |
+
+**`NDBC:46235` sits 300 m off `KELP:IMPERIAL-BEACH`.** docs/04 §4.5 records that
+this bed and `KELP:SAN-DIEGO` "have no station in range", keep La Jolla
+references 32.3 km and 13.5 km away, and that a §4.5 result there "is partly a
+statement about how far away the public station is". That is a statement about
+`sites.json` rather than about the coast: two stations closer than anything
+currently declared have been sitting in NDBC's archive the whole time.
+
+Neither is free, and the costs are in the record rather than in the access:
+
+- **46235 has a seven-year hole.** Annual stdmet archives exist for 2007–2010
+  and 2018–2025 and for no year between, and the gap swallows the 2014–2016
+  marine heatwave — the event docs/04 §4.2 most wants. It also serves no
+  realtime feed, so there is no `--year`-less path to the current quarter.
+- **46231 ends in 2016** and likewise has no realtime feed. It is the better
+  neighbour for `KELP:SAN-DIEGO` by 4.9 km, over a decade that stops before the
+  kelp record does.
+- **46232 is the only one of the three that is both long and live** — archives
+  2006–2025 continuous, plus a realtime feed answering today. It is also 21 km
+  from the nearest polygon, which is further than `NDBC:LJAC1` already is. The
+  bundle reviewed under "Sources considered and set aside" dates this record to
+  "~2016/17"; through NDBC it starts in 2006.
+- **Pre-2007 years are refused by the parser** on the undocumented header layout
+  (`https://github.com/cweber12/kelp-compare/issues/20`), so 46231's 2005 and
+  2006 archives cannot be read today even though they exist.
+
+A gappy record is not a disqualification here — `pct_coverage` and the coverage
+floor already decide per quarter whether a series is worth believing, and a
+quarter below it is flagged unusable rather than dropped. What a hole does is
+decide which *quarters* the §4.5 comparison can run in, which is a different
+question from whether to declare the station.
+
 ## CDFW / marineBIOS
 
 GIS context rather than time series: substrate, kelp persistence, MPA
