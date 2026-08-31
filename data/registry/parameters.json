@@ -1,5 +1,6 @@
 {
-  "_comment": "Controlled parameter vocabulary per docs/03. Units are canonical SI storage units. valid_range is the QARTOD gross-range fail span (docs/04 s1, ADR-004) -- the one source of truth for the hard bounds, so the qc block below never repeats it. A parameter with no qc block gets gross range only; the other tests do not run for it. Thresholds here are provisional, tuned against the single reviewed TidbiT deployment, and are meant to be revisited as the record grows.",
+  "_comment": "Controlled parameter vocabulary per docs/03. Units are canonical SI storage units. valid_range is the QARTOD gross-range fail span (docs/04 s1, ADR-004) -- the one source of truth for the hard bounds, so the qc block below never repeats it. A parameter with no qc block gets gross range only; the other tests do not run for it. The sea_water_temperature thresholds are provisional, tuned against the single reviewed TidbiT deployment, and are meant to be revisited as the record grows; the wave thresholds have their own note below and their own evidence.",
+  "_comment_waves": "The wave parameters are QC-ed asymmetrically and deliberately, sized against 291,883 readings from the two 30-minute Waveriders (NDBC:46254 from 2015-02, NDBC:46266 from 2019-12) rather than against the three-week TidbiT record the temperature thresholds come from. wave_significant_height gets spike and NO rate_of_change: a real storm build is a monotonic ramp whose steepest spike statistic is 0.43 m (2023-02-22, 2.03 m climbing to 4.86 m in five hours), while a fault is a single sample that departs and returns (2018-01-11: 1.36 1.26 1.38 1.33 2.98 1.23 1.27, spike statistic 1.70 m) -- spike separates those by a factor of four, but rate of change cannot, because that same real ramp steps at 1.76 m/h against the fault's 2.04-2.11 m/h, and a threshold between them would flag genuine storm growth, which is the event wave data exists to capture. suspect 1.0 sits 1.59x above the worst real spike in eleven years (0.63 m, during the 4-5 m February 2016 event) and fail is 2x suspect, matching sea_water_temperature. Together this flags 1 suspect and 0 fail in 291,883 evaluated readings -- the 2.98 m sample above, inside a 2018 Q1 the coverage floor already marks unusable -- so it changes no feature value today and exists for the next fault. A suspect of 0.75 would have caught all five January 2018 excursions rather than one, and was rejected at 1.19x headroom over the worst real spike against 1.59x at 1.0, because a suspect flag removes data under the default filter. fail = 2.0 has not fired in eleven years; unlike the rate_of_change case in https://github.com/cweber12/kelp-compare/issues/68 it is physically reachable, the worst observed being 1.70. wave_peak_period gets neither test: the peak period is where the spectral maximum sits, so it hops discontinuously when two swell trains compete (spike p99 8.71 s, rate of change p99 20.6 s/h) and a neighbour-difference test cannot tell that from a fault. APD and MWD remain unmapped and uncontrolled; docs/04 s2 records why.",
   "parameters": {
     "sea_water_temperature": {
       "unit": "degC",
@@ -11,7 +12,13 @@
     },
     "air_temperature":       {"unit": "degC", "valid_range": [-10.0, 50.0]},
     "water_level":           {"unit": "m", "datum": "MLLW", "valid_range": [-3.0, 5.0]},
-    "wave_significant_height": {"unit": "m", "valid_range": [0.0, 15.0]},
+    "wave_significant_height": {
+      "unit": "m",
+      "valid_range": [0.0, 15.0],
+      "qc": {
+        "spike": {"suspect": 1.0, "fail": 2.0}
+      }
+    },
     "wave_peak_period":      {"unit": "s", "valid_range": [1.0, 30.0]},
     "wind_speed":            {"unit": "m s-1", "valid_range": [0.0, 60.0]}
   }

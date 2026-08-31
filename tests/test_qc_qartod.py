@@ -476,3 +476,72 @@ def test_the_install_transient_is_caught_twice_over(evaluated):
     assert recorded["gross_range"] == "pass"
     assert recorded["spike"] == "fail"
     assert recorded["rate_of_change"] == "suspect"
+
+
+# --------------------------------------------------------------------------
+# The wave parameters -- asymmetric by decision, not by omission (docs/04 s1)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def committed():
+    """The registry as shipped. These assert the *decision*, not just the file."""
+    return load_parameters(REGISTRY_SOURCE / "parameters.json")
+
+
+def test_wave_height_carries_spike_and_deliberately_no_rate_of_change(committed):
+    qc = committed["wave_significant_height"].qc
+    assert (qc.spike.suspect, qc.spike.fail) == (1.0, 2.0)
+    assert qc.rate_of_change is None
+
+
+def test_wave_period_carries_neither_neighbour_test(committed):
+    qc = committed["wave_peak_period"].qc
+    assert qc.spike is None
+    assert qc.rate_of_change is None
+
+
+def test_a_real_storm_build_passes_the_spike_test(committed):
+    """The 2023-02-22 ramp at NDBC:46254, which the threshold has to survive.
+
+    Significant height climbs 2.03 -> 4.86 m in five hours. The spike statistic
+    judges a sample against the midpoint of its neighbours, and on a ramp that
+    midpoint tracks the ramp, so the steepest value here is 0.43 m -- well under
+    the 1.0 m suspect threshold. Flagging this would remove the storm the wave
+    data exists to record.
+    """
+    ramp = [2.03, 2.39, 2.75, 2.99, 3.01, 3.89, 4.00, 4.16, 4.52, 4.86]
+    frame = observations(ramp, parameter="wave_significant_height", freq="30min")
+    outcome = evaluate(frame, committed)
+    inner = [verdict(outcome.frame, i, "spike") for i in range(1, len(ramp) - 1)]
+    assert set(inner) == {"pass"}
+
+
+def test_a_single_sample_excursion_is_suspect_and_its_neighbours_are_not(committed):
+    """The 2018-01-11 shape at NDBC:46254: 2.98 m inside a flat 1.3 m sea.
+
+    Its spike statistic is 1.70 m. The neighbours' are 0.85 and 0.895, so unlike
+    the temperature thresholds -- where docs/04 s1 records that one bad reading
+    costs three rows -- this threshold sits above them and costs exactly one.
+    """
+    series = [1.36, 1.26, 1.38, 1.33, 2.98, 1.23, 1.27]
+    frame = observations(series, parameter="wave_significant_height", freq="30min")
+    outcome = evaluate(frame, committed)
+    assert verdict(outcome.frame, 4, "spike") == "suspect"
+    assert verdict(outcome.frame, 3, "spike") == "pass"
+    assert verdict(outcome.frame, 5, "spike") == "pass"
+
+
+def test_a_hopping_peak_period_draws_no_neighbour_verdict_at_all(committed):
+    """A peak period jumping between competing swell trains is not a fault.
+
+    Silence here is the decision docs/04 s1 records, and it is visible in
+    `qc_tests` as an omission rather than as a pass the series never earned.
+    """
+    hops = [8.0, 18.0, 8.5, 17.0, 9.0]
+    frame = observations(hops, parameter="wave_peak_period", freq="30min")
+    outcome = evaluate(frame, committed)
+    rows = range(len(hops))
+    assert all(verdict(outcome.frame, i, "spike") is None for i in rows)
+    assert all(verdict(outcome.frame, i, "rate_of_change") is None for i in rows)
+    assert all(verdict(outcome.frame, i, "gross_range") == "pass" for i in rows)

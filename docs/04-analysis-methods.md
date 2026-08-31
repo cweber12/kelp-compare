@@ -67,6 +67,39 @@ Four properties to keep in mind when reading flags:
   grounds as climatology below: it needs a record that contains the events,
   and this one does not.
 
+**The wave parameters are flagged asymmetrically, and the asymmetry is the
+finding.** `wave_significant_height` carries spike thresholds and deliberately no
+rate of change; `wave_peak_period` carries neither. Both Waveriders report every 30
+minutes, and the ~292,000 readings behind this are a much larger record than the
+temperature thresholds above were sized on.
+
+Two windows of the same series decide it. A real storm build is a monotonic ramp —
+2.03, 2.39, 2.75, 2.99, 3.01, 3.89, 4.00, 4.16, 4.52, 4.86 m through 22 February
+2023 — whose steepest spike statistic is only 0.43 m, because the midpoint of a
+ramp's neighbours tracks the ramp. A fault is a single sample that departs and
+returns: 1.36, 1.26, 1.38, 1.33, **2.98**, 1.23, 1.27 m on 11 January 2018, a spike
+statistic of 1.70 m. Spike tells those apart by a factor of four. Rate of change
+cannot — that same real ramp steps at 1.76 m/h against the fault's 2.04–2.11 m/h —
+so a rate threshold placed between them would flag genuine storm growth, which is
+the event wave data exists to capture. That is this section's own worry about the
+temperature thresholds, arriving before the mistake rather than after it.
+
+`wave_peak_period` gets neither test for a different reason. The peak period is
+where the spectral maximum sits, so it hops discontinuously whenever two swell
+trains of similar energy compete: its spike statistic reaches 8.71 s at p99 and its
+rate of change 20.6 s/h. A neighbour-difference test has no power to separate that
+from a fault, and https://github.com/cweber12/kelp-compare/issues/68 is the record of what
+happens when one is applied anyway.
+
+Across both stations the spike block flags **1 suspect and 0 fail** in 291,883
+evaluated readings — the 2.98 m sample above, inside a 2018 Q1 the coverage floor
+already marks unusable. So it changes no feature value today; it is there for the
+next fault. A suspect of 0.75 would have caught all five of the January 2018
+excursions rather than one, and was rejected: it sits 1.19× above the worst real
+spike in eleven years (0.63 m) against 1.59× at 1.0, and a suspect flag *removes*
+data under the default filter, so the thin-headroom mistake this section already
+records against the temperature thresholds is not one to repeat knowingly.
+
 **Deferred, with reasons.** *Climatology* needs a multi-year per-quarter
 baseline that no series in this project yet has; running it against three weeks
 of data would test the data against itself. *Flat line* fires on genuinely
@@ -163,6 +196,41 @@ are built; the wave and water-level sets are refused until their fetchers
 exist. The kelp family — canopy area and canopy extent — is built from the
 Kelp Watch export directly and takes no feature set, because the export
 arrives already reduced to one value per quarter.
+
+### The wave family stays deferred, and now for a measured reason
+
+The refusal above stands on its own — doc 02 attributes this family to CDIP, and
+CDIP has no fetcher. But the NDBC Waverider records added since are the first wave
+data this project holds (`NDBC:46254` from 2015-02, `NDBC:46266` from 2019-12, both
+reporting every 30 minutes), and measuring them says the family would not earn its
+place at these stations even once a fetcher exists.
+
+**The one feature named above that survives is already built.** *Quarterly max
+height* is the universal `statistics` set's `max`, live in every quarter: at
+`NDBC:46254` the Q3 maximum ranges 1.14–1.60 m across twelve years (sd 0.167 m).
+
+**The other two are degenerate exactly where they could be used.** Counting
+observed days whose maximum significant height clears a threshold, over 46254's
+whole record:
+
+| threshold | year-quarters with no event day at all |
+|---|---|
+| 2.0 m | Q1 1/11, Q2 1/11, **Q3 12/12**, Q4 3/11 |
+| 1.5 m | Q1 0/11, Q2 0/11, **Q3 6/12**, Q4 0/11 |
+| 1.0 m | none, in any quarter |
+
+At a storm-scale threshold Q3 is a constant zero — a column with no variance for an
+anomaly to be taken against. At the only threshold that varies in every quarter, 1.0 m,
+the "event" fires on 472 of 877 Q1 days and 163 of 1,052 Q3 days: that is ordinary
+winter weather being counted, not a storm. No value is both, and the threshold is
+per-parameter rather than per-quarter, so one value has to serve all four.
+
+**And the quarter that holds the events cannot carry an anomaly.** Q1 is where the
+waves are — 178 observed days above 1.5 m against Q3's six — and it is the quarter §3
+leaves null at this station. Coverage is a property of the buoy rather than of the
+parameter: `WVHT`, `DPD` and `WTMP` arrive in the same rows, so all three hold nine
+usable Q1 years against a ten-year minimum, and every Q1 wave anomaly in
+`comparison.parquet` is null. Wave data does not fill that hole; §3 records what would.
 
 ### What each feature counts, exactly
 
@@ -333,6 +401,27 @@ thin is too thin for a climatology belongs to the method rather than to a
 station, and per-station minimums would make the weakest baselines the ones
 nearest the beds. So a station with six usable years stays null whatever
 window is declared for it.
+
+**A declared window buys whole quarters, not a whole series, and at `NDBC:46254`
+the quarter it misses is winter.** Its 2015–2025 window holds eleven usable years
+in Q2, Q3 and Q4 and nine in Q1, because 2015 Q1 is 0.522 covered (the record opens
+on 12 February) and 2018 Q1 is 0.195 (February is missing outright). Nine against a
+minimum of ten leaves Q1 null, so the nearest public station to `KELP:LA-JOLLA`
+contributes nothing to §4.5 in the season storm-driven canopy removal happens.
+
+Three things could close it, none free. NDBC's yearly archive for 2026 is not
+published yet and the realtime feed reaches back only about 45 days, so 2026 Q1 is
+absent rather than unusable; when that file lands, Q1 reaches ten years — but only
+if the window's end year is moved, which shifts every anomaly already taken against
+2015–2025 and is therefore a deliberate act under ADR-007, not a refresh. CDIP is
+the other route: 46254 is a Scripps-operated Waverider and doc 02 already says wave
+data for this location comes from CDIP, whose own archive for the same buoy may
+predate the NDBC record and reach the canonical window. Otherwise the hole stands.
+
+Lowering `coverage_floor` to 0.5 would also reach ten years by admitting 2015 Q1 at
+0.521, and is rejected: it is a global knob tuned to rescue one quarter of one
+station, and this section already forbids a half-observed quarter dragging a
+baseline it is later compared against.
 
 **The cost, documented rather than mitigated: two windows can coexist in one
 screen.** Anomalies taken against different baselines are not strictly
