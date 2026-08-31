@@ -514,3 +514,53 @@ def test_every_committed_baseline_override_is_well_formed():
         assert site_id in sites, f"{site_id} has a baseline window but no site record"
         assert window.min_years == loaded.baseline.min_years
         assert window.span >= window.min_years
+
+
+def test_the_committed_configuration_declares_one_baseline_override():
+    """`NDBC:46254` is the only series given a window of its own.
+
+    Its record begins 2015-02-12, so it holds at most five candidate years
+    inside the canonical 2007-2019 and can supply no baseline there. 2015-2025
+    is its whole record to the last complete year (docs/04 s3, ADR-007).
+    """
+    loaded = load_feature_config(COMMITTED)
+
+    assert set(loaded.baseline_overrides) == {"NDBC:46254"}
+    window = loaded.baseline_for("NDBC:46254")
+    assert (window.start_year, window.end_year) == (2015, 2025)
+
+
+def test_the_committed_override_inherits_the_project_minimum():
+    """min_years is not per station, which is what leaves 46254's Q1 null.
+
+    Nine usable Q1s against a minimum of ten, measured on the ingested rows:
+    2015 is 0.52 covered because the record starts in February, and 2018 is
+    0.20 -- 23 days observed. A per-station minimum would paper over exactly
+    that, and the quarter it would paper over is winter.
+    """
+    loaded = load_feature_config(COMMITTED)
+
+    assert loaded.baseline_for("NDBC:46254").min_years == loaded.baseline.min_years == 10
+
+
+def test_the_second_waverider_is_left_without_an_override():
+    """`NDBC:46266` holds six complete years in every candidate window, so no
+    declared window lifts it over the minimum before 2030. Left out on purpose
+    rather than given one that could only produce nulls."""
+    loaded = load_feature_config(COMMITTED)
+
+    assert "NDBC:46266" not in loaded.baseline_overrides
+    assert loaded.baseline_for("NDBC:46266") == loaded.baseline
+
+
+def test_the_declared_window_ends_at_a_complete_year():
+    """Fixed, so next year's data cannot move an anomaly already computed.
+
+    The window ends in 2025 while the record runs into 2026 -- the same shape
+    the canonical window has against LJAC1, and the property ADR-007 exists to
+    protect.
+    """
+    window = load_feature_config(COMMITTED).baseline_for("NDBC:46254")
+
+    assert window.end_year == 2025
+    assert window.span >= window.min_years
