@@ -250,6 +250,53 @@ def with_anomalies(
 # --------------------------------------------------------------------------
 
 
+def override_warnings(
+    quarterly: pd.DataFrame, config: FeatureConfig, *, series: tuple[str, ...] = ENV_SERIES
+) -> tuple[str, ...]:
+    """Overrides applied to a series that did not need one (docs/04 s3).
+
+    An override exists to rescue a series whose record post-dates the canonical
+    window. Applied to one that already covers it, it silently moves anomalies
+    that were fine -- which is the failure the fixed window exists to prevent,
+    arriving through the mechanism meant to work around it. Nothing else would
+    say so: the row would carry a window, and a reader has no way to know it was
+    not the one intended.
+
+    Warned rather than refused, because the condition is data-dependent. A
+    backfill that finally carried a station across the minimum would start
+    failing every rebuild from then on, and a run that cannot rebuild is worse
+    than one that says what it noticed -- docs/01 s5 already makes the manifest
+    where a run records that.
+    """
+    if "site_id" not in series or not config.baseline_overrides or quarterly.empty:
+        return ()
+
+    canonical = config.baseline
+    overridden = quarterly.loc[quarterly["site_id"].isin(config.baseline_overrides)]
+    if overridden.empty:
+        return ()
+
+    # What each overridden series *would* have had under the canonical window.
+    inside = overridden["year"].between(canonical.start_year, canonical.end_year)
+    eligible = overridden.loc[inside & overridden["usable"] & overridden["quarter_complete"]]
+    if eligible.empty:
+        return ()
+
+    counted = eligible.groupby(["site_id", "quarter"], dropna=False, sort=True)["year"].nunique()
+    warnings = []
+    for site_id, years in counted.groupby(level="site_id").max().items():
+        if years < canonical.min_years:
+            continue
+        window = config.baseline_for(str(site_id))
+        warnings.append(
+            f"{site_id}: declared baseline {window.label} overrides the canonical "
+            f"{canonical.label}, but this series has {years} usable complete year(s) inside "
+            f"{canonical.label} against a min_years of {canonical.min_years} -- it did not need "
+            "an override, and its anomalies have moved off the canonical window"
+        )
+    return tuple(warnings)
+
+
 def _window_bounds(
     frame: pd.DataFrame, config: FeatureConfig, series: tuple[str, ...]
 ) -> tuple[pd.Series, pd.Series]:

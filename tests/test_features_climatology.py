@@ -572,3 +572,83 @@ def test_the_kelp_half_is_untouched_by_a_site_id_override():
 
     assert set(built["baseline_start_year"]) == {2007}
     assert set(built["baseline_end_year"]) == {2011}
+
+
+def warnings_for(frame, cfg):
+    from kelpcompare.features.climatology import override_warnings
+
+    return override_warnings(frame, cfg)
+
+
+def test_an_override_on_a_series_that_did_not_need_one_warns():
+    """The one way this mechanism could quietly move anomalies that were fine."""
+    cfg = overriding("NDBC:LJAC1", 2009, 2011)
+    frame = quarters([(y, 3, 15.0) for y in range(2007, 2012)], cfg)
+
+    warned = warnings_for(frame, cfg)
+
+    assert len(warned) == 1
+    assert "NDBC:LJAC1" in warned[0]
+    assert "2009-2011" in warned[0] and "2007-2011" in warned[0]
+    assert "did not need an override" in warned[0]
+
+
+def test_an_override_on_a_series_that_needed_one_is_silent():
+    """A station whose record post-dates the window is the case this is for."""
+    cfg = overriding("NDBC:46254", 2015, 2019)
+    frame = quarters([(y, 3, 15.0) for y in range(2015, 2020)], cfg)
+    frame["site_id"] = "NDBC:46254"
+
+    assert warnings_for(frame, cfg) == ()
+
+
+def test_a_series_short_of_min_years_in_the_canonical_window_is_silent():
+    """Partial coverage of the canonical window is exactly what an override is for."""
+    cfg = overriding("NDBC:46254", 2009, 2011)
+    frame = quarters([(y, 3, 15.0) for y in (2010, 2011)], cfg)
+    frame["site_id"] = "NDBC:46254"
+
+    assert warnings_for(frame, cfg) == ()
+
+
+def test_no_overrides_declared_warns_about_nothing():
+    frame = quarters([(y, 3, 15.0) for y in range(2007, 2012)])
+
+    assert warnings_for(frame, config()) == ()
+
+
+def test_unusable_quarters_do_not_make_an_override_look_redundant():
+    """The same contributor rule the baseline itself uses, or the warning lies."""
+    cfg = overriding("NDBC:46254", 2015, 2019)
+    rows = [(y, 3, 15.0, {"usable": False}) for y in range(2007, 2012)]
+    frame = quarters(rows, cfg)
+    frame["site_id"] = "NDBC:46254"
+
+    assert warnings_for(frame, cfg) == ()
+
+
+def test_the_warning_reaches_the_build_outcome():
+    """Warned through `build_features`, so it lands in the run manifest (docs/01 s5)."""
+    from kelpcompare.features.build import build_features
+    from kelpcompare.storage import OBSERVATION_COLUMNS
+
+    cfg = overriding("NDBC:LJAC1", 2009, 2011)
+    stamps = pd.date_range("2007-01-01", "2011-12-31 23:00", freq="6h", tz="UTC")
+    frame = pd.DataFrame(
+        {
+            "timestamp": stamps,
+            "site_id": "NDBC:LJAC1",
+            "parameter": "sea_water_temperature",
+            "value": 15.0,
+            "depth_m": 3.4,
+            "qc_flag": 1,
+            "qc_tests": "gross_range:pass",
+            "source": "ndbc",
+            "fetch_run_id": "20260101T000000000Z-ingest",
+        }
+    )[list(OBSERVATION_COLUMNS)]
+
+    outcome = build_features(frame, cfg, now=pd.Timestamp("2012-06-01", tz="UTC"))
+
+    assert any("did not need an override" in warning for warning in outcome.warnings)
+    assert set(outcome.climatology["baseline_start_year"]) == {2009}
