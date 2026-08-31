@@ -1374,6 +1374,73 @@ site rather than what is in the bed.
 subtidal. Its span is the most tempting thing about it — fourteen years against
 the two the adopted baselines carry — and span is not relevance.
 
+### A San Diego source bundle, triaged 2026-08-31
+
+An external document-review hand-off (`kelp_data_bundle_2026-08-31`) catalogued
+~20 sources behind the **City of San Diego / SIO kelp forest monitoring
+program** — a different project, the same water. Everything in it that this
+project should adopt has been filed as an issue or recorded above; what follows
+is what it should *not* adopt, so that the same PDFs are not re-triaged later.
+
+**Already held here, and in a better form than the bundle recommends.** Its §4
+(Scripps Pier) and §7 (the Landsat canopy product) are the SIO Shore Stations
+and Kelp Watch entries above. Its §8 recommends the `seshat.datasd.org` per-year
+CSVs for RTOMS; the RTOMS entry above records why the CeNCOOS ERDDAP feeds beat
+them and should not be re-litigated. Its §7 processing recipe is bed bounding
+boxes, which `polygons.geojson` supersedes.
+
+**Its EDI access recipe does not work anonymously.** §7 marks the PASTA route
+`PUBLIC, VERIFIED` and gives programmatic endpoints. Re-checked 2026-08-31:
+`GET /package/eml/knb-lter-sbc/74` and `GET /package/eml` both still return
+**403**, unchanged from 2026-08-26 and 2026-08-28. The bundle verified a landing
+page, not the API. Nothing about
+`https://github.com/cweber12/kelp-compare/issues/25` has changed.
+
+**Not public, and with no home in the schema if it arrived.** Its §1b
+(quadrat-level City/SIO transects), §1c (the 2002–03 Sea Grant whole-forest
+survey), §1f (the 1990– urchin settlement series) and the 2016 canyon moorings
+behind §8b are all human-request-only. Access is the smaller problem: these are
+event-based, taxon-coded transect and size-frequency records with no
+`timestamp / site_id / parameter / value / qc_flag` shape and no QARTOD
+vocabulary. That is the same question
+`https://github.com/cweber12/kelp-compare/issues/95` raises for Reef Check and
+that PRD `https://github.com/cweber12/kelp-compare/issues/93` owns. None of them
+lands in `observations/` by default.
+
+**Literature constants, not data.** The bundle ships transcribed tables from
+Parnell et al. 2005, Couto et al. 2026 and Mack 2022. They are keyed by reserve
+or habitat, never by `site_id` or `polygon_id`, and they belong in a notebook's
+interpretation or a citation rather than in a registry. The exception is the
+Konotchick/Leichter temperature→nitrate constants, which are a derived-parameter
+question rather than a source.
+
+**Wrong subject or wrong coast**, and the bundle excludes them too — recorded
+only so they are not re-opened: Carbajal-Martínez 2026 (the "La Jolla Beach" in
+it is in Baja California), King 2022 (offshore groundwater), Timmer 2026
+(northern Salish Sea), Daly 2026 (kelp biomechanics, no San Diego content),
+Som 2015 (an intertidal management plan), Flick (a tidal-pattern explainer).
+
+**Set aside on merit.** USACE NCMP topo-bathy LiDAR (§9c) offers a reproducible
+roughness→rocky classifier, but it is calibrated at one site, stated valid only
+to −15 m, and its ~1000 m offshore limit does not span the Point Loma bed. The
+CNRA substrate layer recorded above answers the same question with less
+machinery and was measured over all six polygons. Its §1e mid-depth ROV baseline
+is the dataset already rejected under "Two CNRA South Coast baselines cover the
+wrong habitat" above.
+
+**The one it leaves genuinely open** is §1a, the Dryad archive for Parnell et al.
+2026 (`10.5061/dryad.fttdz096d`, CC0): in-water kelp density at 20 City/SIO
+transect sites, 1983–2023 — an independent measure of the *response variable
+itself*, over a longer span than anything else here. It is not adopted and not
+dismissed, because the sites are not the six Kelp Watch beds, the reports never
+publish their coordinates, and it is `.RData`. That is PRD #93's question asked
+on the response side, and it should be answered there rather than by a fetcher.
+
+Two of the bundle's own gaps bear on any later use of it: it is missing
+`san_diego_kelp_monitoring_site_tables.md`, the `site_code` legend everything in
+it joins through, and its Wirewalker `chla` / `par` / `backscatter` channels
+carry no units and are blocked behind an unanswered question to the authors.
+
 ## Cross-cutting fetcher rules
 
 Every fetcher: writes the untouched payload to `raw/{source}/` before
