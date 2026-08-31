@@ -777,3 +777,115 @@ def test_a_station_without_an_ingested_record_is_not_paired():
     assert "SDRTOMS:PLOO" not in paired
     assert "SDRTOMS:SBOO" not in paired
     assert "COOPS:9410230" not in paired
+
+
+# --------------------------------------------------------------------------
+# What the rule produced (docs/04 s4.5, issue 86)
+# --------------------------------------------------------------------------
+
+
+def test_near_site_is_exactly_the_bed_holding_a_project_sensor():
+    """The label and the geometry, checked against each other rather than
+    asserted separately. Until the outlines landed this said `regional`, on the
+    premise that NDBC:LJAC1 sits inside the bed; it is 1731 m outside."""
+    metres = metres_to_each_bed()
+    loaded = load_polygons(COMMITTED)
+
+    labelled = {p.polygon_id for p in loaded if p.purpose == "near_site"}
+    containing = {
+        bed
+        for bed, by_site in metres.items()
+        if any(by_site[s] == 0.0 for s in by_site if s.startswith("PROJ:"))
+    }
+
+    assert labelled == containing == {"KELP:LA-JOLLA"}
+    assert {p.purpose for p in loaded} == {"near_site", "control"}
+
+
+def test_regional_is_reserved_and_carried_by_nothing():
+    """Kept rather than deleted because
+    https://github.com/cweber12/kelp-compare/issues/96 owns whether the project
+    gains beds that earn it. A value no polygon carries is normally what a
+    closed vocabulary exists to prevent, so the reason is recorded in the file
+    and pinned here rather than left to be rediscovered as an orphan."""
+    loaded = load_polygons(COMMITTED)
+
+    assert "regional" in POLYGON_PURPOSES
+    assert [p.polygon_id for p in loaded if p.purpose == "regional"] == []
+
+
+def test_every_bed_pairs_with_its_public_stations_within_the_radius():
+    """Leg (b), computed from the registries rather than repeated from prose.
+
+    The failure this guards against is the one the outfall moorings already
+    demonstrated: `sites.json` claimed a mooring was "~15 km" from a bed it is
+    2968 m from, and nothing measured it.
+    """
+    metres = metres_to_each_bed()
+    with_record = {
+        "NDBC:LJAC1",
+        "NDBC:46254",
+        "NDBC:46266",
+        "SIO:LAJOLLA-PIER",
+        "SDRTOMS:SBOO",
+    }
+
+    for polygon in load_polygons(COMMITTED):
+        near = {
+            site
+            for site, d in metres[polygon.polygon_id].items()
+            if not site.startswith("PROJ:")
+            and d <= NEAR_STATION_RADIUS_M
+            and site in with_record
+            and site != "SDRTOMS:SBOO"  # held out by the record gate, below
+        }
+        assert near <= set(polygon.site_ids), (
+            f"{polygon.polygon_id} is missing in-range stations {near - set(polygon.site_ids)}"
+        )
+
+
+def test_the_two_waveriders_reached_the_beds_they_are_nearest():
+    """What leg (b) actually added, and the distances that earned it."""
+    metres = metres_to_each_bed()
+    paired = {p.polygon_id: set(p.site_ids) for p in load_polygons(COMMITTED)}
+
+    assert "NDBC:46254" in paired["KELP:LA-JOLLA"]
+    assert metres["KELP:LA-JOLLA"]["NDBC:46254"] == pytest.approx(1396, abs=5)
+    # Nearer than either reference this bed carried before.
+    assert metres["KELP:LA-JOLLA"]["NDBC:46254"] < metres["KELP:LA-JOLLA"]["NDBC:LJAC1"]
+
+    for bed, expected in (
+        ("KELP:DEL-MAR", 0),
+        ("KELP:SOLANA-BEACH", 2331),
+        ("KELP:ENCINITAS", 5625),
+    ):
+        assert "NDBC:46266" in paired[bed]
+        assert metres[bed]["NDBC:46266"] == pytest.approx(expected, abs=5)
+
+
+def test_the_long_record_references_stay_on_every_bed():
+    """Leg (c), and the reason a nearest-station rule would have been wrong.
+
+    NDBC:46266 is nearer to three beds than either of these, and carries no
+    anomaly at all -- its record begins 2019-12, inside no climatology baseline.
+    Pairing by distance alone would have replaced a reference with 178
+    anomaly-bearing quarters with one that has none.
+    """
+    for polygon in load_polygons(COMMITTED):
+        assert set(LONG_RECORD_REFERENCES) <= set(polygon.site_ids)
+
+
+def test_the_two_southern_beds_have_no_station_in_range():
+    """The cost the rule does not hide.
+
+    Nothing with a record is within 8 km of either, so both keep La Jolla
+    references 13.5 km and 32.3 km away and their docs/04 s4.5 comparison is
+    weak until a near station earns its way in through the record gate.
+    """
+    metres = metres_to_each_bed()
+    with_record = {"NDBC:LJAC1", "NDBC:46254", "NDBC:46266", "SIO:LAJOLLA-PIER"}
+
+    for bed in ("KELP:SAN-DIEGO", "KELP:IMPERIAL-BEACH"):
+        in_range = [s for s in with_record if metres[bed][s] <= NEAR_STATION_RADIUS_M]
+        assert in_range == []
+    assert metres["KELP:IMPERIAL-BEACH"]["SIO:LAJOLLA-PIER"] == pytest.approx(32313, abs=5)
