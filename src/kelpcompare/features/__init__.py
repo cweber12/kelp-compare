@@ -20,6 +20,7 @@ from kelpcompare.features.climatology import (
     build_climatology,
     climatology_columns,
     climatology_key,
+    override_warnings,
     quarterly_env_columns,
     with_anomalies,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "climatology_key",
     "feature_columns",
     "load_feature_config",
+    "override_warnings",
     "quarterly_columns",
     "quarterly_env_columns",
     "threshold_label",

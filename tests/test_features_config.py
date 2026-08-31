@@ -398,3 +398,102 @@ def test_the_demoted_parameters_are_still_built():
 
     for name in loaded.controls:
         assert loaded.get(name).feature_set == "statistics"
+
+
+# --------------------------------------------------------------------------
+# Per-series baseline windows (docs/04 s3)
+# --------------------------------------------------------------------------
+
+
+def overriding(window, *, site_id="NDBC:46254"):
+    """A policy declaring one baseline override, everything else canonical."""
+    return {**POLICY, "baseline_overrides": {site_id: window}}
+
+
+def test_no_overrides_declared_leaves_every_series_on_the_canonical_window(tmp_path):
+    """The shipped shape: the mechanism exists and changes nothing until used."""
+    loaded = config(tmp_path)
+
+    assert loaded.baseline_overrides == {}
+    assert loaded.baseline_for("NDBC:LJAC1") == loaded.baseline
+    assert loaded.baseline_for() == loaded.baseline
+
+
+def test_a_declared_override_applies_to_that_site_and_no_other(tmp_path):
+    loaded = config(tmp_path, policy=overriding({"start_year": 2016, "end_year": 2025}))
+
+    window = loaded.baseline_for("NDBC:46254")
+    assert (window.start_year, window.end_year) == (2016, 2025)
+    # The canonical window is untouched, both as the default and for everyone else.
+    assert loaded.baseline_for("NDBC:LJAC1") == loaded.baseline
+    assert (loaded.baseline.start_year, loaded.baseline.end_year) == (2007, 2019)
+
+
+def test_an_override_takes_min_years_from_the_canonical_window(tmp_path):
+    """How thin is too thin belongs to the method, not to a station."""
+    loaded = config(tmp_path, policy=overriding({"start_year": 2016, "end_year": 2025}))
+
+    assert loaded.baseline_for("NDBC:46254").min_years == loaded.baseline.min_years == 10
+
+
+def test_an_override_declaring_min_years_is_refused(tmp_path):
+    message = refuses(
+        tmp_path,
+        policy=overriding({"start_year": 2016, "end_year": 2025, "min_years": 6}),
+    )
+    assert "min_years" in message
+
+
+def test_an_override_narrower_than_min_years_is_refused(tmp_path):
+    """A window that could never produce an anomaly is a disabled feature, not a window."""
+    message = refuses(tmp_path, policy=overriding({"start_year": 2020, "end_year": 2025}))
+
+    assert "no anomaly could ever be computed" in message
+    assert "2020-2025" in message
+
+
+def test_a_backwards_override_is_refused(tmp_path):
+    message = refuses(tmp_path, policy=overriding({"start_year": 2025, "end_year": 2016}))
+    assert "before it starts" in message
+
+
+def test_an_override_missing_a_year_is_refused(tmp_path):
+    message = refuses(tmp_path, policy=overriding({"start_year": 2016}))
+    assert "end_year" in message
+
+
+def test_a_fractional_override_year_is_refused_rather_than_truncated(tmp_path):
+    message = refuses(tmp_path, policy=overriding({"start_year": 2016.5, "end_year": 2025}))
+    assert "not a whole year" in message
+
+
+def test_an_empty_override_entry_is_refused(tmp_path):
+    message = refuses(tmp_path, policy=overriding({}))
+    assert "NDBC:46254" in message
+
+
+def test_an_overrides_block_that_is_not_a_block_is_refused(tmp_path):
+    message = refuses(tmp_path, policy={**POLICY, "baseline_overrides": ["NDBC:46254"]})
+    assert "site_id -> window" in message
+
+
+def test_the_error_names_the_site_whose_override_is_wrong(tmp_path):
+    """With several declared, a reader has to be told which one to go and fix."""
+    policy = {
+        **POLICY,
+        "baseline_overrides": {
+            "NDBC:46254": {"start_year": 2016, "end_year": 2025},
+            "NDBC:46266": {"start_year": 2020, "end_year": 2025},
+        },
+    }
+    message = refuses(tmp_path, policy=policy)
+
+    assert "NDBC:46266" in message
+    assert "NDBC:46254" not in message
+
+
+def test_the_committed_configuration_declares_no_overrides():
+    """Shipped inert: the canonical window is still the only one in play."""
+    loaded = load_feature_config(COMMITTED)
+
+    assert loaded.baseline_overrides == {}

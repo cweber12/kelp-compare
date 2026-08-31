@@ -198,3 +198,64 @@ with code. Harder: a third registry file to keep coherent, and a threshold
 change renames columns, so a notebook written against the old name breaks
 loudly rather than reading a redefined column quietly. That is the
 intended trade.
+
+## ADR-007: Baseline windows per series — declared, never derived
+
+**Status:** Proposed · **Date:** 2026-08-31
+
+### Context
+Doc 04 §3 fixes one climatology window, 2007–2019 with a ten-year
+minimum, and chose it *because* the NDBC LJAC1 archive begins in 2007.
+That makes the window an artifact of one station's record. Every newer
+nearshore station is therefore structurally ineligible for an anomaly:
+the two stations nearest two of the six beds begin in 2015-02 and
+2019-12, so neither can supply the baseline, and both would land with
+every anomaly column null — inert in the §4.1 screen and the §4.5
+distance-decay test that motivated wanting them.
+
+### Options
+**A — Leave the anomalies null.** Already the operating behaviour:
+`SDRTOMS:SBOO` and both project sensors sit in the built tables today
+with zero anomalies. Costs nothing and keeps the fixed window intact, but
+the nearest public station to La Jolla contributes nothing to the one
+analysis the system exists to support.
+**B — Derive each series' window from its own record.** Rejected on
+measurement, not on taste. The Scripps Pier record begins in 1916, so its
+own full record as a baseline averages in a century of cooler
+pre-warming water and shifts the climatology by 0.77–1.02 °C in every
+quarter — larger than most anomalies being studied. It would move all
+1016 anomaly rows, and because the window would grow with every backfill
+it breaks the reproducibility promise the fixed window exists to make.
+**C — Declared per-series overrides (chosen).** The canonical window
+stays the default; a series that cannot cover it may be given its own
+window, written down by the operator in `features.json`. Fixed, so
+nothing moves when data lands.
+**D — Lower `min_years` so short records qualify.** Would admit the
+2019-12 station now, but weakens every climatology in the project at
+once, including the met parameters that already fail the Q2 minimum at
+nine years.
+
+### Decision & consequences
+C. An override is a window an operator wrote down, never one computed
+from the years that happen to have landed — which is the whole of what
+separates it from B.
+
+**`min_years` is not overridable.** How thin is too thin for a
+climatology is a property of the method, not of a station. Per-station
+minimums would make the weakest baselines the ones nearest the beds,
+exactly where a thin anomaly is most likely to be read as a result.
+
+**No schema change.** `baseline_start_year` and `baseline_end_year` are
+already on every climatology row, so which window applied to a series has
+always been readable off the table.
+
+**An override applied to a series that did not need one warns** rather
+than raising, and the warning reaches the run manifest. Refusing would be
+data-dependent — a backfill that carried a station across the minimum
+would start failing every rebuild.
+
+Easier: a post-baseline station can enter the screen at all, by a
+reviewable `data(registry)` edit. Harder: two windows can coexist in one
+screen, and anomalies taken against different windows are not strictly
+comparable. That cost is accepted and made visible on every row rather
+than mitigated; doc 04 §4.5 carries the reporting consequence.

@@ -78,10 +78,11 @@ _REQUIRED_POLICY_KEYS = frozenset({"coverage_floor", "baseline"})
 #: Accepted, defaulted when absent. Optional rather than required because the
 #: default is a documented number rather than a guess a run has to make, and
 #: requiring it would invalidate every features.json written before it existed.
-_OPTIONAL_POLICY_KEYS = frozenset({"neighbor_depth_tolerance_m"})
+_OPTIONAL_POLICY_KEYS = frozenset({"neighbor_depth_tolerance_m", "baseline_overrides"})
 
 _POLICY_KEYS = _REQUIRED_POLICY_KEYS | _OPTIONAL_POLICY_KEYS
 _BASELINE_KEYS = frozenset({"start_year", "end_year", "min_years"})
+_OVERRIDE_KEYS = frozenset({"start_year", "end_year"})
 _PARAMETER_KEYS = frozenset({"feature_set", "thresholds", "role"})
 
 
@@ -144,12 +145,26 @@ class FeatureConfig:
     baseline: Baseline
     parameters: dict[str, ParameterFeatures]
     neighbor_depth_tolerance_m: float = DEFAULT_NEIGHBOR_DEPTH_TOLERANCE_M
+    baseline_overrides: dict[str, Baseline] = field(default_factory=dict)
 
     def __contains__(self, name: object) -> bool:
         return name in self.parameters
 
     def get(self, name: str) -> ParameterFeatures | None:
         return self.parameters.get(name)
+
+    def baseline_for(self, site_id: str | None = None) -> Baseline:
+        """The window one series takes its climatology against (docs/04 s3).
+
+        The canonical window unless an operator declared otherwise for this
+        site. Passing nothing -- or a site nobody has declared -- is the ordinary
+        case and gets the canonical window, which is what keeps the kelp half,
+        keyed on `polygon_id` and carrying no `site_id` at all, out of this
+        entirely.
+        """
+        if site_id is None:
+            return self.baseline
+        return self.baseline_overrides.get(site_id, self.baseline)
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -182,17 +197,18 @@ def load_feature_config(path: Path | str | None = None) -> FeatureConfig:
         payload = _uncommented(json.load(handle))
 
     _reject_unknown(payload, {"policy", "parameters"}, what="top-level key", path=resolved)
-    floor, baseline, tolerance = _policy(payload.get("policy"), path=resolved)
+    floor, baseline, tolerance, overrides = _policy(payload.get("policy"), path=resolved)
     return FeatureConfig(
         path=resolved,
         coverage_floor=floor,
         baseline=baseline,
         parameters=_parameters(payload.get("parameters"), path=resolved),
         neighbor_depth_tolerance_m=tolerance,
+        baseline_overrides=overrides,
     )
 
 
-def _policy(block, *, path: Path) -> tuple[float, Baseline, float]:
+def _policy(block, *, path: Path) -> tuple[float, Baseline, float, dict[str, Baseline]]:
     if not block:
         raise ValueError(
             f"{path} declares no `policy`; the coverage floor and the baseline are required"
@@ -208,7 +224,13 @@ def _policy(block, *, path: Path) -> tuple[float, Baseline, float]:
         raise ValueError(
             f"{path} `policy.coverage_floor` is {floor}, which is not a fraction between 0 and 1"
         )
-    return floor, _baseline(block["baseline"], path=path), _tolerance(block, path=path)
+    baseline = _baseline(block["baseline"], path=path)
+    return (
+        floor,
+        baseline,
+        _tolerance(block, path=path),
+        _baseline_overrides(block.get("baseline_overrides"), baseline, path=path),
+    )
 
 
 def _tolerance(block, *, path: Path) -> float:
@@ -265,6 +287,67 @@ def _baseline(block, *, path: Path) -> Baseline:
             f"{baseline.span} ({baseline.label}); no anomaly could ever be computed"
         )
     return baseline
+
+
+def _baseline_overrides(block, default: Baseline, *, path: Path) -> dict[str, Baseline]:
+    """Fixed windows for the series that cannot cover the canonical one (docs/04 s3).
+
+    Declared per site and never derived from whatever years happen to have
+    landed. A window computed from the available record would grow with every
+    backfill and move every anomaly ever taken against it, which is the one
+    thing a fixed window exists to prevent -- so a station whose record
+    post-dates the canonical window gets a window an operator wrote down, or it
+    gets no anomaly at all.
+
+    `min_years` is deliberately not overridable, and is taken from the canonical
+    window. How thin is too thin for a climatology is a property of the method
+    rather than of a station, and letting each override carry its own would make
+    the weakest baselines the ones nearest the beds -- exactly where a thin
+    anomaly is most likely to be read as a result.
+    """
+    if block is None:
+        return {}
+    if not isinstance(block, dict) or not block:
+        raise ValueError(
+            f"{path} `policy.baseline_overrides` is {block!r}; expected a block of "
+            "site_id -> window, or no such key at all"
+        )
+    return {
+        site_id: _override(entry, site_id=site_id, default=default, path=path)
+        for site_id, entry in block.items()
+    }
+
+
+def _override(entry, *, site_id: str, default: Baseline, path: Path) -> Baseline:
+    """One declared window, refused rather than repaired when it cannot work."""
+    where = f"policy.baseline_overrides.{site_id}"
+    if not isinstance(entry, dict) or not entry:
+        raise ValueError(f"{path} `{where}` is empty; declare {sorted(_OVERRIDE_KEYS)}")
+    _reject_unknown(entry, _OVERRIDE_KEYS, what=f"{where} key", path=path)
+
+    missing = sorted(_OVERRIDE_KEYS - set(entry))
+    if missing:
+        raise ValueError(f"{path} `{where}` is missing {missing}")
+
+    window = Baseline(
+        start_year=_integer(entry["start_year"], where=f"{where}.start_year", path=path),
+        end_year=_integer(entry["end_year"], where=f"{where}.end_year", path=path),
+        min_years=default.min_years,
+    )
+    if window.end_year < window.start_year:
+        raise ValueError(
+            f"{path} `{where}` ends in {window.end_year}, before it starts in {window.start_year}"
+        )
+    # The same refusal the canonical window gets, for the same reason: a window
+    # too short to reach the minimum produces nothing but nulls, and no output
+    # column says why.
+    if window.min_years > window.span:
+        raise ValueError(
+            f"{path} `{where}` spans {window.span} year(s) ({window.label}) against a "
+            f"min_years of {window.min_years}; no anomaly could ever be computed. Widen it, "
+            "or leave the series without an override and let its anomalies be null"
+        )
+    return window
 
 
 def _parameters(block, *, path: Path) -> dict[str, ParameterFeatures]:

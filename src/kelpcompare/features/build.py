@@ -23,7 +23,11 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from kelpcompare.features.climatology import build_climatology, with_anomalies
+from kelpcompare.features.climatology import (
+    build_climatology,
+    override_warnings,
+    with_anomalies,
+)
 from kelpcompare.features.config import FeatureConfig
 from kelpcompare.features.quarterly import SeriesQuarters, build_quarterly
 from kelpcompare.storage import FLAG_NOT_EVALUATED
@@ -61,5 +65,5 @@ def build_features(
         quarterly=with_anomalies(quarterly.frame, climatology, config),
         climatology=climatology,
         series=quarterly.series,
-        warnings=quarterly.warnings,
+        warnings=(*quarterly.warnings, *override_warnings(quarterly.frame, config)),
     )
