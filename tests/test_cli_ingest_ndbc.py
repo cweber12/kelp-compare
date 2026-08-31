@@ -71,9 +71,19 @@ def offline(monkeypatch):
     return asked
 
 
-def run(data_root: Path, *extra: str):
+def run(data_root: Path, *extra: str, stations: tuple[str, ...] = ("LJAC1",)):
+    """The real command, scoped to LJAC1 unless a case says otherwise.
+
+    These cases are about ingest mechanics -- the landing, the parse, the
+    manifest, the conditional request -- and the recorded payloads they run on
+    are LJAC1's. The registry declares three NDBC stations, so the default fan
+    out would serve one station's bytes under another's name; that the default
+    *is* every declared station has a case of its own below, which is the one
+    place a new station should be felt.
+    """
+    scope = [arg for station in stations for arg in ("--station", station)]
     result = CliRunner().invoke(
-        main, ["ingest", "--source", "ndbc", "--data-root", str(data_root), *extra]
+        main, ["ingest", "--source", "ndbc", "--data-root", str(data_root), *scope, *extra]
     )
     if result.exception and not isinstance(result.exception, SystemExit):
         raise result.exception
@@ -91,11 +101,32 @@ def manifest(data_root: Path) -> dict:
 # --------------------------------------------------------------------------
 
 
+def test_the_default_scope_is_every_ndbc_station_the_registry_declares(data_root, offline):
+    """The coupling every other case here is deliberately free of.
+
+    Asserted against what the registry declares rather than against a written
+    list of station codes, so adding a station to `sites.json` does not edit a
+    test -- but a station silently dropping out of the default fan out still
+    fails here, which is the property worth pinning.
+    """
+    from kelpcompare.registry import find_stations, load_registry
+
+    declared = [
+        station.station_code
+        for station in find_stations(load_registry(data_root / "registry" / "sites.json"), "ndbc")
+    ]
+    result = run(data_root, stations=())
+
+    assert result.exit_code == 0
+    assert [station for station, _ in offline] == declared
+    assert len(declared) >= 1
+
+
 def test_realtime_ingest_lands_raw_and_writes_observations(data_root, offline):
     result = run(data_root)
 
     assert result.exit_code == 0
-    assert offline == [("LJAC1", None)]  # every NDBC station the registry declares
+    assert offline == [("LJAC1", None)]
 
     landed = list((data_root / "raw" / "ndbc" / "LJAC1").iterdir())
     assert len(landed) == 1
@@ -372,14 +403,14 @@ def _declare(data_root: Path, measured: list[str]) -> None:
 
 
 def test_a_station_can_be_named_by_code_or_by_site_id(data_root, offline):
-    run(data_root, "--station", "ljac1")
-    run(data_root, "--station", "NDBC:LJAC1")
+    run(data_root, "--station", "ljac1", stations=())
+    run(data_root, "--station", "NDBC:LJAC1", stations=())
 
     assert offline == [("LJAC1", None), ("LJAC1", None)]
 
 
 def test_a_station_the_registry_does_not_declare_is_refused(data_root, offline):
-    result = run(data_root, "--station", "NOPE1")
+    result = run(data_root, "--station", "NOPE1", stations=())
 
     assert result.exit_code != 0
     assert "registry declares" in str(result.exception)
