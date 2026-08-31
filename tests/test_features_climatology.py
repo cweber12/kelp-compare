@@ -439,3 +439,136 @@ def test_a_quarterly_table_missing_its_usability_bookkeeping_raises():
     with pytest.raises(ValueError) as raised:
         build_climatology(frame, config(), series=POLYGON_SERIES)
     assert "quarter_complete" in str(raised.value)
+
+
+# --------------------------------------------------------------------------
+# Per-series baseline windows (docs/04 s3)
+# --------------------------------------------------------------------------
+
+
+def overriding(site_id, start, end, *, cfg=None) -> FeatureConfig:
+    """The same configuration, with one site given its own fixed window."""
+    cfg = cfg or config()
+    return FeatureConfig(
+        path=cfg.path,
+        coverage_floor=cfg.coverage_floor,
+        baseline=cfg.baseline,
+        parameters=cfg.parameters,
+        baseline_overrides={
+            site_id: Baseline(start_year=start, end_year=end, min_years=cfg.baseline.min_years)
+        },
+    )
+
+
+def two_sites(rows_by_site, cfg=None) -> pd.DataFrame:
+    """One frame carrying two sites, so both windows are exercised in one run."""
+    frames = []
+    for site_id, rows in rows_by_site.items():
+        frame = quarters(rows, cfg)
+        frame["site_id"] = site_id
+        frames.append(frame)
+    return pd.concat(frames, ignore_index=True)
+
+
+def test_a_site_with_no_override_still_takes_the_canonical_window():
+    cfg = overriding("NDBC:46254", 2015, 2019)
+    built = build_climatology(quarters([(y, 3, 15.0) for y in range(2007, 2012)]), cfg)
+
+    assert set(built["baseline_start_year"]) == {2007}
+    assert set(built["baseline_end_year"]) == {2011}
+
+
+def test_an_overridden_site_takes_its_declared_window():
+    """The window is stamped per row, so which one applied is readable off the table."""
+    cfg = overriding("NDBC:46254", 2015, 2019)
+    frame = quarters([(y, 3, 15.0) for y in range(2013, 2020)])
+    frame["site_id"] = "NDBC:46254"
+
+    built = build_climatology(frame, cfg)
+
+    assert set(built["baseline_start_year"]) == {2015}
+    assert set(built["baseline_end_year"]) == {2019}
+    # 2013 and 2014 are outside the declared window and must not contribute.
+    assert set(built["n_years"]) == {5}
+
+
+def test_two_sites_in_one_run_get_their_own_windows():
+    cfg = overriding("NDBC:46254", 2015, 2019)
+    frame = two_sites(
+        {
+            "NDBC:LJAC1": [(y, 3, 15.0) for y in range(2007, 2012)],
+            "NDBC:46254": [(y, 3, 18.0) for y in range(2015, 2020)],
+        },
+        cfg,
+    )
+
+    built = build_climatology(frame, cfg)
+    windows = {
+        row.site_id: (row.baseline_start_year, row.baseline_end_year) for row in built.itertuples()
+    }
+
+    assert windows["NDBC:LJAC1"] == (2007, 2011)
+    assert windows["NDBC:46254"] == (2015, 2019)
+
+
+def test_an_override_does_not_move_the_anomalies_of_an_unoverridden_site():
+    """The measured claim behind shipping this inert: nothing else changes."""
+    rows = [(y, 3, 15.0 + y - 2007) for y in range(2007, 2012)]
+    plain = with_anomalies(quarters(rows), build_climatology(quarters(rows), config()), config())
+
+    cfg = overriding("NDBC:46254", 2015, 2019)
+    with_one = with_anomalies(quarters(rows, cfg), build_climatology(quarters(rows, cfg), cfg), cfg)
+
+    pd.testing.assert_series_equal(plain["mean_anom"], with_one["mean_anom"])
+    pd.testing.assert_series_equal(plain["baseline_years"], with_one["baseline_years"])
+
+
+def test_an_overridden_series_that_reaches_min_years_gets_real_anomalies():
+    """The point of the mechanism: a post-baseline station stops being all-null."""
+    cfg = overriding("NDBC:46254", 2015, 2019)
+    frame = quarters([(y, 3, 15.0) for y in range(2015, 2021)])
+    frame["site_id"] = "NDBC:46254"
+
+    built = with_anomalies(frame, build_climatology(frame, cfg), cfg)
+
+    assert built["mean_anom"].notna().all()
+    # 2020 sits outside the declared window, so five years stand behind them.
+    assert set(built["baseline_years"]) == {5}
+
+
+def test_a_series_too_short_for_its_own_window_is_still_null():
+    """min_years is not overridable, so a thin record stays thin."""
+    cfg = overriding("NDBC:46266", 2020, 2025)
+    frame = quarters([(y, 3, 15.0) for y in (2020, 2021)])
+    frame["site_id"] = "NDBC:46266"
+
+    built = with_anomalies(frame, build_climatology(frame, cfg), cfg)
+
+    assert built["mean_anom"].isna().all()
+
+
+def test_the_kelp_half_is_untouched_by_a_site_id_override():
+    """Keyed on `polygon_id`, so no override can reach it (docs/04 s3)."""
+    from kelpcompare.features.kelp import KELP_SERIES, MEASURED, quarterly_kelp_columns
+
+    cfg = overriding("NDBC:46254", 2015, 2019)
+    rows = [
+        {
+            "source": "kelp_watch",
+            "polygon_id": "KELP:LA-JOLLA",
+            "year": year,
+            "quarter": 3,
+            "usable": True,
+            "quarter_complete": True,
+            "kelp_area_m2": 1000.0 + year,
+            "n_cells_kelp": 10,
+        }
+        for year in range(2007, 2012)
+    ]
+    frame = pd.DataFrame(rows).reindex(columns=list(quarterly_kelp_columns()))
+    frame[["usable", "quarter_complete"]] = True
+
+    built = build_climatology(frame, cfg, series=KELP_SERIES, measured=MEASURED)
+
+    assert set(built["baseline_start_year"]) == {2007}
+    assert set(built["baseline_end_year"]) == {2011}

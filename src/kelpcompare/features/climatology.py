@@ -15,6 +15,16 @@ stop being reproducible. The window is written onto every climatology row, so
 "the anomalies did not shift" is checkable by diffing two runs rather than a
 promise.
 
+**A series that cannot cover the canonical window may be given its own**, from
+`policy.baseline_overrides` (docs/04 s3). Still fixed, still per-row -- an
+override is a window an operator wrote down, never one derived from the years
+that happen to have landed, because a derived window would grow with the record
+and break the paragraph above. Resolution is by `site_id` and only when
+`site_id` is in the series key, so the kelp half takes the canonical window
+without knowing overrides exist. `min_years` is not overridable: two windows in
+one screen is a reporting cost the analyst can see on the row, but a per-station
+minimum would hide a thin baseline behind the same column name as a thick one.
+
 **Only usable, complete quarters contribute.** A half-observed quarter cannot
 drag the baseline it is later compared against, and an in-progress quarter
 cannot bias the baseline toward whatever part of the year the run happened in.
@@ -67,7 +77,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from kelpcompare.features.config import Baseline, FeatureConfig
+from kelpcompare.features.config import FeatureConfig
 from kelpcompare.features.quarterly import SERIES_KEY, feature_columns, quarterly_columns
 
 #: The environmental series key: what makes rows one QC series (docs/04 s1).
@@ -160,7 +170,7 @@ def build_climatology(
     _require_columns(quarterly, series, what="build a climatology")
 
     wanted = _measured_present(quarterly, config, measured)
-    contributors = _contributors(quarterly, config.baseline)
+    contributors = _contributors(quarterly, config, series)
     if contributors.empty or not wanted:
         return _typed(_empty(columns), quarterly, series)
 
@@ -179,8 +189,9 @@ def build_climatology(
         baseline_std=("value", "std"),  # sample convention; null for a single year
     )
     frame = grouped.reset_index()
-    frame["baseline_start_year"] = config.baseline.start_year
-    frame["baseline_end_year"] = config.baseline.end_year
+    start, end = _window_bounds(frame, config, series)
+    frame["baseline_start_year"] = start
+    frame["baseline_end_year"] = end
     return _typed(frame.reindex(columns=list(columns)), quarterly, series)
 
 
@@ -212,7 +223,7 @@ def with_anomalies(
 
     keys = _lookup_key(quarterly, series)
     built = quarterly.copy()
-    contributing = _numeric(keys.map(_contributing_years(quarterly, config.baseline, series)))
+    contributing = _numeric(keys.map(_contributing_years(quarterly, config, series)))
     built["baseline_years"] = contributing.fillna(0).astype("int32")
 
     for feature in wanted:
@@ -239,16 +250,45 @@ def with_anomalies(
 # --------------------------------------------------------------------------
 
 
-def _contributors(quarterly: pd.DataFrame, baseline: Baseline) -> pd.DataFrame:
-    """Usable, complete, and inside the fixed window. All three, deliberately."""
+def _window_bounds(
+    frame: pd.DataFrame, config: FeatureConfig, series: tuple[str, ...]
+) -> tuple[pd.Series, pd.Series]:
+    """Each row's baseline window, which is the canonical one unless declared otherwise.
+
+    Resolved by `site_id`, and only when `site_id` is part of the series key.
+    That is what keeps the kelp half out of this: it is keyed on `polygon_id`,
+    so no override can match it and every kelp row takes the canonical window,
+    without the kelp side needing to know overrides exist.
+    """
+    if "site_id" not in series or not config.baseline_overrides:
+        start = pd.Series(config.baseline.start_year, index=frame.index, dtype="int64")
+        return start, pd.Series(config.baseline.end_year, index=frame.index, dtype="int64")
+
+    windows = frame["site_id"].map(lambda site: config.baseline_for(_site_or_none(site)))
+    return (
+        windows.map(lambda window: window.start_year).astype("int64"),
+        windows.map(lambda window: window.end_year).astype("int64"),
+    )
+
+
+def _site_or_none(site) -> str | None:
+    """A null `site_id` names no site, so it takes the canonical window."""
+    return None if pd.isna(site) else str(site)
+
+
+def _contributors(
+    quarterly: pd.DataFrame, config: FeatureConfig, series: tuple[str, ...]
+) -> pd.DataFrame:
+    """Usable, complete, and inside that series' window. All three, deliberately."""
     if quarterly.empty:
         return quarterly
-    inside = quarterly["year"].between(baseline.start_year, baseline.end_year)
+    start, end = _window_bounds(quarterly, config, series)
+    inside = (quarterly["year"] >= start) & (quarterly["year"] <= end)
     return quarterly.loc[inside & quarterly["usable"] & quarterly["quarter_complete"]]
 
 
 def _contributing_years(
-    quarterly: pd.DataFrame, baseline: Baseline, series: tuple[str, ...]
+    quarterly: pd.DataFrame, config: FeatureConfig, series: tuple[str, ...]
 ) -> dict[str, int]:
     """How many years stand behind each series-quarter's baseline.
 
@@ -257,7 +297,7 @@ def _contributing_years(
     actually gates each anomaly; the two differ only where a feature is null in
     an otherwise-usable quarter, which nothing in the current feature set does.
     """
-    contributors = _contributors(quarterly, baseline)
+    contributors = _contributors(quarterly, config, series)
     if contributors.empty:
         return {}
     grouping = [*series, "quarter"]
