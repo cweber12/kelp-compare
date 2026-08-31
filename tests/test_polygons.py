@@ -221,11 +221,6 @@ def test_the_committed_registry_loads():
     assert all(p.source_file.endswith(".csv") for p in loaded)
     assert all(p.site_ids for p in loaded)
 
-    # The labels as they stand. What they *say* -- that La Jolla is the bed
-    # holding a reference station -- is false against the recorded outlines, and
-    # relabelling is https://github.com/cweber12/kelp-compare/issues/86 rather
-    # than a correction to make here.
-    assert [p.polygon_id for p in loaded if p.purpose == "regional"] == ["KELP:LA-JOLLA"]
     assert loaded.for_file("kelp_lajolla.csv").polygon_id == "KELP:LA-JOLLA"
 
 
@@ -241,14 +236,52 @@ def test_the_committed_registry_pairs_every_bed_with_both_public_references():
     The registry names sites, not series, so naming the pier pairs every series
     it produced -- both sensor depths. That is the decision, and it is the one
     an edit trimming this list back to a single depth would quietly reverse.
+
+    Asserted as a subset rather than as the whole list: a bed may also pair with
+    a station near *it*, which not every bed has. What every bed must carry is
+    the pair below -- the only public references able to supply a climatology,
+    and therefore the only ones whose anomalies can reach the docs/04 s4.1
+    screen at all.
     """
     for polygon in load_polygons(COMMITTED):
-        assert set(polygon.site_ids) == {
+        assert {
             "NDBC:LJAC1",
             "SIO:LAJOLLA-PIER",
             "PROJ:TIDBIT-1",
             "PROJ:TIDBIT-2",
-        }
+        } <= set(polygon.site_ids)
+
+
+def test_every_paired_site_is_one_the_site_registry_declares():
+    """A polygon naming a site that does not exist pairs with nothing, and the
+    comparison is simply smaller with no column saying why."""
+    declared = {
+        site["site_id"]
+        for site in json.loads(
+            (REPO_ROOT / "data" / "registry" / "sites.json").read_text(encoding="utf-8")
+        )["sites"]
+    }
+
+    for polygon in load_polygons(COMMITTED):
+        unknown = set(polygon.site_ids) - declared
+        assert not unknown, f"{polygon.polygon_id} pairs with undeclared {sorted(unknown)}"
+
+
+def test_exactly_one_bed_contains_a_project_sensor():
+    """The geometry behind the `purpose` labels, computed rather than asserted.
+
+    `near_site` is decided by containment and needs no threshold: the nearest
+    project sensor is 0 m for the containing bed and 9.8 km for the next, so
+    there is no number to tune and nothing for a later edit to drift.
+    """
+    metres = metres_to_each_bed()
+    containing = [
+        bed
+        for bed, by_site in metres.items()
+        if any(by_site[s] == 0.0 for s in by_site if s.startswith("PROJ:"))
+    ]
+
+    assert containing == ["KELP:LA-JOLLA"]
 
 
 def test_the_committed_registry_pins_the_revision_the_exports_came_from():
