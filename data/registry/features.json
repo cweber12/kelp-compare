@@ -7,6 +7,10 @@
       "start_year": 2007,
       "end_year": 2019,
       "min_years": 10
+    },
+    "baseline_overrides": {
+      "_comment": "Fixed windows for series whose record post-dates the canonical one (docs/04 s3, ADR-007). Declared, never derived: a window computed from whatever years have landed would grow with every backfill and move every anomaly ever taken against it. min_years is NOT overridable and comes from the canonical window above. NDBC:46254's record begins 2015-02-12, so it holds at most 5 candidate years inside 2007-2019 and can supply no baseline there; 2015-2025 is its whole record to the last complete year, which gives 11 usable complete years in Q2, Q3 and Q4. Q1 gets 9 against a minimum of 10 and therefore stays null, because two Q1s are unusable at the 0.6 coverage floor: 2015 at 0.52 (the record starts in February) and 2018 at 0.20 (23 days observed). That per-quarter hole is the documented behaviour rather than a defect - NDBC:LJAC1's air_temperature and wind_speed already produce nothing in Q2 for the same reason (docs/04 s3). It is worth naming that the missing quarter is winter, so this station contributes nothing to the docs/04 s4.5 comparison in the season storm-driven canopy loss happens; the answer to that is wave data, not a lower minimum. NDBC:46266 gets no entry on purpose: its record begins 2019-12-06 and holds 6 complete years in every candidate window, so no declared window can lift it over the minimum before 2030.",
+      "NDBC:46254": {"start_year": 2015, "end_year": 2025}
     }
   },
   "parameters": {
