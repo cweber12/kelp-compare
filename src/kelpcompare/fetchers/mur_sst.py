@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import io
 import time
+from datetime import UTC, date, datetime
 
 import geopandas as gpd
 import numpy as np
@@ -149,10 +150,21 @@ WEIGHT_CRS = "EPSG:32611"
 #: sources.
 REALTIME_DAYS = 45
 
-#: The first year the record covers, from `time_coverage_start`
-#: (2002-06-01T09:00:00Z). A request for an earlier year is an operator error
-#: rather than an outage, and is refused by name.
+#: The first stamp the record carries, from `time_coverage_start`. A request
+#: whose start falls before it is answered `404` -- not "no data for that year"
+#: but "your query is out of the record" -- so the first year's window starts
+#: here rather than on 1 January.
+RECORD_START = "2002-06-01T09:00:00Z"
+
+#: The year `RECORD_START` falls in, so a request for an earlier one is refused
+#: by name rather than fetched and reported as an outage.
 RECORD_START_YEAR = 2002
+
+#: The time of day every stamp in this record carries. Verified against the
+#: whole time axis on 2026-08-31: all 8,855 values are 09:00:00Z, without
+#: exception. That is what lets a year's window be expressed as two exact
+#: stamps -- see `archive_url`.
+DAILY_STAMP = "09:00:00Z"
 
 #: Seconds to wait before the single retry docs/02 asks for.
 RETRY_DELAY_SECONDS = 2.0
@@ -229,19 +241,57 @@ def realtime_url(bounds: tuple[float, float, float, float]) -> str:
     return _url(bounds, f"%5Blast-{REALTIME_DAYS - 1}:1:last%5D")
 
 
-def archive_url(bounds: tuple[float, float, float, float], year: int) -> str:
-    """One calendar year for one bed.
+def archive_url(
+    bounds: tuple[float, float, float, float], year: int, *, today: date | None = None
+) -> str:
+    """One calendar year for one bed, as two exact stamps.
 
-    Half-open on the right so two consecutive years cannot both claim the same
-    day. They would dedupe on `OBSERVATION_KEY` anyway, but a window overlapping
-    its neighbour by one step makes every row count in the manifest off by one
-    and unexplainable.
+    **Exact stamps, not a day's span, and that is a fix rather than a style.**
+    An earlier form asked `[(YYYY-01-01T00:00:00Z):1:(YYYY-12-31T23:59:59Z)]`,
+    on the reasoning that a half-open right edge stops two consecutive years
+    claiming the same day. It does the opposite: griddap resolves a time value
+    to the *nearest* grid point, and 23:59:59Z is nine hours from the next day's
+    09:00:00Z against fifteen from that day's own. A real 2020 ingest returned
+    **367 days**, the last of them 2021-01-01 -- so 2020 and 2021 would each
+    have claimed it. The rows dedupe on `OBSERVATION_KEY`, so nothing wrong
+    would have been stored; what it costs is a manifest whose count is off by
+    one every year and explicable by nothing in the record.
 
-    The upper bound is a date rather than `last`, so a request for the current
-    year does not silently mean something different tomorrow. A year the record
-    does not reach yet simply returns the part of it that exists.
+    Exact stamps have no rounding to get wrong, and they are safe here because
+    the record is regular: verified against the whole time axis on 2026-08-31,
+    every one of its 8,855 stamps is at 09:00:00Z, and **every complete year
+    from 2003 to 2025 carries both 1 January and 31 December**. (2021 is missing
+    two interior days, which is an ordinary hole and reduces that year's count
+    honestly rather than shifting its edges.)
+
+    **Both ends of the record are special, and both were measured.** A start
+    before `time_coverage_start` and a stop after the last stamp are each
+    answered `404` — which `_get` would report as an outage, putting a phantom
+    gap in the manifest for a window that holds real data. So the first year
+    starts at `RECORD_START`, and a year that has not finished yet stops at
+    `last`. Without the second, `--year 2026` asked in 2026 fails outright and
+    loses the eight months that exist.
+
+    `today` decides only whether a year is still running, and is injectable so
+    a test does not have to wait for one to end.
     """
-    return _url(bounds, f"%5B({year}-01-01T00:00:00Z):1:({year}-12-31T23:59:59Z)%5D")
+    today = today or datetime.now(UTC).date()
+    if year < RECORD_START_YEAR:
+        raise ValueError(
+            f"{DATASET_ID} begins {RECORD_START} and cannot serve {year}; the request is "
+            "out of the record rather than a gap in it"
+        )
+    if year > today.year:
+        raise ValueError(
+            f"{year} has not started; {DATASET_ID} cannot serve a window in the future, and "
+            "asking would be recorded as an upstream outage rather than as this mistake"
+        )
+
+    start = RECORD_START if year == RECORD_START_YEAR else f"{year}-01-01T{DAILY_STAMP}"
+    # `last` rather than 31 December for a year still running: that stamp does
+    # not exist yet, and asking for it loses the whole year rather than the tail.
+    stop = "last" if year >= today.year else f"{year}-12-31T{DAILY_STAMP}"
+    return _url(bounds, f"%5B({start}):1:({stop})%5D")
 
 
 # --------------------------------------------------------------------------
@@ -278,16 +328,11 @@ def fetch_archive(
 ) -> Payload:
     """One calendar year for one bed.
 
-    A year before the record starts is refused by name rather than fetched: MUR
-    begins 2002-06, and ERDDAP answers an out-of-range time constraint with a
-    400 that `_get` would report as an outage -- which would put a phantom gap in
-    the manifest for a year that was never going to exist.
+    A year outside the record is refused by `archive_url`, by name, rather than
+    fetched: ERDDAP answers an out-of-range time constraint with a 404 that
+    `_get` would report as an outage, putting a phantom gap in the manifest for
+    a window that was never going to exist.
     """
-    if year < RECORD_START_YEAR:
-        raise ValueError(
-            f"{DATASET_ID} begins {RECORD_START_YEAR}-06 and cannot serve {year}; "
-            "the request is out of the record rather than a gap in it"
-        )
     url = archive_url(bounds, year)
     body = _get(url, session)
     return new_payload(SOURCE, station, f"{station}_{year}.csv", url, body)

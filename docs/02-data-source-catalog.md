@@ -1215,6 +1215,35 @@ Both measured 2026-08-31 against this host.
   cannot ask for a day the analysis has not published and cannot run off the
   start of the record.
 
+### A calendar year is two exact stamps, and both ends of the record are special
+
+griddap resolves a time value to the **nearest** grid point, which makes a
+day-span window wrong in a way that looks right. `[(YYYY-01-01T00:00:00Z):1:
+(YYYY-12-31T23:59:59Z)]` was the first form here; 23:59:59Z is nine hours from
+the next day's 09:00:00Z against fifteen from that day's own, so a real 2020
+ingest returned **367 days**, the last of them 2021-01-01. Two consecutive years
+would each have claimed it. Nothing wrong would have been *stored* — the rows
+dedupe on `OBSERVATION_KEY` — but every year's manifest count would have been
+off by one and explained by nothing in the record.
+
+The window is therefore two exact stamps, which have no rounding to get wrong.
+That is safe because the record is regular, verified against the whole time axis
+on 2026-08-31: all **8,855** stamps are at 09:00:00Z, and every complete year
+from 2003 to 2025 carries both 1 January and 31 December.
+
+Both ends of the record are answered `404` — "out of the record", not "no data
+here" — so both are handled rather than fetched and reported as an outage:
+
+| Year | Window | Days returned |
+|---|---|---|
+| 2002 | starts at `time_coverage_start`, not 1 January | 214 |
+| 2003–2025 | both stamps exact | 365 / 366 (2021: **363**, two interior days genuinely missing) |
+| the current year | stops at `last`, since 31 December does not exist yet | 242 at 2026-08-31 |
+| later | refused by name | — |
+
+Without the `last` on the right, `--year 2026` asked in 2026 fails outright and
+loses the eight months that do exist.
+
 ### Volume, measured
 
 One calendar year of the largest bed's box (`KELP:SAN-DIEGO`, 98 cells) is

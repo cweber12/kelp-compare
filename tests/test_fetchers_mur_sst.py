@@ -23,6 +23,7 @@ stub session and everything else runs off the recorded bytes.
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -157,13 +158,50 @@ def test_the_padding_holds_every_cell_that_overlaps_each_committed_bed(beds):
         assert outside == [], f"{polygon_id} would drop {outside}"
 
 
-def test_an_archive_year_is_a_half_open_calendar_year():
-    url = mur_sst.archive_url((-117.3, 32.8, -117.2, 32.9), 2020)
+def test_an_archive_year_is_two_exact_stamps():
+    """Exact, because griddap resolves a time value to the *nearest* grid point.
+    A span ending 23:59:59Z is nine hours from the next day's 09:00:00Z against
+    fifteen from that day's own -- a real 2020 ingest returned 367 days, ending
+    2021-01-01, so two consecutive years each claimed it."""
+    url = mur_sst.archive_url((-117.3, 32.8, -117.2, 32.9), 2020, today=date(2026, 8, 31))
 
     assert "jplMURSST41.csv?analysed_sst" in url
-    assert "(2020-01-01T00:00:00Z):1:(2020-12-31T23:59:59Z)" in url
+    assert "(2020-01-01T09:00:00Z):1:(2020-12-31T09:00:00Z)" in url
     # Latitude before longitude: the axis order is positional in the URL.
     assert url.index("(32.8000)") < url.index("(-117.3000)")
+
+
+def test_two_consecutive_years_share_no_day():
+    """The property the exact stamps exist for. Off-by-one here does not
+    corrupt anything -- the rows dedupe on OBSERVATION_KEY -- it makes every
+    year's manifest count wrong by one and explicable by nothing."""
+    first = mur_sst.archive_url((-117.3, 32.8, -117.2, 32.9), 2020, today=date(2026, 8, 31))
+    second = mur_sst.archive_url((-117.3, 32.8, -117.2, 32.9), 2021, today=date(2026, 8, 31))
+
+    assert "(2020-12-31T09:00:00Z)" in first
+    assert "(2021-01-01T09:00:00Z)" in second
+    assert "2021" not in first.split("%5D")[0]
+
+
+def test_the_first_year_starts_where_the_record_does():
+    """MUR begins 2002-06-01. A start before that is answered 404, which `_get`
+    would report as an outage -- losing the seven months that exist."""
+    url = mur_sst.archive_url((-117.3, 32.8, -117.2, 32.9), 2002, today=date(2026, 8, 31))
+
+    assert f"({mur_sst.RECORD_START}):1:(2002-12-31T09:00:00Z)" in url
+
+
+def test_a_year_still_running_stops_at_the_last_stamp_rather_than_31_december():
+    """That stamp does not exist yet and asking for it is answered 404, so the
+    exact form would lose the whole of the current year rather than its tail."""
+    url = mur_sst.archive_url((-117.3, 32.8, -117.2, 32.9), 2026, today=date(2026, 8, 31))
+
+    assert "(2026-01-01T09:00:00Z):1:(last)" in url
+
+
+def test_a_year_that_has_not_started_is_refused_rather_than_fetched():
+    with pytest.raises(ValueError, match="has not started"):
+        mur_sst.archive_url((-117.3, 32.8, -117.2, 32.9), 2027, today=date(2026, 8, 31))
 
 
 def test_the_rolling_window_counts_back_from_the_end_of_the_record():
@@ -176,10 +214,10 @@ def test_the_rolling_window_counts_back_from_the_end_of_the_record():
 
 
 def test_a_year_before_the_record_starts_is_refused_rather_than_fetched():
-    """ERDDAP answers an out-of-range time constraint with a 400, which `_get`
+    """ERDDAP answers an out-of-range time constraint with a 404, which `_get`
     would report as an outage -- putting a phantom gap in the manifest for a
     year that was never going to exist."""
-    with pytest.raises(ValueError, match="begins 2002-06"):
+    with pytest.raises(ValueError, match="cannot serve 2001"):
         mur_sst.fetch_archive((-117.3, 32.8, -117.2, 32.9), 2001, station="KELP_DEL-MAR")
 
 
