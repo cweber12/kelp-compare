@@ -460,7 +460,7 @@ a closed vocabulary exists to prevent, so the distinction between a reservation
 and an orphan is recorded here and pinned by a test rather than left to be
 rediscovered.
 
-**`site_ids` is the union of three legs**, and a station is paired for one of
+**`site_ids` is the union of four legs**, and a station is paired for one of
 them or not at all:
 
 - **(a) Both project sensors, on every polygon.** §4.5 is a distance-decay test,
@@ -476,8 +476,19 @@ them or not at all:
   it cannot reach the §4.1 screen; pairing by distance alone would trade a
   reference with anomalies for one without.
 
-A station within range but without a record is held out until it has one **and**
-has been shown to track regional forcing — correlation against the network, the
+- **(d) The site derived from this polygon, if there is one.** A derived site
+  (above) reduces a gridded product over one bed's outline, so it pairs with
+  that bed and with no other — offering it to a second bed would offer that bed
+  another bed's water as a predictor for its canopy. Unlike a distant station,
+  that pairing would not *look* weak in the result. The leg covers every bed or
+  none: a bed without one while others have one would make the satellite leg's
+  coverage a property of which beds someone got round to, and doc 04 §4.5 would
+  read the hole as a spatial finding.
+
+Legs (b) and (c) are about public stations; a derived site is never paired by
+distance, and the radius gap the tests pin is a fact about measured stations
+only. A station within range but without a record is held out until it has one
+**and** has been shown to track regional forcing — correlation against the network, the
 reasoning `features/validation.py` already uses to report correlation across a
 depth gap while refusing bias.
 

@@ -28,6 +28,7 @@ from kelpcompare.polygons import (
     WGS84,
     load_polygons,
 )
+from kelpcompare.registry import find_stations, load_registry
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMMITTED = REPO_ROOT / "data" / "registry" / "polygons.geojson"
@@ -420,9 +421,15 @@ def test_the_two_outfall_moorings_are_the_nearest_station_to_two_of_the_beds():
     the registry asserting a number nothing measures, exactly as it did before.
     """
     metres = metres_to_each_bed()
+    derived = derived_sites()
 
     def ranked(bed: str) -> list[str]:
-        return sorted(metres[bed], key=metres[bed].get)
+        # "Of any kind" means of any kind that is somewhere. A derived site sits
+        # at its own bed's centroid, so it is trivially the nearest thing to that
+        # bed and 0 m is not a distance anyone measured -- it is the outline's
+        # own middle, restated. Ranking it here would replace a claim about the
+        # study area's instruments with an artefact of leg (d).
+        return sorted((s for s in metres[bed] if s not in derived), key=metres[bed].get)
 
     # SBOO is 2968 m from Imperial Beach and nothing else is within 17 km.
     assert ranked("KELP:IMPERIAL-BEACH")[:2] == ["SDRTOMS:SBOO", "SDRTOMS:PLOO"]
@@ -722,11 +729,40 @@ LONG_RECORD_REFERENCES = ("NDBC:LJAC1", "SIO:LAJOLLA-PIER")
 NEAR_STATION_RADIUS_M = 8000.0
 
 
+def derived_sites() -> dict[str, str]:
+    """Every site the registry declares as a reduction over a polygon, and which.
+
+    Leg (d) of the pairing rule. Read from `derived_from` rather than from the
+    `SST:` namespace, because a rule that recognised these by their identifiers
+    would be the string-match between a station name and a polygon name that
+    docs/03's integrity rules forbid -- the reason the block exists at all.
+
+    Empty until the first derived site lands, which makes every leg (d)
+    assertion below vacuous rather than wrong at that point.
+    """
+    loaded = load_registry(REPO_ROOT / "data" / "registry" / "sites.json")
+    return {
+        station.site_id: station.derived_from.polygon_id
+        for operator in {site.get("operator") for site in loaded.sites}
+        for station in find_stations(loaded, operator)
+        if station.is_derived
+    }
+
+
 def test_the_pairing_radius_sits_in_a_gap_rather_than_on_a_boundary():
     """A threshold chosen inside an 2.7 km gap is a decision; one chosen on a
     boundary is a coincidence waiting to be broken by a redrawn outline."""
     metres = metres_to_each_bed()
-    public = [site for site in next(iter(metres.values())) if not site.startswith("PROJ:")]
+    derived = derived_sites()
+    # Derived sites are excluded because they are not in the radius rule's
+    # world at all: leg (d) pairs one with its own bed at 0 m and with nothing
+    # else, so counting its distance to a *neighbouring* bed would put a number
+    # in this gap that no rule ever reads.
+    public = [
+        site
+        for site in next(iter(metres.values()))
+        if not site.startswith("PROJ:") and site not in derived
+    ]
     inside = [
         d
         for by_site in metres.values()
@@ -752,11 +788,14 @@ def test_every_paired_public_station_satisfies_the_rule():
     existed rather than replacing them.
     """
     metres = metres_to_each_bed()
+    derived = derived_sites()
 
     for polygon in load_polygons(COMMITTED):
         for site in polygon.site_ids:
             if site.startswith("PROJ:"):
                 continue  # leg (a): every bed, by construction
+            if site in derived:
+                continue  # leg (d): tested on its own terms below
             near = metres[polygon.polygon_id][site] <= NEAR_STATION_RADIUS_M
             assert near or site in LONG_RECORD_REFERENCES, (
                 f"{polygon.polygon_id} pairs {site} at "
@@ -873,6 +912,43 @@ def test_the_long_record_references_stay_on_every_bed():
     """
     for polygon in load_polygons(COMMITTED):
         assert set(LONG_RECORD_REFERENCES) <= set(polygon.site_ids)
+
+
+def test_a_derived_site_pairs_with_its_own_bed_and_with_no_other():
+    """Leg (d), and the whole of it.
+
+    A derived site carries a reduction of a gridded product over one polygon's
+    outline (docs/03). Offering it to a second bed would offer that bed another
+    bed's water as a predictor for its canopy -- which is not a weak pairing but
+    a wrong one, and unlike a distant station it would not look weak.
+    """
+    derived = derived_sites()
+    paired = {p.polygon_id: set(p.site_ids) for p in load_polygons(COMMITTED)}
+
+    for site, polygon_id in derived.items():
+        assert polygon_id in paired, f"{site} derives from {polygon_id}, which is not a bed"
+        for bed, sites in paired.items():
+            assert (site in sites) == (bed == polygon_id), (
+                f"{site} reduces {polygon_id} and must pair with that bed and no other"
+            )
+
+
+def test_every_bed_carries_exactly_one_derived_site_or_none_at_all():
+    """The satellite leg of docs/04 s4.5 covers every bed or it is not that leg.
+
+    Two derived sites on one bed would put two reductions of the same water into
+    one comparison as if they were independent predictors; a bed with none while
+    others have one would make the leg's coverage a property of which beds
+    someone got round to, and the s4.5 result would read as a spatial finding.
+    """
+    derived = derived_sites()
+    beds = [p.polygon_id for p in load_polygons(COMMITTED)]
+    per_bed = [sum(1 for pid in derived.values() if pid == bed) for bed in beds]
+
+    assert set(per_bed) <= {0, 1}, dict(zip(beds, per_bed, strict=True))
+    assert len(set(per_bed)) == 1, (
+        f"the derived leg covers only part of the study area: {dict(zip(beds, per_bed))}"
+    )
 
 
 def test_the_two_southern_beds_have_no_station_in_range():
