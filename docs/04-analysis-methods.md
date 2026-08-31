@@ -164,6 +164,41 @@ exist. The kelp family — canopy area and canopy extent — is built from the
 Kelp Watch export directly and takes no feature set, because the export
 arrives already reduced to one value per quarter.
 
+### The wave family stays deferred, and now for a measured reason
+
+The refusal above stands on its own — doc 02 attributes this family to CDIP, and
+CDIP has no fetcher. But the NDBC Waverider records added since are the first wave
+data this project holds (`NDBC:46254` from 2015-02, `NDBC:46266` from 2019-12, both
+reporting every 30 minutes), and measuring them says the family would not earn its
+place at these stations even once a fetcher exists.
+
+**The one feature named above that survives is already built.** *Quarterly max
+height* is the universal `statistics` set's `max`, live in every quarter: at
+`NDBC:46254` the Q3 maximum ranges 1.14–1.60 m across twelve years (sd 0.167 m).
+
+**The other two are degenerate exactly where they could be used.** Counting
+observed days whose maximum significant height clears a threshold, over 46254's
+whole record:
+
+| threshold | year-quarters with no event day at all |
+|---|---|
+| 2.0 m | Q1 1/11, Q2 1/11, **Q3 12/12**, Q4 3/11 |
+| 1.5 m | Q1 0/11, Q2 0/11, **Q3 6/12**, Q4 0/11 |
+| 1.0 m | none, in any quarter |
+
+At a storm-scale threshold Q3 is a constant zero — a column with no variance for an
+anomaly to be taken against. At the only threshold that varies in every quarter, 1.0 m,
+the "event" fires on 472 of 877 Q1 days and 163 of 1,052 Q3 days: that is ordinary
+winter weather being counted, not a storm. No value is both, and the threshold is
+per-parameter rather than per-quarter, so one value has to serve all four.
+
+**And the quarter that holds the events cannot carry an anomaly.** Q1 is where the
+waves are — 178 observed days above 1.5 m against Q3's six — and it is the quarter §3
+leaves null at this station. Coverage is a property of the buoy rather than of the
+parameter: `WVHT`, `DPD` and `WTMP` arrive in the same rows, so all three hold nine
+usable Q1 years against a ten-year minimum, and every Q1 wave anomaly in
+`comparison.parquet` is null. Wave data does not fill that hole; §3 records what would.
+
 ### What each feature counts, exactly
 
 Stated precisely enough that a reviewer can reproduce a number by hand from
@@ -333,6 +368,27 @@ thin is too thin for a climatology belongs to the method rather than to a
 station, and per-station minimums would make the weakest baselines the ones
 nearest the beds. So a station with six usable years stays null whatever
 window is declared for it.
+
+**A declared window buys whole quarters, not a whole series, and at `NDBC:46254`
+the quarter it misses is winter.** Its 2015–2025 window holds eleven usable years
+in Q2, Q3 and Q4 and nine in Q1, because 2015 Q1 is 0.522 covered (the record opens
+on 12 February) and 2018 Q1 is 0.195 (February is missing outright). Nine against a
+minimum of ten leaves Q1 null, so the nearest public station to `KELP:LA-JOLLA`
+contributes nothing to §4.5 in the season storm-driven canopy removal happens.
+
+Three things could close it, none free. NDBC's yearly archive for 2026 is not
+published yet and the realtime feed reaches back only about 45 days, so 2026 Q1 is
+absent rather than unusable; when that file lands, Q1 reaches ten years — but only
+if the window's end year is moved, which shifts every anomaly already taken against
+2015–2025 and is therefore a deliberate act under ADR-007, not a refresh. CDIP is
+the other route: 46254 is a Scripps-operated Waverider and doc 02 already says wave
+data for this location comes from CDIP, whose own archive for the same buoy may
+predate the NDBC record and reach the canonical window. Otherwise the hole stands.
+
+Lowering `coverage_floor` to 0.5 would also reach ten years by admitting 2015 Q1 at
+0.521, and is rejected: it is a global knob tuned to rescue one quarter of one
+station, and this section already forbids a half-observed quarter dragging a
+baseline it is later compared against.
 
 **The cost, documented rather than mitigated: two windows can coexist in one
 screen.** Anomalies taken against different baselines are not strictly
