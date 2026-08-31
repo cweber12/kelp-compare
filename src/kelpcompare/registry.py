@@ -103,6 +103,31 @@ class Archive:
 
 
 @dataclass(frozen=True)
+class Derivation:
+    """What a *derived* site is derived from: one analysis polygon.
+
+    A site record normally answers "where is the instrument". A handful of sites
+    have no instrument at all: they carry a series computed from a gridded
+    product over the area an analysis polygon covers, which is a number about
+    that polygon rather than about a point (docs/03 "A site may be derived from
+    a polygon"). The satellite leg of docs/04 s4.5 is the first of them.
+
+    Recorded as a block on the site rather than inferred from the identifier,
+    because `SST:LA-JOLLA` looking like `KELP:LA-JOLLA` is exactly the
+    string-match between a station name and a polygon name that docs/03's
+    integrity rules forbid. A derived site says which polygon it reduces, and a
+    reader that needs to know joins on that.
+
+    Only `polygon_id` is carried. *Which* reduction is applied is a property of
+    the fetcher that computes it, not a registry fact -- there is one
+    implementation, and a registry field naming it would imply an alternative a
+    caller could select and get.
+    """
+
+    polygon_id: str
+
+
+@dataclass(frozen=True)
 class Station:
     """A public-station site record: what a fetcher needs in order to ask for it.
 
@@ -148,6 +173,18 @@ class Station:
     measured_parameters: tuple[str, ...] = ()
     same_platform_as: tuple[str, ...] = ()
     archive: Archive | None = None
+    derived_from: Derivation | None = None
+
+    @property
+    def is_derived(self) -> bool:
+        """Whether this site is a reduction over a polygon rather than an instrument.
+
+        Asked rather than inferred from the namespace. A caller that branched on
+        `site_id.startswith("SST:")` would be deciding what a site *is* from
+        what it is *called*, which is the failure docs/03 keeps naming: an
+        identifier is a label, and the registry is where a fact is declared.
+        """
+        return self.derived_from is not None
 
     def depth_for(self, parameter: str) -> float | None:
         """The depth the registry supplies for one parameter, or None.
@@ -440,6 +477,7 @@ def _station(site: dict) -> Station:
         measured_parameters=tuple(str(p) for p in measured),
         same_platform_as=tuple(str(s) for s in platform),
         archive=_archive(site),
+        derived_from=_derivation(site),
     )
 
 
@@ -483,6 +521,51 @@ def _archive(site: dict) -> Archive | None:
         doi=_optional_text(block.get("doi")),
         citation=_optional_text(block.get("citation")),
     )
+
+
+def _derivation(site: dict) -> Derivation | None:
+    """The polygon a derived site reduces, or None for an ordinary station.
+
+    None rather than a raise for the same reason `_archive` returns one: almost
+    every site is an instrument somewhere and has nothing to derive from. It is
+    the fetcher for a derived source that refuses when the block is absent,
+    which is the moment a polygon would otherwise be guessed from a name.
+
+    `polygon_id` is validated because everything downstream hangs off it: it is
+    what the geometry is looked up by, and a blank or non-string one would reach
+    the polygon registry as a lookup that matches nothing and reads there as "no
+    such polygon" -- a registry typo wearing the costume of a missing outline.
+    Unknown keys are refused rather than ignored, as `polygons._reject_unknown`
+    refuses them, because a misspelt key in a block this small is silently the
+    whole block being absent.
+    """
+    block = site.get("derived_from")
+    if block is None:
+        return None
+
+    site_id = _site_id(site) or "<unnamed site>"
+    if not isinstance(block, dict) or not block:
+        raise ValueError(
+            f"`derived_from` on {site_id} is {block!r}; declare a block naming a `polygon_id` "
+            "or omit it, which is how the registry says a site is an instrument somewhere"
+        )
+
+    unknown = sorted(set(block) - {"polygon_id"})
+    if unknown:
+        raise ValueError(
+            f"`derived_from` on {site_id} carries {unknown}, which this registry does not "
+            "define; the block holds `polygon_id` and nothing else"
+        )
+
+    polygon_id = block.get("polygon_id")
+    if not isinstance(polygon_id, str) or not polygon_id.strip():
+        raise ValueError(
+            f"`derived_from.polygon_id` on {site_id} is {polygon_id!r}; it must name a polygon "
+            "in polygons.geojson. It is what the geometry this series is reduced over is "
+            "looked up by, so it cannot be blank or inferred from the site_id"
+        )
+
+    return Derivation(polygon_id=polygon_id.strip())
 
 
 def _optional_text(value: object) -> str | None:

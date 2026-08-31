@@ -140,6 +140,72 @@
       },
       "measured_parameters": ["sea_water_temperature", "wave_significant_height", "wave_peak_period"],
       "notes": "Waverider buoy, position and sensor geometry from NDBC's published station_table.txt and station page, retrieved 2026-08-30: sea temp depth 0.46 m below the water line, water depth 17 m. This buoy sits INSIDE the KELP:DEL-MAR outline - nearest-point distance 0 m in EPSG:32611 - so it is not a neighbour in the docs/04 s1 sense at all but a measurement of the water that bed's canopy is in. The bed is currently paired with NDBC:LJAC1 at 8574 m. Paired into KELP:DEL-MAR, KELP:SOLANA-BEACH and KELP:ENCINITAS in polygons.geojson under the rule https://github.com/cweber12/kelp-compare/issues/86 settled. Reports only WVHT DPD APD MWD WTMP; every other stdmet column is sentinel in both layouts, checked against the realtime feed and the 2024 archive. APD and MWD stay uncontrolled by decision rather than deferral, and wave_significant_height now carries a spike block while wave_peak_period deliberately carries neither test; docs/04 s1-s2 record both. Archive begins 2019-12-06 - the 2019 file is 1205 rows covering 6-31 December, not a year - so the record is effectively 2020 onward and holds six complete years against a min_years of 10. It therefore post-dates the 2007-2019 baseline entirely and cannot carry an anomaly under any declared window until 2030, which is the rule working rather than an exception to carve (docs/04 s3, ADR-007). Backfilled: 107,383 rows per parameter from 2019-12-06."
+    },
+    {
+      "site_id": "SST:LA-JOLLA",
+      "name": "MUR L4 SST over the La Jolla kelp bed",
+      "operator": "mur_sst",
+      "station_code": "jplMURSST41",
+      "lat": 32.827885,
+      "lon": -117.289276,
+      "measured_parameters": ["sea_water_temperature"],
+      "derived_from": { "polygon_id": "KELP:LA-JOLLA" },
+      "notes": "Derived site, NOT an instrument (docs/03 'A site may be derived from a polygon'). The series is the area-weighted mean of jplMURSST41 analysed_sst over the MUR cells intersecting KELP:LA-JOLLA, weighted by the area of each cell inside the outline and taken over the cells carrying a value; docs/02 'JPL MUR L4 SST' records the reduction and why cell-centre-in-polygon was rejected (9 cell centres fall inside, against 22 intersecting cells). lat/lon are that bed's centroid, in EPSG:4326, computed from polygons.geojson and recomputable from it: they are provenance, not a position. Nothing may use them as a distance origin - the docs/04 s4.5 distance-decay test measures from sensors, and a spatially continuous product has no distance to decay over, which is exactly what makes it the third leg. sensor_depths_m is deliberately ABSENT rather than 0.0. PO.DAAC publishes standard_name=sea_surface_foundation_temperature and no depth, and a foundation SST is by definition the temperature free of diurnal stratification rather than a reading at one depth; docs/03 reserves a null depth_m for a water parameter whose depth the provider has not published, and a guessed 0.0 would be wrong in the specific direction of claiming a skin temperature this product explicitly is not. depth_m is part of OBSERVATION_KEY, so this is ONE-WAY: declaring a number later keys the new rows differently from the ones already landed. Whether a foundation SST is depth-comparable to a project logger for the docs/04 s1 validation table is deliberately not answered here; it is follow-on work to https://github.com/cweber12/kelp-compare/issues/106."
+    },
+    {
+      "site_id": "SST:DEL-MAR",
+      "name": "MUR L4 SST over the Del Mar kelp bed",
+      "operator": "mur_sst",
+      "station_code": "jplMURSST41",
+      "lat": 32.954995,
+      "lon": -117.276096,
+      "measured_parameters": ["sea_water_temperature"],
+      "derived_from": { "polygon_id": "KELP:DEL-MAR" },
+      "notes": "Derived site, NOT an instrument (docs/03 'A site may be derived from a polygon'). The series is the area-weighted mean of jplMURSST41 analysed_sst over the MUR cells intersecting KELP:DEL-MAR, weighted by the area of each cell inside the outline and taken over the cells carrying a value; docs/02 'JPL MUR L4 SST' records the reduction and why cell-centre-in-polygon was rejected (no MUR cell centre falls inside this bed at all, so that rule would have produced no series for it). lat/lon are that bed's centroid, in EPSG:4326, computed from polygons.geojson and recomputable from it: they are provenance, not a position. Nothing may use them as a distance origin - the docs/04 s4.5 distance-decay test measures from sensors, and a spatially continuous product has no distance to decay over, which is exactly what makes it the third leg. sensor_depths_m is deliberately ABSENT rather than 0.0. PO.DAAC publishes standard_name=sea_surface_foundation_temperature and no depth, and a foundation SST is by definition the temperature free of diurnal stratification rather than a reading at one depth; docs/03 reserves a null depth_m for a water parameter whose depth the provider has not published, and a guessed 0.0 would be wrong in the specific direction of claiming a skin temperature this product explicitly is not. depth_m is part of OBSERVATION_KEY, so this is ONE-WAY: declaring a number later keys the new rows differently from the ones already landed. Whether a foundation SST is depth-comparable to a project logger for the docs/04 s1 validation table is deliberately not answered here; it is follow-on work to https://github.com/cweber12/kelp-compare/issues/106."
+    },
+    {
+      "site_id": "SST:SOLANA-BEACH",
+      "name": "MUR L4 SST over the Solana Beach kelp bed",
+      "operator": "mur_sst",
+      "station_code": "jplMURSST41",
+      "lat": 32.991463,
+      "lon": -117.283904,
+      "measured_parameters": ["sea_water_temperature"],
+      "derived_from": { "polygon_id": "KELP:SOLANA-BEACH" },
+      "notes": "Derived site, NOT an instrument (docs/03 'A site may be derived from a polygon'). The series is the area-weighted mean of jplMURSST41 analysed_sst over the MUR cells intersecting KELP:SOLANA-BEACH, weighted by the area of each cell inside the outline and taken over the cells carrying a value; docs/02 'JPL MUR L4 SST' records the reduction and why cell-centre-in-polygon was rejected (2 cell centres fall inside, against 5 intersecting cells). lat/lon are that bed's centroid, in EPSG:4326, computed from polygons.geojson and recomputable from it: they are provenance, not a position. Nothing may use them as a distance origin - the docs/04 s4.5 distance-decay test measures from sensors, and a spatially continuous product has no distance to decay over, which is exactly what makes it the third leg. sensor_depths_m is deliberately ABSENT rather than 0.0. PO.DAAC publishes standard_name=sea_surface_foundation_temperature and no depth, and a foundation SST is by definition the temperature free of diurnal stratification rather than a reading at one depth; docs/03 reserves a null depth_m for a water parameter whose depth the provider has not published, and a guessed 0.0 would be wrong in the specific direction of claiming a skin temperature this product explicitly is not. depth_m is part of OBSERVATION_KEY, so this is ONE-WAY: declaring a number later keys the new rows differently from the ones already landed. Whether a foundation SST is depth-comparable to a project logger for the docs/04 s1 validation table is deliberately not answered here; it is follow-on work to https://github.com/cweber12/kelp-compare/issues/106."
+    },
+    {
+      "site_id": "SST:ENCINITAS",
+      "name": "MUR L4 SST over the Encinitas kelp bed",
+      "operator": "mur_sst",
+      "station_code": "jplMURSST41",
+      "lat": 33.023823,
+      "lon": -117.294481,
+      "measured_parameters": ["sea_water_temperature"],
+      "derived_from": { "polygon_id": "KELP:ENCINITAS" },
+      "notes": "Derived site, NOT an instrument (docs/03 'A site may be derived from a polygon'). The series is the area-weighted mean of jplMURSST41 analysed_sst over the MUR cells intersecting KELP:ENCINITAS, weighted by the area of each cell inside the outline and taken over the cells carrying a value; docs/02 'JPL MUR L4 SST' records the reduction and why cell-centre-in-polygon was rejected (2 cell centres fall inside, against 7 intersecting cells). lat/lon are that bed's centroid, in EPSG:4326, computed from polygons.geojson and recomputable from it: they are provenance, not a position. Nothing may use them as a distance origin - the docs/04 s4.5 distance-decay test measures from sensors, and a spatially continuous product has no distance to decay over, which is exactly what makes it the third leg. sensor_depths_m is deliberately ABSENT rather than 0.0. PO.DAAC publishes standard_name=sea_surface_foundation_temperature and no depth, and a foundation SST is by definition the temperature free of diurnal stratification rather than a reading at one depth; docs/03 reserves a null depth_m for a water parameter whose depth the provider has not published, and a guessed 0.0 would be wrong in the specific direction of claiming a skin temperature this product explicitly is not. depth_m is part of OBSERVATION_KEY, so this is ONE-WAY: declaring a number later keys the new rows differently from the ones already landed. Whether a foundation SST is depth-comparable to a project logger for the docs/04 s1 validation table is deliberately not answered here; it is follow-on work to https://github.com/cweber12/kelp-compare/issues/106."
+    },
+    {
+      "site_id": "SST:SAN-DIEGO",
+      "name": "MUR L4 SST over the San Diego kelp bed",
+      "operator": "mur_sst",
+      "station_code": "jplMURSST41",
+      "lat": 32.690109,
+      "lon": -117.261838,
+      "measured_parameters": ["sea_water_temperature"],
+      "derived_from": { "polygon_id": "KELP:SAN-DIEGO" },
+      "notes": "Derived site, NOT an instrument (docs/03 'A site may be derived from a polygon'). The series is the area-weighted mean of jplMURSST41 analysed_sst over the MUR cells intersecting KELP:SAN-DIEGO, weighted by the area of each cell inside the outline and taken over the cells carrying a value; docs/02 'JPL MUR L4 SST' records the reduction and why cell-centre-in-polygon was rejected (15 cell centres fall inside, against 34 intersecting cells). lat/lon are that bed's centroid, in EPSG:4326, computed from polygons.geojson and recomputable from it: they are provenance, not a position. Nothing may use them as a distance origin - the docs/04 s4.5 distance-decay test measures from sensors, and a spatially continuous product has no distance to decay over, which is exactly what makes it the third leg. sensor_depths_m is deliberately ABSENT rather than 0.0. PO.DAAC publishes standard_name=sea_surface_foundation_temperature and no depth, and a foundation SST is by definition the temperature free of diurnal stratification rather than a reading at one depth; docs/03 reserves a null depth_m for a water parameter whose depth the provider has not published, and a guessed 0.0 would be wrong in the specific direction of claiming a skin temperature this product explicitly is not. depth_m is part of OBSERVATION_KEY, so this is ONE-WAY: declaring a number later keys the new rows differently from the ones already landed. Whether a foundation SST is depth-comparable to a project logger for the docs/04 s1 validation table is deliberately not answered here; it is follow-on work to https://github.com/cweber12/kelp-compare/issues/106."
+    },
+    {
+      "site_id": "SST:IMPERIAL-BEACH",
+      "name": "MUR L4 SST over the Imperial Beach kelp bed",
+      "operator": "mur_sst",
+      "station_code": "jplMURSST41",
+      "lat": 32.568185,
+      "lon": -117.156300,
+      "measured_parameters": ["sea_water_temperature"],
+      "derived_from": { "polygon_id": "KELP:IMPERIAL-BEACH" },
+      "notes": "Derived site, NOT an instrument (docs/03 'A site may be derived from a polygon'). The series is the area-weighted mean of jplMURSST41 analysed_sst over the MUR cells intersecting KELP:IMPERIAL-BEACH, weighted by the area of each cell inside the outline and taken over the cells carrying a value; docs/02 'JPL MUR L4 SST' records the reduction and why cell-centre-in-polygon was rejected (6 cell centres fall inside, against 17 intersecting cells). lat/lon are that bed's centroid, in EPSG:4326, computed from polygons.geojson and recomputable from it: they are provenance, not a position. Nothing may use them as a distance origin - the docs/04 s4.5 distance-decay test measures from sensors, and a spatially continuous product has no distance to decay over, which is exactly what makes it the third leg. sensor_depths_m is deliberately ABSENT rather than 0.0. PO.DAAC publishes standard_name=sea_surface_foundation_temperature and no depth, and a foundation SST is by definition the temperature free of diurnal stratification rather than a reading at one depth; docs/03 reserves a null depth_m for a water parameter whose depth the provider has not published, and a guessed 0.0 would be wrong in the specific direction of claiming a skin temperature this product explicitly is not. depth_m is part of OBSERVATION_KEY, so this is ONE-WAY: declaring a number later keys the new rows differently from the ones already landed. Whether a foundation SST is depth-comparable to a project logger for the docs/04 s1 validation table is deliberately not answered here; it is follow-on work to https://github.com/cweber12/kelp-compare/issues/106."
     }
   ]
 }

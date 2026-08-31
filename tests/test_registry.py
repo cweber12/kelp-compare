@@ -369,6 +369,71 @@ def test_an_unreadable_archive_names_the_site_it_is_on(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# A site derived from a polygon rather than placed at a point (docs/03)
+# --------------------------------------------------------------------------
+
+
+def test_an_ordinary_station_derives_from_nothing(tmp_path):
+    """The overwhelming majority of sites are an instrument somewhere, so the
+    absent block is the ordinary case and not a gap in the record."""
+    found = station(tmp_path)
+    assert found.derived_from is None
+    assert found.is_derived is False
+
+
+def test_a_derived_site_names_the_polygon_it_reduces(tmp_path):
+    found = station(tmp_path, derived_from={"polygon_id": "KELP:LA-JOLLA"})
+    assert found.is_derived is True
+    assert found.derived_from.polygon_id == "KELP:LA-JOLLA"
+
+
+def test_derivation_is_declared_rather_than_read_off_the_site_id(tmp_path):
+    """The whole point of the block. `SST:LA-JOLLA` resembling `KELP:LA-JOLLA`
+    is the string-match between a station name and a polygon name that docs/03's
+    integrity rules forbid, so a derived site is one that *says* so and the
+    polygon it names is not required to resemble it."""
+    found = station(
+        tmp_path, site_id="SST:ANYTHING", derived_from={"polygon_id": "KELP:IMPERIAL-BEACH"}
+    )
+    assert found.derived_from.polygon_id == "KELP:IMPERIAL-BEACH"
+
+
+@pytest.mark.parametrize(
+    "polygon_id",
+    ["", "   ", None, 23, ["KELP:LA-JOLLA"]],
+    ids=["empty", "blank", "null", "number", "list"],
+)
+def test_a_derivation_without_a_usable_polygon_id_is_refused(tmp_path, polygon_id):
+    """It reaches the polygon registry as a lookup, where a registry typo and a
+    polygon nobody has drawn produce the same silence."""
+    with pytest.raises(ValueError, match="derived_from.polygon_id"):
+        station(tmp_path, derived_from={"polygon_id": polygon_id})
+
+
+def test_a_polygon_id_is_taken_without_its_surrounding_space(tmp_path):
+    found = station(tmp_path, derived_from={"polygon_id": "  KELP:DEL-MAR  "})
+    assert found.derived_from.polygon_id == "KELP:DEL-MAR"
+
+
+@pytest.mark.parametrize("block", ["KELP:LA-JOLLA", [], {}], ids=["string", "list", "empty"])
+def test_a_derivation_that_is_not_a_block_is_refused(tmp_path, block):
+    with pytest.raises(ValueError, match="`derived_from` on NDBC:TEST"):
+        station(tmp_path, derived_from=block)
+
+
+def test_an_unknown_key_in_the_block_is_refused_rather_than_ignored(tmp_path):
+    """A misspelt key in a one-key block is silently the block being absent,
+    which downstream reads as an ordinary station with an odd name."""
+    with pytest.raises(ValueError, match="polygon_ids"):
+        station(tmp_path, derived_from={"polygon_ids": "KELP:LA-JOLLA"})
+
+
+def test_an_unreadable_derivation_names_the_site_it_is_on(tmp_path):
+    with pytest.raises(ValueError, match="SST:LA-JOLLA"):
+        station(tmp_path, site_id="SST:LA-JOLLA", derived_from={"polygon_id": ""})
+
+
+# --------------------------------------------------------------------------
 # A public station's position (docs/03)
 # --------------------------------------------------------------------------
 
