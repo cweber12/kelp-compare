@@ -258,6 +258,7 @@ One record per station or deployment location.
 | `sensor_depths_m` | For public stations: `{parameter: depth}`, positive down. A number is what the fetcher writes into `depth_m`; a **list** means the payload carries the depth and these are the ones seen so far |
 | `measured_parameters` | For public stations: the controlled parameters this station carries an instrument for. A fetcher stores only these |
 | `same_platform_as[]` | Other `site_id`s that are the same physical instrument package under another provider's identifier |
+| `derived_from` | Only on a site that has no instrument: `{"polygon_id": ...}`, the analysis polygon this site's series is reduced over. See below |
 
 Each `deployments[]` record carries `tz`, `window_local` (the in-water
 window, doc 06 §3), and `series_map` — the mapping from the vendor file's
@@ -365,6 +366,48 @@ landing rows for a sensor the station does not have (doc 02, "A station stores
 only what it has a sensor for"). An **absent** `measured_parameters` means
 undeclared, not empty: the fetcher stores everything it recognises and the run
 warns, because an unrecorded fact must not quietly become missing data.
+
+### A site may be derived from a polygon rather than placed at a point
+
+Every field above assumes the site is somewhere an instrument is. A **derived
+site** is not: it carries a series computed from a spatially continuous product
+over the area an analysis polygon covers, which is a number about that polygon
+rather than about a point. The satellite leg of doc 04 §4.5 is the first, and
+`SST:LA-JOLLA` … are its six records — one per bed, a `jplMURSST41` reduction
+over that bed's outline (doc 02, "JPL MUR L4 SST").
+
+```json
+"derived_from": { "polygon_id": "KELP:LA-JOLLA" }
+```
+
+**Keyed on `site_id` like every other observation, and that is a decision, not
+an oversight.** A bed-mean SST is honestly a property of the polygon, and
+keying it that way would have meant a features-zone table parallel to
+`quarterly_kelp`, a second climatology, and `polygon_id` entering
+`COMPARISON_KEY`. It was rejected on what §4.5 is *for*: that section scores
+three predictors — project sensor, public neighbor, satellite — against one
+kelp series, and a comparison is only fair if all three reach it by the same
+road. Structuring the satellite leg differently from the two it is being scored
+against buys truthfulness in the schema at the cost of the comparison the
+schema exists to serve. So the shape is shared and the *difference* is
+declared, here, rather than left to be inferred from a name.
+
+Three things follow, and each is load-bearing:
+
+- **The block is what makes the site derived; the identifier is not.**
+  `SST:LA-JOLLA` resembles `KELP:LA-JOLLA`, and nothing is allowed to use that.
+  Reading a polygon out of a site's name is the string-match the integrity
+  rules above forbid, so `Station.is_derived` asks the block and a misspelt key
+  in it is refused rather than ignored — in a one-key block, a typo is silently
+  the whole block being absent.
+- **`lat`/`lon` are the polygon's centroid, and are provenance rather than a
+  position.** There is no instrument to survey. Nothing may use a derived
+  site's coordinates as a distance origin: the §4.5 distance-decay test
+  measures from *sensors*, and a spatially continuous product has no distance
+  to decay over — which is the property that makes it the third leg.
+- **A derived site pairs with exactly the polygon it derives from.** It is leg
+  (d) of the `site_ids` rule below. `SST:DEL-MAR` on La Jolla's bed would be
+  another bed's water offered as a predictor for this one.
 
 `same_platform_as` records that two site records describe one instrument
 package. `NDBC:LJAC1` and `COOPS:9410230` are the same NOS platform, NDBC
