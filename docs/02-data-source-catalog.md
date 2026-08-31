@@ -21,6 +21,7 @@ implementation, since public endpoints and formats drift.
 | SIO Shore Stations | Century-scale reference temperature | Hand-downloaded CSV, dropped in `raw/sio_shore_stations/incoming/` | Daily | CSV |
 | CDIP | Wave climate | THREDDS/ERDDAP NetCDF | 30 min | NetCDF |
 | CDFW / marineBIOS | GIS context, historical kelp surveys | Downloaded shapefiles/services | Static / annual | Shapefile, GeoJSON |
+| CNRA open data | Ecological context, independent canopy | CKAN portal downloads | Static (2011–2012) | CSV, PDF |
 | Supplementary (SST, indices) | Gap-filling, regional drivers | ERDDAP / flat files | Daily / monthly | NetCDF, text |
 
 ## Kelp Watch
@@ -1027,13 +1028,143 @@ maximum event duration per quarter.
 
 ## CDFW / marineBIOS
 
-GIS context rather than time series: MPA boundaries, administrative kelp
-bed designations, and CDFW's historical aerial/multispectral kelp canopy
-surveys (irregular years). Landed once as shapefiles/GeoJSON into
-`raw/gis/`, loaded with geopandas. Two uses: spatial joins (which MPA/kelp
-bed contains each polygon and sensor) and an independent cross-check of
-Kelp Watch canopy in overlapping years — agreement there strengthens any
-claim built on the Landsat product.
+GIS context rather than time series: substrate, kelp persistence, MPA
+boundaries, administrative kelp bed designations, and CDFW's historical
+aerial/multispectral kelp canopy surveys (irregular years). Landed once as
+shapefiles/GeoJSON into `raw/gis/`, loaded with geopandas. Two uses: spatial
+joins (which MPA/kelp bed contains each polygon and sensor) and an independent
+cross-check of Kelp Watch canopy in overlapping years — agreement there
+strengthens any claim built on the Landsat product.
+
+**Nothing here is built.** `raw/gis/` appears in the docs/03 layout and is
+empty; no fetcher reads BIOS, and no code in the package performs a spatial
+join against anything but `polygons.geojson`. The layers below are recorded so
+that which ones get adopted is a reviewable decision rather than whichever a
+browser session happened to have switched on.
+
+### The layers, and what each would settle
+
+| Layer | What it would settle |
+|---|---|
+| Predicted Nearshore Benthic Substrates `[ds3091]` | Which water can hold kelp at all. docs/04 §4.5 fits kelp against polygons at increasing distance from a sensor, and rings drawn without substrate will include sand — which holds no canopy for reasons that have nothing to do with distance, and which therefore reads as decay. |
+| Kelp Persistence `[ds3151]` | Whether the six reconstructed outlines enclose real kelp habitat, judged from something that is not Kelp Watch. |
+| MPA boundaries | A step change in January 2012, inside the 2007–2019 climatology baseline. Protection status alters urchin and predator dynamics, so it is a confounder no temperature feature can absorb. |
+| Administrative kelp beds and harvest status | Point Loma was commercially harvested for decades. Harvest is direct canopy removal and would read as environmental decline in an anomaly series — on `KELP:SAN-DIEGO`, the largest polygon in the registry. |
+
+**The persistence layer corroborates the outlines; it must never redraw them.**
+The `_verified` claims in `polygons.geojson` are circular by construction —
+outlines derived from Kelp Watch cells, checked against the Kelp Watch aggregate
+endpoint — so an independent layer is worth having. But an outline's one
+binding property is that it reproduces its landed export line for line, and a
+shape nudged toward another publisher's idea of where the bed stops would lose
+that while still looking like an improvement.
+
+### What is deliberately not adopted
+
+Eelgrass `[ds1503]`, Shoreline Types `[ds3115]`, Saline Wetlands `[ds2864]` and
+Estuarine Biotic Habitat `[ds2793]` describe habitats a giant kelp bed is not
+in. They are named here because they sit adjacent in the BIOS habitat tree and
+will be offered again to anyone who opens it.
+
+**`EXTERNAL — West Coast Nearshore CMECS Substrate Habitat` is not a CDFW
+dataset**, and neither is the DEM Global Mosaic; BIOS surfaces both from other
+publishers. A revision pinned against BIOS for either would name the wrong
+custodian, and for San Diego the CMECS layer is redundant with `ds3091`
+besides. If bathymetry is wanted later, NOAA/NCEI is the custodian to pin.
+
+### Access is unverified, and checking it is implementation's first job
+
+BIOS publishes through ArcGIS REST services, which return GeoJSON for a bbox
+query — so the existing fetcher contract and `geopandas` cover it with no new
+dependency (hard rule 8). No endpoint is recorded here because none has been
+called. Unlike the CNRA entry below, nothing in this section has been measured
+against a live service, and every access detail in it is a claim to check
+rather than a finding.
+
+## CNRA open data (data.cnra.ca.gov)
+
+The California Natural Resources Agency's CKAN portal, and a second publishing
+route for material that also reaches BIOS rather than a separate body of data —
+check whether a layer wanted from here is already covered by the entry above
+before writing a second fetcher for it.
+
+Three datasets were vetted, all from the South Coast MPA Baseline Study: diver
+transect surveys of shallow rock and kelp forest (Pondella, Vantuna Research
+Group), citizen-scientist transects of the same reefs (Freiwald, Reef Check
+California), and nearshore substrate mapping from aerial multispectral imagery
+(Svejkovsky, Ocean Imaging). None carries in-situ temperature or PAR, so
+**nothing in this entry touches the observation schema**, the normalizer, or QC.
+
+### It is 2011–2012, so none of it can be a quarterly feature
+
+All three are baseline snapshots. Against a kelp record screened from 1984 on a
+2007–2019 climatology baseline there is no series to build an anomaly from, so
+urchin density — the biological driver no sensor in `sites.json` can see —
+cannot enter `comparison.parquet` as a predictor, which is the thing it would
+most be wanted for.
+
+It also lands *before* the 2014–2016 marine heatwave, so it cannot drive the
+docs/04 §4.2 event study either. What it can do is describe the state going in,
+which is a docs/04 §6 interpretive limit rather than a model term.
+
+### The San Diego tiles ship no raster
+
+Verified 2026-08-30, by reading each archive's zip central directory from a
+ranged GET of its last 256 KB — about 1 MB fetched rather than the 321 MB the
+three archives hold.
+
+| Archive | Size | Contents | Flown |
+|---|---|---|---|
+| `lajolla-pointloma.zip` | 81 MB | 8 PDF (4 Imagery, 4 IntClass) | 2012-06-25 |
+| `encinitas-la-jolla.zip` | 183 MB | 24 PDF | 2012-11-12 |
+| `imperialbeach.zip` | 57 MB | 8 PDF | 2012-06-25 |
+| Anacapa Island `IntClass` (reference) | 1.3 MB | `.tif`, `.tfw`, `.ovr`, `.vat.dbf`, metadata | 2012-10-14 |
+
+Forty PDFs across the three San Diego archives and not one georeferenced file.
+The Anacapa archive, listed on the same page as a reference, is a complete
+classified raster: GeoTIFF, world file, overviews, and the value-attribute table
+carrying the habitat-class legend.
+
+**So the raster exists as a product and was simply not published for this
+coast.** That is the difference between a dead end and a request, and it is what
+lets the request be specific: the `IntClass` raster set for
+`LaJolla_PointLoma_06252012`, `Encinitas_LaJolla_11122012` and
+`ImperialBeach_06252012`, in the form `SCR_Aerial_AnacapaIsland_10142012_IntClass.tif`
+already takes.
+
+**Two flight dates, two quarters.** June and November fall in 2012Q2 and 2012Q4,
+and both `lajolla-pointloma` and `encinitas-la-jolla` cover La Jolla. Canopy is
+strongly seasonal, so even once rasters arrive, anything derived across tiles
+mixes quarters rather than describing one epoch.
+
+### The canopy tables are annual, and keyed to MPAs rather than to beds
+
+`yearly_kelp_coverage_by_mpa` carries 1999 and 2002–2012 canopy area — the
+independent cross-check the CDFW entry above asks for, from a different sensor
+and a different classifier than Landsat. Three costs before it can be used: it
+is a PDF table and would have to be transcribed, it is annual where every other
+kelp number here is quarterly, and it is summarised by MPA and subregion rather
+than by the six beds, so joining it to a `polygon_id` needs a correspondence
+that may not exist.
+
+A transcribed table is a hand-made landing and takes the treatment the Kelp
+Watch export takes — pinned, landed under `raw/`, the transcription itself
+reviewable — rather than being typed into a notebook.
+
+### Reef Check runs to the present, and that is the lead worth pulling
+
+The published baseline is 2011–2012, but the RCCA program has run since 2006 and
+the landing page offers later years on request. A 2006–present urchin density
+series at San Diego sites would span the Blob and would be a real covariate
+rather than a snapshot — the one thing in this entry that could change an
+analysis rather than annotate one.
+
+### The licence is not the licence every other source here has
+
+MPA Monitoring Program terms: attribution required, and derivative use
+encouraged **except commercially**. Every other source in this catalogue is
+public domain or equivalent. Results may feed publications, so the constraint is
+recorded per-source here rather than discovered at submission.
 
 ## Supplementary sources (recommended additions)
 
@@ -1103,6 +1234,19 @@ global lockout described under Kelp Watch above and tracked at
 `https://github.com/cweber12/kelp-compare/issues/25`. Pinning a revision from a
 stale mirror would be recording a number nobody has verified. If this package is
 ever revisited, read it live first.
+
+### Two CNRA South Coast baselines cover the wrong habitat
+
+Reviewed 2026-08-30 and not adopted, both from the same South Coast MPA Baseline
+Study as the datasets in the CNRA entry above.
+
+**Mid-Depth Rocky and Soft-Bottom Ecosystems (2011–2012)** is ROV survey work
+below the photic zone giant kelp occupies. It describes what is downslope of a
+site rather than what is in the bed.
+
+**Rocky Intertidal Ecosystems (2001–2014)** is intertidal, and these beds are
+subtidal. Its span is the most tempting thing about it — fourteen years against
+the two the adopted baselines carry — and span is not relevance.
 
 ## Cross-cutting fetcher rules
 
