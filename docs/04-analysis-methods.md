@@ -621,6 +621,36 @@ here rather than read off a ranking. That the cut is a cut and not a criterion
 stays true — several hundred cells clear the eligibility conditions before it —
 which is why the selected list is written down before anything is fitted.
 
+**That ranking is on effect size, and the choice has a direction.** |r| says how
+large an association is and nothing about how much record it rests on, while the
+pool it ranks spans `n_eff` 30.2 to 161.0 — a fivefold spread. At equal evidence
+the rule therefore prefers the shorter series, and the `n_eff` ≥ 30 floor is the
+only guard against it. Ranking on an effect size is what this section's own
+"effect sizes rather than p-value collections" asks for, and it is also why the
+obvious alternative is not simply better: Fisher *z* is monotone in the p-value,
+so ranking on *z* is the significance tally forbidden below, under another name.
+
+**What the tilt costs is measured rather than assumed.** `01-lag-screen.ipynb`
+§7 ranks the same signals three ways — |r|, Fisher *z*, and the 95% lower
+confidence bound on |ρ|, the last being the one scale that discounts imprecision
+without becoming a p-value ranking. On the screen at `sha256:4cde6f9d95207dc1`
+the tilt is mild across the pool (Spearman of |r| against `n_eff` = −0.097) and
+decisive at the cut: *both* standardised scales drop the same registered signal
+and admit the same replacement. What they buy is a third reading of the
+cold-water association in place of the list's only independent mechanism, so the
+fairer ranking here returns the worse list. §7 also restates the control check
+on all three scales, where it clears on *z* and survives on the confidence
+bound — the caution `notebooks/README.md` carries is not an artefact of |r|.
+
+**The rule is not restated on that evidence, and could not honestly be.** The
+list each scale returns is now visible, so picking the scale from it would be
+picking a rule by the answer it gives — the selection-on-outcome pre-registration
+exists to prevent, which it does not stop being because a human makes the call.
+|r| stands, with §7 printing the alternatives beside it as a standing
+sensitivity. A change to the ranking rule is stated before a screen is run and
+takes effect at the next registration, against the next digest, with both lists
+reported.
+
 ### No family-wise correction is applied at 4.3, and why
 
 Pre-registration is what controls multiplicity here. The screen is exploratory
