@@ -44,6 +44,7 @@ from kelpcompare.parameters import load_parameters
 from kelpcompare.polygons import Polygons, load_polygons
 from kelpcompare.qc import evaluate
 from kelpcompare.registry import (
+    Dataset,
     Deployment,
     Registry,
     Station,
@@ -1160,25 +1161,42 @@ def _ingest_pulled(
     # same seam they already do.
     session = _session()
     for site in wanted:
-        for window in years or (None,):
-            _ingest_window(
-                site,
-                window,
-                zones=zones,
-                parameters=parameters,
-                run=run,
-                source=source,
-                fetcher=fetcher,
-                polygons=polygons,
-                session=session,
-                dry_run=dry_run,
-            )
+        # Oldest dataset first, so the one the provider still maintains is
+        # written last and settles any key the two share
+        # (`storage._write_partition`, docs/03). One dataset for every station
+        # but Point Loma, whose record the provider split when it re-platformed.
+        for dataset in site.datasets:
+            for window in years or (None,):
+                # A combination that was never this dataset's to answer produces
+                # no manifest entry, rather than a "skipped" one: `skipped` means
+                # the source did not answer a question we were right to ask, and
+                # asking a superseded dataset for last month is not that. It is
+                # also what keeps the two datasets from both being handed the
+                # window where their depth labels disagree (docs/02).
+                if window is None and not dataset.is_current:
+                    continue
+                if window is not None and not dataset.covers_year(window):
+                    continue
+                _ingest_window(
+                    site,
+                    dataset,
+                    window,
+                    zones=zones,
+                    parameters=parameters,
+                    run=run,
+                    source=source,
+                    fetcher=fetcher,
+                    polygons=polygons,
+                    session=session,
+                    dry_run=dry_run,
+                )
 
     _report(run, zones, dry_run=dry_run)
 
 
 def _ingest_window(
     site: Station,
+    dataset: Dataset,
     year: int | None,
     *,
     zones: Zones,
@@ -1206,9 +1224,20 @@ def _ingest_window(
     rather than merely cheap.
     """
     window = year if year is not None else "realtime"
-    entry = run.add_file(
-        f"{site.site_id} {window}", "failed", fetcher=_fetcher_name(fetcher, source)
+    # The placeholder the entry opens with, replaced by the URL as soon as there
+    # is one -- so this is what a reader sees only for a window that failed
+    # before it could be addressed. Named by the dataset as well where a site
+    # spans more than one, because that is the case where "SDRTOMS:PLOO 2021"
+    # names two windows and says which of them failed about neither. Every other
+    # station is left alone: a second identifier that repeats `site_id` says
+    # nothing, and for the six MUR SST sites it would say the same thing six
+    # times.
+    named = (
+        f"{site.site_id} {window}"
+        if len(site.datasets) == 1
+        else f"{site.site_id} {dataset.station_code} {window}"
     )
+    entry = run.add_file(named, "failed", fetcher=_fetcher_name(fetcher, source))
     entry.site_id = site.site_id
 
     try:
@@ -1218,10 +1247,10 @@ def _ingest_window(
         # naming a polygon that carries no outline. Left outside, one bad
         # registry record would end a six-bed run at the first bed instead of
         # costing it that bed.
-        request = _request_context(site, fetcher, polygons)
+        request = _request_context(site, fetcher, polygons, dataset)
         label = f"{request.label} {window}"
         url = (
-            fetcher.archive_url(request.handle, year)
+            fetcher.archive_url(request.handle, year, **request.window)
             if year is not None
             else fetcher.realtime_url(request.handle)
         )
@@ -1239,7 +1268,12 @@ def _ingest_window(
         validators = cache.validators_for(zones, url)
         payload = (
             fetcher.fetch_archive(
-                request.handle, year, session=session, validators=validators, **request.fetch
+                request.handle,
+                year,
+                session=session,
+                validators=validators,
+                **request.window,
+                **request.fetch,
             )
             if year is not None
             else fetcher.fetch_realtime(
@@ -1350,15 +1384,23 @@ class _Request:
     `label` is carried because the manifest's is no longer derivable from
     `station_code`: six derived sites share `jplMURSST41`, so labelling by it
     would give six windows the same name in one run.
+
+    `window` is the registry's boundaries for the dataset being asked, and it
+    goes to `archive_url` and `fetch_archive` alike so the URL the manifest
+    reports is the URL the bytes came from. Empty for a station whose provider
+    serves the whole record under one identifier, which is all of them but one.
     """
 
     handle: object
     label: str
     fetch: dict = field(default_factory=dict)
     parse: dict = field(default_factory=dict)
+    window: dict = field(default_factory=dict)
 
 
-def _request_context(site: Station, fetcher, polygons: Polygons | None) -> _Request:
+def _request_context(
+    site: Station, fetcher, polygons: Polygons | None, dataset: Dataset
+) -> _Request:
     """How to address one window, decided by the fetcher's shape not the site's.
 
     Branching on the module rather than on the registry record, as the depth
@@ -1369,9 +1411,18 @@ def _request_context(site: Station, fetcher, polygons: Polygons | None) -> _Requ
     derived source whose site declares no `derived_from`, or names a polygon
     with no recorded outline, cannot produce a number anyone could reproduce --
     and a fetch that went ahead would land bytes under a bed nothing reduces.
+
+    A station is addressed by the dataset being asked rather than by
+    `station_code`, which for a site whose record spans two datasets is only the
+    current one. A grid fetcher is unaffected: its sites have one dataset each
+    and the handle is the box, not an identifier at all.
     """
     if not getattr(fetcher, "REDUCES_OVER_POLYGON", False):
-        return _Request(handle=site.station_code, label=site.station_code)
+        return _Request(
+            handle=dataset.station_code,
+            label=dataset.station_code,
+            window=_window(site, fetcher, dataset),
+        )
 
     if not site.is_derived:
         raise ValueError(
@@ -1401,6 +1452,31 @@ def _request_context(site: Station, fetcher, polygons: Polygons | None) -> _Requ
         fetch={"station": station},
         parse={"geometry": geometry},
     )
+
+
+def _window(site: Station, fetcher, dataset: Dataset) -> dict:
+    """The clip `archive_url` and `fetch_archive` take, or nothing to clip.
+
+    Empty unless the registry gave this dataset a boundary, so the URL an
+    ordinary station lands under -- and the validator cache keyed on it -- is
+    byte-identical to what it was before any of this existed.
+
+    A fetcher that cannot take a clip is refused here rather than at the call,
+    where the same mistake arrives as a `TypeError` from a keyword argument and
+    names a function instead of a registry record. It is a real mistake to make:
+    `predecessor_datasets` is a general registry field and most sources have no
+    idea what a second dataset would mean.
+    """
+    if dataset.starts_at is None and dataset.ends_at is None:
+        return {}
+    if not getattr(fetcher, "CLIPS_WINDOW_TO_DATASET", False):
+        raise ValueError(
+            f"{site.site_id} declares `predecessor_datasets`, but the fetcher for "
+            f"{site.operator!r} cannot clip a window to one dataset; without that the two "
+            "datasets are both asked for the window they share, which is what the boundary "
+            "exists to prevent (docs/03)"
+        )
+    return {"since": dataset.starts_at, "until": dataset.ends_at}
 
 
 def _fetcher_name(fetcher, source: str) -> str:
