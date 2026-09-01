@@ -763,3 +763,52 @@ def test_an_entry_that_is_not_a_dataset_names_the_site_it_is_on(tmp_path):
     refusal has to say which record to open."""
     with pytest.raises(ValueError, match="NDBC:TEST"):
         station(tmp_path, predecessor_datasets=["point-loma-ocean-outfall-histori"])
+
+
+def committed_station(site_id: str):
+    """One committed public-station record, whatever operator it belongs to.
+
+    `committed` above asks for NDBC's, which is every case that needed one until
+    a station's record started spanning two datasets.
+    """
+    return find_station(load_registry(COMMITTED), site_id)
+
+
+def test_point_loma_names_the_dataset_that_holds_it_before_2021_11():
+    """The one committed site whose record spans two datasets. Pinned here
+    rather than in the ingest suite, which tests the mechanism against a
+    registry of its own -- this is a fact about the data (docs/02)."""
+    datasets = committed_station("SDRTOMS:PLOO").datasets
+    assert [d.station_code for d in datasets] == [
+        "point-loma-ocean-outfall-histori",
+        "point-loma-ocean-outfall-real-ti",
+    ]
+    assert datasets[0].ends_at == "2021-11-04T00:00:00Z"
+    assert datasets[1].starts_at == "2021-11-04T00:00:00Z"
+
+
+def test_point_loma_declares_the_deep_sensor_the_older_dataset_alone_reports():
+    """89 m is the deep sensor's label on the 2020 deployment and appears in no
+    other dataset, so nine months of the deepest series in the region exist only
+    because the registry declares it."""
+    assert 89.0 in committed_station("SDRTOMS:PLOO").declared_depths("sea_water_temperature")
+
+
+def test_point_loma_does_not_declare_the_depth_the_two_datasets_disagree_on():
+    """74 m is the historic dataset's label for the sensor the real-time one
+    calls 75 m -- same timestamp, same value to the millidegree (docs/02). Both
+    declared, one reading would be stored twice under two permanent depths.
+
+    A deliberate omission is indistinguishable from an oversight in a JSON file,
+    which is what this case is for.
+    """
+    declared = committed_station("SDRTOMS:PLOO").declared_depths("sea_water_temperature")
+    assert 74.0 not in declared
+    assert 75.0 in declared
+
+
+def test_south_bay_still_spans_one_dataset():
+    """Its historic sibling gives three different answers for where it was, so
+    it stays out until the provider fixes that -- the missing thing is a
+    reviewed position, not the mechanism to name a second dataset (docs/02)."""
+    assert committed_station("SDRTOMS:SBOO").predecessors == ()
