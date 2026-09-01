@@ -92,12 +92,14 @@ exists to prevent.
 **Only predictors are eligible.** docs/04 §5 makes `air_temperature` and
 `wind_speed` **controls**: screened and reported, never pre-registered. The
 reasons are mechanistic and prior to any coefficient — air temperature
-correlates with sea water temperature at r = 0.857 and so re-measures it more
-noisily, and scalar wind speed averages upwelling-favorable alongshore stress
-against downwelling-favorable Santa Ana wind, leaving it no sign to predict.
-`features.json` records the decision; `01-lag-screen.ipynb` reads it from there
-rather than restating it. 330 of 1,750 cells are withheld on those grounds
-before anything below is ranked.
+re-measures sea water temperature more noisily, and scalar wind speed averages
+upwelling-favorable alongshore stress against downwelling-favorable Santa Ana
+wind, leaving it no sign to predict. How nearly the air re-measures the water is
+printed by `01-lag-screen.ipynb` §6.2 against the table's digest, beside the two
+coefficients the demotion sets it against; this file used to state the figure and
+nothing computed it. `features.json` records the decision; `01-lag-screen.ipynb`
+reads it from there rather than restating it. 330 of 1,750 cells are withheld on
+those grounds before anything below is ranked.
 
 **That fraction has changed, and the change is why the cap counts signals.**
 The demotion once withheld half the grid — 330 of 660. It now withholds under a
