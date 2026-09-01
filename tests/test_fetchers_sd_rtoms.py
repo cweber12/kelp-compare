@@ -438,7 +438,7 @@ def test_the_older_dataset_is_the_same_layout_as_the_current_one(parameters):
     parsed = parse_historic(parameters)
     assert set(parsed.frame["source"]) == {sd_rtoms.SOURCE}
     assert set(parsed.frame["site_id"]) == {PLOO_SITE}
-    assert parsed.frame["value"].between(9.0, 21.0).all()
+    assert parsed.frame["value"].dropna().between(9.0, 21.0).all()
 
 
 def test_the_older_dataset_carries_no_per_test_qc_at_all(parameters):
@@ -447,7 +447,9 @@ def test_the_older_dataset_carries_no_per_test_qc_at_all(parameters):
     per-test evidence rather than inventing one."""
     parsed = parse_historic(parameters)
     assert set(parsed.frame["qc_tests"]) == {""}
-    assert set(parsed.frame["qc_flag"]) == {1}
+    readings = parsed.frame["value"].notna()
+    assert set(parsed.frame.loc[readings, "qc_flag"]) == {1}, "the provider's own aggregate"
+    assert set(parsed.frame.loc[~readings, "qc_flag"]) == {9}, "ours, per docs/03"
 
 
 def test_the_deep_sensor_this_dataset_alone_reports_lands_once_declared(parameters):
@@ -467,20 +469,25 @@ def test_an_undeclared_deep_sensor_is_refused_and_named(parameters):
     assert any("89 m" in warning for warning in parsed.warnings)
 
 
-def test_another_instruments_rows_are_still_dropped_without_a_qc_verdict(parameters):
-    """This payload carries four off-grid timestamps whose only rows are three
-    null temperatures at 1, 30 and 89 m -- another instrument on its own clock,
-    the docs/02 case. With `_qc_tests` empty everywhere the phantom rule cannot
-    read the provider's evidence, and every absent reading is dropped instead.
+def test_another_instruments_rows_are_dropped_without_reading_a_qc_verdict(parameters):
+    """The separation the provider's `_qc_tests` cannot make here, made on the
+    sampling grid instead -- this dataset carries no verdict on any row.
 
-    Pinned because it costs something real: the two on-grid nulls at 30 m are a
-    dead temperature sensor, which docs/03 would keep in the record flagged
-    missing. No reading is ever lost -- the rule only ever drops absences -- but
-    the premise the rule was verified on does not hold on this dataset, which is
-    https://github.com/cweber12/kelp-compare/issues/129.
+    Four off-grid timestamps (00:09, 00:21, 00:39, 00:51) carry three null
+    temperatures each, at 1, 30 and 89 m: another instrument on its own clock,
+    the docs/02 case. No declared depth reports at any of them, so all twelve
+    rows go. The two on-grid nulls at 30 m sit at timestamps other declared
+    depths did report at, so they are this string's own dead sensor and stay in
+    the record flagged missing, per docs/03.
     """
     parsed = parse_historic(parameters)
     assert parsed.rows_in == 56
-    assert len(parsed.frame) == 42
-    assert 30.0 not in set(parsed.frame["depth_m"])
-    assert not parsed.frame["value"].isna().any()
+    assert len(parsed.frame) == 44, "42 readings plus the two on-grid 30 m outages"
+
+    dead = parsed.frame[parsed.frame["value"].isna()]
+    assert list(dead["depth_m"]) == [30.0, 30.0]
+    assert set(dead["qc_flag"]) == {9}
+
+    off_grid = {"00:09", "00:21", "00:39", "00:51"}
+    stamps = {t.strftime("%H:%M") for t in parsed.frame["timestamp"]}
+    assert not (stamps & off_grid), "another instrument's clock contributes no rows"

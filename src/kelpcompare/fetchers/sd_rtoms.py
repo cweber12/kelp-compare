@@ -24,7 +24,10 @@ flatten every instrument on the string onto one vertical axis, so the ADCP
 contributes a velocity bin every metre and temperature is null on all of them.
 The declared depth set is what tells a real outage at a real sensor depth --
 which stays in the record, flagged missing -- from another instrument's bin,
-which was never this parameter's row at all.
+which was never this parameter's row at all. Where something else reports *at* a
+declared depth, on its own clock, the sampling grid tells them apart instead: an
+absence at a timestamp some declared depth did report at is this string's own
+outage, and a timestamp none of them reported at was never this string's clock.
 
 **The QARTOD vocabulary is already ours.** `_qc_agg` declares
 `flag_values: 1, 2, 3, 4, 9` against
@@ -346,24 +349,36 @@ def parse(
     flags, tests, flag_warnings = _verdicts(kept, absent, payload)
     warnings.extend(flag_warnings)
 
-    # A row with no reading AND no verdict on it is not this sensor's row.
+    # A row at a timestamp this string never reported at is not this sensor's row.
     #
     # The depth filter above catches the ADCP bins, which sit at depths no
     # temperature sensor occupies. It cannot catch the same thing happening *at*
     # a temperature depth: another instrument at 20 m reporting on a clock a
     # minute off the temperature sensor's puts a row at (t, -20.0) with the
     # temperature null, and 20 m is a declared depth. On a real 2023 South Bay
-    # ingest that was 17,755 rows -- it made a series that is essentially
-    # complete look 40% missing, which would carry into `pct_coverage` and the
-    # quarterly features built on it.
+    # ingest that was 19,524 rows, 17,755 of them at 20 m -- it made a series
+    # that is essentially complete look 40% missing, which would have carried
+    # into `pct_coverage` and every quarterly feature built on it.
     #
-    # The provider separates them itself, and exactly: across that ingest every
-    # row carrying a value had a qc_tests verdict, without exception, so an
-    # empty verdict means the provider never ran a temperature test on that row.
-    # That is not a sensor that failed -- it is a row that was never about this
-    # sensor. A gap the provider *did* evaluate keeps its row and its flag 9,
-    # which is the outage docs/03 wants in the record.
-    phantom = absent & pd.Series(tests).eq("").to_numpy()
+    # The sampling grid separates them, using only the rows already established
+    # as this parameter's. A timestamp at which *any* declared depth carries a
+    # reading is a timestamp this string was sampling, so an absent reading at a
+    # declared depth there is its own outage: the row stays, flagged 9, which is
+    # the gap docs/03 wants in the record. A timestamp at which no declared
+    # depth reported at all was never on this string's clock.
+    #
+    # Deciding it on the grid rather than on an empty `_qc_tests` verdict is
+    # https://github.com/cweber12/kelp-compare/issues/129. The verdict column is
+    # populated on the real-time datasets and empty on every row of the historic
+    # ones, where the verdict rule had no evidence behind it and degenerated to
+    # "drop every absent reading". The two rules agree row for row across the
+    # 2023 South Bay ingest; the grid one reads nothing the provider might stop
+    # sending.
+    #
+    # A row carrying a reading puts its own timestamp in the sampled set, so no
+    # reading can ever fall in here -- this rule only ever removes absences.
+    sampled = kept["time"].isin(kept["time"][~absent]).to_numpy()
+    phantom = absent & ~sampled
     #
     # Dropped silently, like the profile bins above and for the same reason: it
     # is a property of how ERDDAP flattens a TimeSeriesProfile, present in every
