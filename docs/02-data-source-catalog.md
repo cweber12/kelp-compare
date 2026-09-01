@@ -605,14 +605,19 @@ row is the one to read carefully: that sensor died in 2020-03, so its 42 days
 are all winter and its mean is warmer than 20 m's for that reason and not
 because the water column inverted.
 
+**The landed record predates the phantom-row fix below**, so it holds 262,667
+rows where a re-ingest now stores 269,398. The extra 6,731 are missing-markers
+and not readings — outages at declared depths the old rule dropped — so every
+figure in the table above still stands. Refreshing them is a `rebuild` the
+operator chooses, not something a parser change does.
+
 **The older dataset carries no `_qc_tests` at all** — the column is `NaN` on
 every row, including rows carrying readings. `qc_agg` is still read row for row,
 and `qc_tests` records that the provider offered no per-test evidence rather
-than inventing one. It does mean the rule below that separates another
-instrument's row from this sensor's outage runs with nothing behind it on this
-dataset; that is
-https://github.com/cweber12/kelp-compare/issues/129, and the current behaviour
-is pinned by a recorded fixture rather than left to be rediscovered.
+than inventing one. Nothing else leans on the column: the rule below that
+separates another instrument's row from this sensor's outage reads the sampling
+grid rather than the verdict, for exactly this reason
+(https://github.com/cweber12/kelp-compare/issues/129).
 
 ### `z` is altitude, and the sign flips
 
@@ -659,18 +664,40 @@ depth filter above catches the ADCP bins because they sit where no temperature
 sensor does. It cannot catch the same thing happening *at* 20 m, which is a
 declared depth: something else on the string reports there a minute off the
 10-minute grid, and ERDDAP emits a row for every `(time, depth)` any instrument
-reported at. That was **17,755 rows** — a series that is essentially complete
-read as 40% missing, which would have carried into `pct_coverage` and every
-quarterly feature built on it.
+reported at. That was **19,524 rows** across the 2023 South Bay ingest —
+**17,755** of them at 20 m, then 1,397 at 26 m, 369 at 25 m and 3 at 1 m — and
+it made a series that is essentially complete read as 40% missing, which would
+have carried into `pct_coverage` and every quarterly feature built on it.
 
-The provider separates them itself, and exactly: across that ingest **every row
-carrying a value had a `_qc_tests` verdict, without exception**. An empty
-verdict therefore means no temperature test was ever run on that row, which is
-not a sensor that failed but a row that was never about this sensor. The
-fetcher drops those and keeps every gap the provider did evaluate, which stays
-in the record flagged `9`. Both are dropped silently — this is the normal shape
-of every payload, and the manifest's `rows_in` against `rows_out` already shows
-the attrition.
+**The sampling grid separates them**, working only over rows already at a
+declared depth. A timestamp at which *any* declared depth carries a reading is a
+timestamp the string was sampling, so an absent reading there is that sensor's
+own outage: the row stays, flagged `9`, which is the gap doc 03 wants in the
+record. A timestamp at which no declared depth reported at all was never on this
+string's clock, and its rows go.
+
+The rule read an empty `_qc_tests` verdict until 2026-09-01, on the premise that
+the provider evaluates every row that is really this sensor's. That premise
+holds on the real-time datasets and is vacuous on the historic ones, which carry
+no verdict on any row — there it degenerated to "drop every absent reading". The
+grid reads nothing the provider might stop sending, and where the verdict does
+exist the two agree row for row: **19,524** dropped by each on South Bay 2023
+and **16,338** by each on the 2021 Point Loma real-time payload, with no
+divergence in either direction. On the Point Loma historic payloads the grid
+rule keeps **6,731** rows the verdict rule dropped — 5,487 at 30 m, 868 at 89 m,
+371 at 1 m, 5 at 10 m. No reading moves either way; only absences come back.
+
+**What the grid cannot separate, and does not pretend to.** A timestamp on the
+10-minute grid whose only declared-depth row is a lone null is dropped, because
+nothing at a declared depth reported there — but that shape is equally "the
+whole string was down" and "another instrument reported on the grid", and the
+payload does not say which. The 2020 Point Loma year has 2,258 such timestamps,
+2,219 of them a single null and 2,195 of those at 89 m, clustered in February
+and March. The verdict rule dropped them too; this is a limit of the source, not
+of the rule that replaced it.
+
+Every drop here is silent — this is the normal shape of every payload, and the
+manifest's `rows_in` against `rows_out` already shows the attrition.
 
 **`_qc_agg` and `_qc_tests` disagree on absent readings.** The provider writes
 `qc_agg = 2` (not evaluated) on rows whose own `_qc_tests` records the gross
