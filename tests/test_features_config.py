@@ -383,8 +383,16 @@ def test_a_role_does_not_change_what_gets_built(tmp_path):
 
 
 def test_the_committed_configuration_demotes_the_met_parameters():
-    """docs/04 s5: air temperature re-measures the water at r = 0.857, and scalar
-    wind speed averages upwelling-favorable stress against its own negation."""
+    """docs/04 s5: air temperature re-measures the water, and scalar wind speed
+    averages upwelling-favorable stress against its own negation.
+
+    What this asserts is the registry decision, which is the part that belongs in
+    a test: `features.json` is checked into the repo and is what the pipeline
+    reads. The coefficient behind the decision is an analysis result over
+    `data/features/comparison.parquet`, which is gitignored and absent on a clean
+    checkout -- so it is computed by `01-lag-screen.ipynb` s6.2 against that
+    table's digest, and cited here rather than restated.
+    """
     loaded = load_feature_config(COMMITTED)
 
     assert loaded.controls == ("air_temperature", "wind_speed")
