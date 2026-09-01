@@ -124,12 +124,16 @@ favours the shorter record at equal evidence: docs/04 §5 now says so, and
 
 **What the collapse is for.** Two cells agreeing on feature, lag and polygon are
 one claim about one bed measured by two instruments. `NDBC:LJAC1` and
-`SIO:LAJOLLA-PIER` both sit at Scripps Pier and measure the same water — on the
-`days_below_14c` anomaly the two pier depths correlate at r = 0.970 and the two
-stations at 0.785–0.835 — so registering them separately would count
-instrumentation as replication. Beds are not collapsed: two beds carrying one
-feature at one lag stay two signals, because merging them would erase the
-between-bed comparison docs/04 §4.5 is built to make.
+`SIO:LAJOLLA-PIER` both sit at Scripps Pier and measure the same water, so
+registering them separately would count instrumentation as replication. How
+alike the reference series are is measured rather than quoted:
+`01-lag-screen.ipynb` §6.1 prints the whole inter-series matrix on the
+`days_below_14c` anomaly against the digest of the table it read, which this
+file used to state as two figures nothing in the repo computed. Beds are not
+collapsed: two beds carrying one feature at one lag stay two signals, because
+merging them would erase the between-bed comparison docs/04 §4.5 is built to
+make — while §6.1 is also where to see how far that separation is from
+independence, the six satellite pixels sitting at r ≥ 0.96 with one another.
 
 | Polygon | Series standing for it | Feature | Lag | r | n | n_eff | Cells | Why it is interesting |
 |---|---|---|---|---|---|---|---|---|

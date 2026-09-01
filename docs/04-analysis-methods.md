@@ -602,10 +602,18 @@ the satellite leg took it to 1,420 — so the rule is stated as a count of
 all three are the same claim about the same bed measured by different
 instruments, and they register once. `NDBC:LJAC1` and `SIO:LAJOLLA-PIER` both
 sit at Scripps Pier and measure the same water; the pier's two depths are more
-nearly one series still. Measured on the `days_below_14c` anomaly, the two pier
-depths correlate at r = 0.970, the two La Jolla stations at 0.785–0.835, and
-either against the MUR satellite series at 0.694–0.737. Counting those as
-separate registrations would be counting instrumentation as replication.
+nearly one series still. Counting those as separate registrations would be
+counting instrumentation as replication.
+
+**How alike they are is measured rather than quoted.** `01-lag-screen.ipynb`
+§6.1 prints the inter-series correlation matrix over the `days_below_14c`
+anomaly, for every reference series the comparison table carries and against
+that table's digest; read the coefficients there. This section stated six of
+them in prose from the day the rule was written and nothing in the repo computed
+them, so they aged while the pool grew from 330 predictor cells to 1,420 — and
+by the time one was checked, its overlap count no longer reproduced. That count
+was the lag-0 reading of the pier pair; §6.1 takes the wider one, over every
+environmental quarter the table reaches at any lag, and prints both.
 
 **Beds stay separate, deliberately.** A stricter class collapsing (feature, lag)
 across polygons would erase the between-bed comparison 4.5 exists to make, so
@@ -657,9 +665,9 @@ Pre-registration is what controls multiplicity here. The screen is exploratory
 and claims nothing; 4.3 fits the *k* signals named in advance, so there is no
 post-hoc selection at that rung for a correction to undo. Applying Bonferroni or
 an FDR procedure over the registered signals on top of that would be answering a
-question nobody asked, and it would do so by assuming an independence the
-measurements above show is absent — the signals share beds, share stations, and
-sit on autocorrelated series.
+question nobody asked, and it would do so by assuming an independence
+`01-lag-screen.ipynb` §6.1 measures the absence of — the signals share beds,
+share stations, and sit on autocorrelated series.
 
 What replaces a correction is three obligations, none optional:
 
