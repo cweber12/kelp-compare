@@ -585,10 +585,66 @@ work — revisit if the sensor network or study area grows.
 
 The lag × feature × polygon screen generates many correlations; treat 4.1
 as exploratory, pre-register (informally, in the analysis README) the
-handful of relationships carried into 4.3, and report effect sizes with
+relationships carried into 4.3, and report effect sizes with
 uncertainty rather than p-value collections. All notebooks run
 start-to-finish from the comparison table; figures for team sharing export
 with the run manifest ID in the caption.
+
+### What may be registered, and how many
+
+"A handful" was a placeholder while nothing had been registered and the grid
+was 330 cells. It is now the gate on the whole 4.3 rung, and the pool grows
+whenever a reference series is added — one station took it from 330 to 990, and
+the satellite leg took it to 1,420 — so the rule is stated as a count of
+*signals* rather than of cells.
+
+**A signal is one (feature, lag, polygon).** Two screened cells that agree on
+all three are the same claim about the same bed measured by different
+instruments, and they register once. `NDBC:LJAC1` and `SIO:LAJOLLA-PIER` both
+sit at Scripps Pier and measure the same water; the pier's two depths are more
+nearly one series still. Measured on the `days_below_14c` anomaly, the two pier
+depths correlate at r = 0.970, the two La Jolla stations at 0.785–0.835, and
+either against the MUR satellite series at 0.694–0.737. Counting those as
+separate registrations would be counting instrumentation as replication.
+
+**Beds stay separate, deliberately.** A stricter class collapsing (feature, lag)
+across polygons would erase the between-bed comparison 4.5 exists to make, so
+two beds carrying the same feature at the same lag are two signals — while
+noting that adjacent beds are not independent evidence either, which is a matter
+for how the result is read rather than for what may be registered.
+
+**Registration is capped at *k* = 3 signals**, chosen by |r| over the eligible
+predictor cells with the strongest cell in each signal standing for it. Three
+because 4.3 has ~100–150 observations and cannot support more predictors than
+that honestly, which is the same constraint 4.3 already states; the cap is set
+here rather than read off a ranking. That the cut is a cut and not a criterion
+stays true — several hundred cells clear the eligibility conditions before it —
+which is why the selected list is written down before anything is fitted.
+
+### No family-wise correction is applied at 4.3, and why
+
+Pre-registration is what controls multiplicity here. The screen is exploratory
+and claims nothing; 4.3 fits the *k* signals named in advance, so there is no
+post-hoc selection at that rung for a correction to undo. Applying Bonferroni or
+an FDR procedure over the registered signals on top of that would be answering a
+question nobody asked, and it would do so by assuming an independence the
+measurements above show is absent — the signals share beds, share stations, and
+sit on autocorrelated series.
+
+What replaces a correction is three obligations, none optional:
+
+- **Autocorrelation-robust uncertainty on every coefficient** (HAC errors or
+  explicit AR terms), which 4.3 already requires and which is where the
+  dependence between quarters is actually paid for.
+- **All *k* registered signals reported**, whatever they come out as. A
+  registered relationship that fails is a result; dropping it is what
+  registration exists to prevent.
+- **No significance count.** Effect sizes with intervals, not a tally of how
+  many of three cleared a threshold — that tally is the p-value collection the
+  paragraph above forbids, reassembled.
+
+Anything fitted that was *not* registered is exploratory and is reported as
+such, in the same breath as the number.
 
 ### Predictors and controls
 
@@ -633,11 +689,14 @@ a screen carrying one predictor family cannot establish that about itself. The
 notebook therefore reports the control cells beside the predictor cells rather
 than hiding them, and only the ranking that feeds registration is restricted.
 
-**The multiple-comparison arithmetic improves as a side effect, and only as
-one.** Restricting the pool roughly halves the cells eligible for registration.
-That changes the denominator; it does not change the top-*k*-by-|r| cut that
-selects candidates, and it does not make two adjacent beds against one station
-into independent evidence.
+**The multiple-comparison arithmetic moves as a side effect, and only as one.**
+Restricting the pool once halved the cells eligible for registration — 330 of
+660. It now withholds under a fifth: 330 of 1,750, because the pool grew with
+the reference series while the two met parameters stayed on one station. The
+side effect has therefore reversed direction, which is a reason not to have
+rested anything on it. It changes the denominator; it does not change the
+top-*k*-by-|r| cut that selects candidates, and it does not make two adjacent
+beds against one station into independent evidence.
 
 ## 6. Known interpretive limits
 
