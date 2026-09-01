@@ -76,6 +76,14 @@ SOURCE = "sd_rtoms"
 
 FETCHER_NAME = "sd_rtoms"
 
+#: This station's record is split across more than one ERDDAP dataset, so the
+#: ingest CLI is allowed to hand `archive_url` and `fetch_archive` the window the
+#: registry says a dataset owns (docs/03 "A station's record may span more than
+#: one dataset"). Read by `cli._request_context`, which refuses a site declaring
+#: `predecessor_datasets` under a fetcher that does not set this -- rather than
+#: discovering it as a `TypeError` one window into the run.
+CLIPS_WINDOW_TO_DATASET = True
+
 #: This fetcher reads `depth_m` from the payload, so the ingest CLI hands it the
 #: registry's declared depth *set* to check against rather than the scalar map it
 #: gives a fixed-depth station (docs/03 "A source may be self-describing on
@@ -183,17 +191,38 @@ def realtime_url(dataset_id: str) -> str:
     return _url(dataset_id, f"&time%3E=now-{REALTIME_DAYS}days")
 
 
-def archive_url(dataset_id: str, year: int) -> str:
-    """One calendar year for one mooring.
+def archive_url(
+    dataset_id: str, year: int, *, since: str | None = None, until: str | None = None
+) -> str:
+    """One calendar year for one mooring, clipped to the window that dataset owns.
 
     Half-open on the right so two consecutive years cannot both claim midnight on
     1 January. They would dedupe on `OBSERVATION_KEY` anyway, but a window that
     overlaps its neighbour by one instant makes every row count in the manifest
     off by a handful and unexplainable.
+
+    `since` and `until` are the registry's boundaries for this dataset, and they
+    narrow the year rather than replace it: the year the boundary falls inside is
+    fetched twice, once from each dataset, and the two halves meet exactly.
+    Absent for every station whose provider serves the whole record under one
+    identifier, which is all of them but Point Loma -- so the URL such a station
+    lands under is byte-identical to the one it landed under before this
+    argument existed.
+
+    **Clipped in the URL rather than after the parse**, which is the one decision
+    here worth stating. `raw/` is append-only forever, so a year landed whole and
+    then half-discarded would leave bytes on disk that this project has decided
+    are not its record, permanently and with nothing on the file to say so. The
+    URL is what the manifest reports and what `raw/` is addressed by, so putting
+    the boundary there means a landing can be re-requested by copying a string
+    out of the manifest and gets back exactly the rows it holds. The cost,
+    accepted: a revised boundary needs a re-fetch, not a `rebuild`. It is pinned
+    from the provider's own `time_coverage_start`, so revising it means the
+    provider moved the record, and then the bytes are stale anyway.
     """
-    start = quote(f"{year}-01-01T00:00:00Z")
-    end = quote(f"{year + 1}-01-01T00:00:00Z")
-    return _url(dataset_id, f"&time%3E={start}&time%3C{end}")
+    opens = max(f"{year}-01-01T00:00:00Z", since or "")
+    closes = min(f"{year + 1}-01-01T00:00:00Z", until or "9999-12-31T23:59:59Z")
+    return _url(dataset_id, f"&time%3E={quote(opens)}&time%3C{quote(closes)}")
 
 
 def fetch_realtime(
@@ -214,9 +243,15 @@ def fetch_realtime(
 
 
 def fetch_archive(
-    dataset_id: str, year: int, *, session=None, validators: dict[str, str] | None = None
+    dataset_id: str,
+    year: int,
+    *,
+    session=None,
+    validators: dict[str, str] | None = None,
+    since: str | None = None,
+    until: str | None = None,
 ) -> Payload:
-    """One calendar year for one mooring.
+    """One calendar year for one mooring, clipped to the window that dataset owns.
 
     A year the mooring did not report is an ordinary hole in a public record --
     these are redeployed annually and go down between deployments -- so ERDDAP's
@@ -231,7 +266,7 @@ def fetch_archive(
     support conditional requests -- but it is why this module never raises
     `NotModified`.
     """
-    url = archive_url(dataset_id, year)
+    url = archive_url(dataset_id, year, since=since, until=until)
     body, etag, last_modified = _get(url, session)
     return new_payload(
         SOURCE,
