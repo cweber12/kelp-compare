@@ -485,8 +485,12 @@ are the same data, worse" below.
 
 | Site | Dataset ID | Position | Temperature depths |
 |---|---|---|---|
-| `SDRTOMS:PLOO` | `point-loma-ocean-outfall-real-ti` | 32.66996, -117.32676 | 11: 1, 9, 10, 20, 30, 45, 60, 75, 85, 87, 90 m |
+| `SDRTOMS:PLOO` | `point-loma-ocean-outfall-real-ti`, and `point-loma-ocean-outfall-histori` before 2021-11-04 | 32.66996, -117.32676 | 12: 1, 9, 10, 20, 30, 45, 60, 75, 85, 87, 89, 90 m |
 | `SDRTOMS:SBOO` | `south-bay-ocean-outfall` | 32.53171, -117.18631 | 6: 1, 10, 18, 20, 25, 26 m |
+
+Point Loma is two datasets because the provider split the record when it
+re-platformed; the site record names both and gives each a window, which is
+"Point Loma is two datasets, and they disagree about one depth" below.
 
 Both were verified on 2026-08-28 as internally consistent — the dataset's
 `geospatial_lat/lon` attributes agree with the `latitude`/`longitude` columns
@@ -525,6 +529,89 @@ them together would write a depth the mooring never reported into `depth_m`,
 which is part of `OBSERVATION_KEY` and therefore permanent. The cost is real
 and accepted: the record for that position splits at the deployment boundary,
 so per-series quarterly coverage is thinner than the raw row count suggests.
+
+### Point Loma is two datasets, and they disagree about one depth
+
+`point-loma-ocean-outfall-real-ti` begins at its published
+`time_coverage_start` of **2021-11-04T00:00:00Z**. Before that the record lives
+in `point-loma-ocean-outfall-histori`, which runs 2020-01-01 to 2023-01-01, and
+which — unlike its South Bay sibling below — is internally consistent: its
+`geospatial_lat/lon` attributes and its own `latitude`/`longitude` columns both
+give 32.66996, -117.32676, the same pair the real-time dataset reports, and its
+89 m reach matches the outfall terminus.
+
+The two overlap by fourteen months, and **in the overlap they carry the same
+readings under different depth labels.** Checked 2026-09-01:
+
+| Instant | historic says | real-time says | Value |
+|---|---|---|---|
+| 2022-06-01T00:00:00Z | 74 m | 75 m | 10.014 °C in both |
+| 2022-12-15T00:00:00Z | 89 m | 90 m | 11.317 °C in both |
+
+Not close — identical, to the millidegree, across every shared timestamp
+checked. One sensor, two names. `depth_m` is part of `OBSERVATION_KEY`, so
+landing both would store one reading twice under two permanent depths, and
+nothing downstream could tell that from a mooring that really carried two
+sensors a metre apart. **This is not the deployment drift described above**: 9 m
+and 10 m are one position reported differently on two *deployments*, and both
+are real records of what the mooring said at the time. 74 m and 75 m are one
+position reported differently by two *datasets*, at the same instant.
+
+So the site record gives each dataset the window it owns — historic before
+2021-11-04, real-time after — and ingest asks neither for anything outside it
+(doc 03, "A station's record may span more than one dataset"). That makes the
+collision unreachable rather than merely discouraged.
+
+**Which depths change hands, month by month.** The deep sensor's label wanders
+across deployments in both datasets, so the union is wider than either:
+
+| Window | historic | real-time |
+|---|---|---|
+| 2020-01 → 2020-02 | 1, 10, 20, 30, 45, 60, 75, **89** | — |
+| 2020-03 → 2020-09 | 1, 10, 20, 45, 60, 75, **89** | — |
+| 2020-10 → 2021-10 | nothing | — |
+| 2021-11 → 2022-11 | 1, 9, 20, 30, 45, 60, **74**, 87 | 1, 9, 20, 30, 45, 60, **75**, 87 |
+| 2022-12 → 2023-01 | 1, 10, 20, 30, 45, 60, 75, **89** | 1, 10, 20, 30, 45, 60, 75, **90** |
+| 2023-02 → 2024-12 | — | 1, 10, 20, 30, 45, 60, 75 (85 and 90 from 2023-12) |
+
+**89 m is declared and 74 m is not**, and that asymmetry falls straight out of
+the windows. 89 m is the deep sensor's only label for 2020, a window no other
+dataset covers, so those nine months exist only if it is declared. 74 m appears
+only inside the window the real-time dataset owns, where it is 75 m — except for
+six hours on 2021-11-03, before the real-time record starts. Ingest reports
+those 18 readings as an undeclared depth and does not store them; that warning
+on the 2021 window is expected, not a registry gap.
+
+**What the backfill is actually worth is nine months, not three years.** The
+historic dataset reports no temperature at all from 2020-10 through 2021-10, so
+its usable contribution is 2020-01-01 to 2020-09-30 plus that evening in
+November 2021. Measured on a real ingest — 262,667 readings stored:
+
+| Depth | Readings | Mean °C | Days |
+|---|---|---|---|
+| 1 m | 35,223 | 18.747 | 265 |
+| 10 m | 37,519 | 16.129 | 273 |
+| 20 m | 37,543 | 14.137 | 274 |
+| 30 m | 4,609 | 15.145 | 42 |
+| 45 m | 37,513 | 12.139 | 274 |
+| 60 m | 37,506 | 11.435 | 274 |
+| 75 m | 37,463 | 11.020 | 273 |
+| 89 m | 35,237 | 10.720 | 266 |
+
+**Eight degrees over eighty-nine metres**, which is the deepest gradient in the
+record — the South Bay figure below is six degrees over twenty-five. The 30 m
+row is the one to read carefully: that sensor died in 2020-03, so its 42 days
+are all winter and its mean is warmer than 20 m's for that reason and not
+because the water column inverted.
+
+**The older dataset carries no `_qc_tests` at all** — the column is `NaN` on
+every row, including rows carrying readings. `qc_agg` is still read row for row,
+and `qc_tests` records that the provider offered no per-test evidence rather
+than inventing one. It does mean the rule below that separates another
+instrument's row from this sensor's outage runs with nothing behind it on this
+dataset; that is
+https://github.com/cweber12/kelp-compare/issues/129, and the current behaviour
+is pinned by a recorded fixture rather than left to be rediscovered.
 
 ### `z` is altitude, and the sign flips
 
@@ -617,20 +704,25 @@ also why these moorings are a depth reference and not a neighbor — the gradien
 is the signal, and 21-38 km of coastline is the confound.
 
 **None of this reaches `comparison.parquet`, by construction.** The features
-run that landed these series left the comparison table byte-identical
-(`sha256:7d2c62503276e7be`, 15,300 rows). Two independent reasons, and both
-should be understood before anyone expects a lag screen to change: no polygon
-lists these sites in `site_ids`, and the climatology baseline is fixed at
-2007-2019 while these records begin in 2021, so every series lands with
-`baseline_years = 0` and every anomaly null. A four-year record cannot support
-a ten-year climatology, and no amount of backfill from the portal CSVs would
-change that — they start in 2020.
+run that landed these series left the comparison table byte-identical, first
+when South Bay landed and again when the Point Loma backfill did
+(`sha256:4cde6f9d95207dc1`, 51,000 rows, re-measured 2026-09-01 — the digest
+moves with unrelated work on the feature tables, so what is load-bearing is that
+it did not move across *this*). Two independent reasons, and both should be
+understood before anyone expects a lag screen to change: no polygon lists these
+sites in `site_ids`, and the climatology baseline is fixed at 2007-2019 while
+these records begin in 2020, so every series lands with `baseline_years = 0` and
+every anomaly null. A five-year record cannot support a ten-year climatology,
+and the backfill demonstrates it rather than arguing it — all 30 Point Loma
+quarterly rows, 2020 included, carry `baseline_years = 0`.
 
 ### `south-bay-ocean-outfall-historic` disagrees with itself about where it is
 
 Two further datasets exist, covering 2020-01 to 2023-01 (`point-loma-ocean-outfall-histori`)
-and 2020-01 to 2022-11 (`south-bay-ocean-outfall-historic`). **Neither is
-ingested**, and the second must not be without an upstream fix.
+and 2020-01 to 2022-11 (`south-bay-ocean-outfall-historic`). The first **is**
+ingested, bounded to the window the real-time dataset does not cover — see
+"Point Loma is two datasets" above. The second is not, and must not be without
+an upstream fix.
 
 Checked on 2026-08-28, `south-bay-ocean-outfall-historic` gives three different
 answers to where its instrument was:
@@ -645,9 +737,12 @@ The depths are the only one of the three that matches the title, so the data is
 probably South Bay's and both positions are wrong. That is a guess, and a site
 record is not built on a guess — position is a reviewed registry fact here
 (`sites.json`, `PROJ:TIDBIT-1`), and a station whose provider contradicts
-itself twice has not supplied one. `point-loma-ocean-outfall-histori` is
-self-consistent and agrees with its real-time sibling; it is left out only to
-keep the first landing to one concern, and backfilling it is ordinary work.
+itself twice has not supplied one.
+
+Note what this means for South Bay specifically now that the Point Loma
+predecessor has landed: the mechanism to name a second dataset exists and is not
+what is holding this one back. It is the position, and only the provider can fix
+that.
 
 ### The portal CSVs are the same data, worse
 
