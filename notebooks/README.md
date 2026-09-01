@@ -75,14 +75,19 @@ cell reports an older digest did not pick up the rebuilt table.
 
 ## Pre-registration
 
-docs/04 §5 requires the handful of relationships carried from the §4.1 screen
-into the §4.3 inferential models to be written down **before** they are fitted.
+docs/04 §5 caps at three the *signals* carried from the §4.1 screen into the
+§4.3 inferential models, and requires them written down **before** they are
+fitted.
 The screen generates several hundred coefficients; without this list, choosing
 what to model after seeing the screen is choosing what to model because it
 looked good, and the resulting p-values would mean nothing.
 
-**Nothing is pre-registered yet.** The list below is what `01-lag-screen.ipynb`
-surfaced, for the operator to choose from — being on it is not registration.
+**Registered on 2026-09-01, against the screen at
+`sha256:4cde6f9d95207dc1`.** These three are the relationships docs/04 §4.3 may
+fit. Anything else fitted is exploratory and says so in the same breath as the
+number, and all three are reported whatever they come out as — a registered
+relationship that fails is a result, and dropping it is the thing registration
+exists to prevent.
 
 **Only predictors are eligible.** docs/04 §5 makes `air_temperature` and
 `wind_speed` **controls**: screened and reported, never pre-registered. The
@@ -94,47 +99,64 @@ against downwelling-favorable Santa Ana wind, leaving it no sign to predict.
 rather than restating it. 330 of 1,750 cells are withheld on those grounds
 before anything below is ranked.
 
-**That fraction has changed, and the change is worth naming.** The demotion once
-withheld half the grid — 330 of 660. It now withholds under a fifth, because the
-pool grew with the reference series while the two met parameters stayed on one
-station. The multiple-comparison arithmetic docs/04 §5 calls a side effect has
-therefore quietly reversed direction, which is
-[#81](https://github.com/cweber12/kelp-compare/issues/81)'s question and not
-this list's to answer.
+**That fraction has changed, and the change is why the cap counts signals.**
+The demotion once withheld half the grid — 330 of 660. It now withholds under a
+fifth, because the pool grew with the reference series while the two met
+parameters stayed on one station, so the side effect docs/04 §5 called an
+improvement has reversed direction. A cap stated in cells would have meant
+something different after every registry edit; docs/04 §5 therefore states it in
+signals, which is what [#81](https://github.com/cweber12/kelp-compare/issues/81)
+settled.
 
-Candidates from the screen at `sha256:4cde6f9d95207dc1`. The rule, which
-`01-lag-screen.ipynb` §6 applies rather than leaving to be re-derived by hand:
-over the predictor cells only, drop anything the input audit flagged
-`low_resolution`, keep what rests on an effective sample of at least 30 with
-Pearson and Spearman agreeing to within 0.05, and take the **three strongest
-by |r|**.
+**The rule, which `01-lag-screen.ipynb` §6 applies rather than leaving to be
+re-derived by hand.** Over the predictor cells only, drop anything the input
+audit flagged `low_resolution`, keep what rests on an effective sample of at
+least 30 with Pearson and Spearman agreeing to within 0.05, collapse what
+survives into **signals** — one per (feature, lag, polygon), the strongest cell
+standing for each — and take the **three strongest by |r|**.
 
-That last step is a cut, not a criterion. 629 cells clear the conditions before
-it, so what makes these three the list is that they are the top of a ranking —
-which is exactly the kind of choice this section exists to make visible.
+That last step is a cut, not a criterion. 629 eligible cells collapse to 253
+signals, and 250 of those are cut, so what makes these three the list is that
+they are the top of a ranking — which is exactly the kind of choice this section
+exists to make visible.
 
-| Polygon | Series | Feature | Lag | r | n | n_eff | Why it is interesting |
-|---|---|---|---|---|---|---|---|
-| `KELP:ENCINITAS` | `NDBC:LJAC1` sea water temp, 3.4 m | `days_below_14c` | 4 | +0.424 | 71 | 50.6 | The cold-water/nitrate association docs/04 §2 predicts, at a one-year lag. The one cell carried over from the previous list |
-| `KELP:SOLANA-BEACH` | `SIO:LAJOLLA-PIER` sea water temp, 5 m | `days_below_14c` | 4 | +0.406 | 161 | 117.3 | The same association in a neighbouring bed, on a different instrument and a 161-quarter record rather than a 71-quarter one |
-| `KELP:LA-JOLLA` | `SST:LA-JOLLA` sea water temp | `degree_days_above_18c` | 1 | −0.353 | 95 | 61.3 | Accumulated heat one quarter earlier against less canopy — a different mechanism from the two above, and the first candidate measured *over the bed itself* |
+**What the collapse is for.** Two cells agreeing on feature, lag and polygon are
+one claim about one bed measured by two instruments. `NDBC:LJAC1` and
+`SIO:LAJOLLA-PIER` both sit at Scripps Pier and measure the same water — on the
+`days_below_14c` anomaly the two pier depths correlate at r = 0.970 and the two
+stations at 0.785–0.835 — so registering them separately would count
+instrumentation as replication. Beds are not collapsed: two beds carrying one
+feature at one lag stay two signals, because merging them would erase the
+between-bed comparison docs/04 §4.5 is built to make.
+
+| Polygon | Series standing for it | Feature | Lag | r | n | n_eff | Cells | Why it is interesting |
+|---|---|---|---|---|---|---|---|---|
+| `KELP:ENCINITAS` | `NDBC:LJAC1` sea water temp, 3.4 m | `days_below_14c` | 4 | +0.424 | 71 | 50.6 | 1 | The cold-water/nitrate association docs/04 §2 predicts, at a one-year lag. The one cell carried over from the previous list |
+| `KELP:SOLANA-BEACH` | `SIO:LAJOLLA-PIER` sea water temp, 5 m | `days_below_14c` | 4 | +0.406 | 161 | 117.3 | 2 | The same association in a neighbouring bed, on a 161-quarter record rather than a 71-quarter one. Absorbs the `NDBC:LJAC1` reading of the same cell at +0.347 |
+| `KELP:LA-JOLLA` | `SST:LA-JOLLA` sea water temp | `degree_days_above_18c` | 1 | −0.353 | 95 | 61.3 | 3 | Accumulated heat one quarter earlier against less canopy — a different mechanism from the two above, and the only one measured *over the bed itself*. Absorbs both pier depths, at −0.242 and −0.220 |
+
+The `Cells` column is how many eligible cells the signal merged. Where it is
+more than one, the merged coefficients are printed by `01-lag-screen.ipynb` §6
+rather than summarised here, so the claim that they are one signal can be
+checked against how closely they actually agree — and the La Jolla signal is the
+one to check, since −0.353 against −0.242 and −0.220 is a wider spread than the
+word "agree" comfortably covers.
 
 What to weigh before registering any of them:
 
-- **This list is nearer two hypotheses than one, which the previous one was
-  not.** That list was three readings of the cold-water association at lag 4,
-  all on `NDBC:LJAC1`. Two of these three still are, and they remain adjacent
-  beds rather than independent evidence — them agreeing is mild reassurance
-  that the signal is not one bed's noise. The third is a heat-accumulation cell
+- **Two hypotheses, not three.** Two of the three are the cold-water
+  association at lag 4 on adjacent beds; the third is a heat-accumulation cell
   at a short lag with the opposite sign, so it can fail without the first two
-  failing.
-- **Three reference series is not three independent references.**
-  `NDBC:LJAC1` and `SIO:LAJOLLA-PIER` are both at Scripps Pier and measure the
-  same water; they are two instruments on one signal, which is reassurance about
-  instrumentation rather than replication
-  ([#81](https://github.com/cweber12/kelp-compare/issues/81)). `SST:LA-JOLLA`
-  is the one that is genuinely elsewhere — a satellite series over the La Jolla
-  bed rather than a point measurement up the coast.
+  failing. The signal rule stops one bed being registered twice over; it does
+  not make two *adjacent* beds independent evidence, and it is not meant to.
+  Encinitas and Solana Beach agreeing is mild reassurance that the association
+  is not one bed's noise — nothing stronger.
+- **The reference behind each signal is not the evidence for it.** Which series
+  stands for a signal is a ranking artefact: it is the strongest cell in the
+  group, not the best instrument. Solana Beach would read almost the same
+  through `NDBC:LJAC1` at +0.347, and La Jolla noticeably weaker through either
+  pier depth. Report the signal, and the spread inside it, rather than the
+  series name as though it had been chosen.
 - **The controls still rank alongside the predictors, and that is the warning
   they exist for.** On the cells the candidate rule keeps, the strongest control
   coefficient is |r| = 0.38 against the strongest predictor's 0.42. The medians
@@ -153,10 +175,14 @@ What to weigh before registering any of them:
   count features, and `SST:ENCINITAS` `days_below_14c` at lag 4 — r = +0.391,
   which would otherwise rank eighth in the whole screen — is dropped by the
   audit rather than by the rule.
-- **docs/04 §4.5 still cannot be attempted.** No project-sensor cell can enter
-  this list: both TidbiTs hold roughly six weeks, so neither quarter clears the
-  coverage floor and both anomalies are null. Whether the project's own sensors
-  beat the public station remains unasked.
+- **docs/04 §4.5 still cannot be attempted, and not only for want of data.**
+  No project-sensor cell can enter this list: `PROJ:TIDBIT-1` holds 22 observed
+  days and `PROJ:TIDBIT-2` holds 44, both in 2026 Q3, so neither clears the
+  coverage floor and both anomalies are null. Coverage is the near cause; the
+  far one is that a single quarter cannot clear a climatology needing ten years
+  inside 2007–2019, so §4.5 is unreachable in anomaly space rather than merely
+  early ([#120](https://github.com/cweber12/kelp-compare/issues/120)). Whether
+  the project's own sensors beat the public station remains unasked.
 - **`n_eff` is a ceiling, and it is loosest exactly here.** It corrects for
   lag-1 persistence only — measured across calendar-adjacent quarters, so a
   cloud gap or a missing Q2 breaks the pair instead of being counted as one —
@@ -179,14 +205,21 @@ What to weigh before registering any of them:
   correction ran and found nothing to take, or that it never ran, and nothing in
   the number separates them. The `discounted` column does, for 287 of the 1,750
   screened cells.
-- **626 cells clear every condition above and were cut by the top-three rule**,
-  which is the size of the choice being made here. The two strongest of them,
-  named so the cut is visible rather than silent: `KELP:SOLANA-BEACH` against
-  `NDBC:LJAC1` `days_below_14c` at lag 4 (r +0.347) and `KELP:SOLANA-BEACH`
-  against the pier at 0.5 m, quarterly `mean` at lag 1 (r −0.312). The first is
-  a fourth reading of the association this list already carries twice; the
-  second is not, and is the strongest cut cell that would have added a distinct
-  claim. That is a judgement, and it is the operator's to overturn.
+- **250 signals clear every condition above and were cut by the top-three
+  rule**, which is the size of the choice being made here. The strongest of
+  them, named so the cut is visible rather than silent: `KELP:SOLANA-BEACH`
+  against the pier at 0.5 m, quarterly `mean` at lag 1 (r −0.312), then
+  `KELP:ENCINITAS` against `NDBC:LJAC1` `min` at lag 4 (−0.311) and
+  `KELP:LA-JOLLA` against `SST:LA-JOLLA` `p95` at lag 0 (−0.302). All three are
+  distinct claims rather than further readings of what is registered, which is
+  the honest way to describe this cut: it is not discarding duplicates, it is
+  declining hypotheses. That is a judgement, and it is the operator's to
+  overturn.
+
+  Under the old cell-based rule the strongest cut row was the `NDBC:LJAC1`
+  reading of Solana Beach's registered cell — a duplicate that ranked above
+  every distinct claim. That it no longer appears here is the whole point of
+  counting signals.
 
 Two exclusions predate the control demotion and stay on the record, because
 both are now over-determined and would otherwise look as though the role had
