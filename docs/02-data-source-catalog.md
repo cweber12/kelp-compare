@@ -669,7 +669,7 @@ reported at. That was **19,524 rows** across the 2023 South Bay ingest —
 it made a series that is essentially complete read as 40% missing, which would
 have carried into `pct_coverage` and every quarterly feature built on it.
 
-**The sampling grid separates them**, working only over rows already at a
+The sampling grid separates them, working only over rows already at a
 declared depth. A timestamp at which *any* declared depth carries a reading is a
 timestamp the string was sampling, so an absent reading there is that sensor's
 own outage: the row stays, flagged `9`, which is the gap doc 03 wants in the
@@ -687,7 +687,7 @@ divergence in either direction. On the Point Loma historic payloads the grid
 rule keeps **6,731** rows the verdict rule dropped — 5,487 at 30 m, 868 at 89 m,
 371 at 1 m, 5 at 10 m. No reading moves either way; only absences come back.
 
-**What the grid cannot separate, and does not pretend to.** A timestamp on the
+What the grid cannot separate, and does not pretend to: a timestamp on the
 10-minute grid whose only declared-depth row is a lone null is dropped, because
 nothing at a declared depth reported there — but that shape is equally "the
 whole string was down" and "another instrument reported on the grid", and the
