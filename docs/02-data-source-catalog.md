@@ -488,9 +488,10 @@ are the same data, worse" below.
 | `SDRTOMS:PLOO` | `point-loma-ocean-outfall-real-ti`, and `point-loma-ocean-outfall-histori` before 2021-11-04 | 32.66996, -117.32676 | 12: 1, 9, 10, 20, 30, 45, 60, 75, 85, 87, 89, 90 m |
 | `SDRTOMS:SBOO` | `south-bay-ocean-outfall` | 32.53171, -117.18631 | 6: 1, 10, 18, 20, 25, 26 m |
 
-Point Loma is two datasets because the provider split the record when it
-re-platformed; the site record names both and gives each a window, which is
-"Point Loma is two datasets, and they disagree about one depth" below.
+Point Loma is served as two datasets because the provider split the record when
+it re-platformed. The site record names both and gives each the window it owns;
+"Point Loma is two datasets, and they disagree about one depth" below is why
+that window is not optional.
 
 Both were verified on 2026-08-28 as internally consistent — the dataset's
 `geospatial_lat/lon` attributes agree with the `latitude`/`longitude` columns
