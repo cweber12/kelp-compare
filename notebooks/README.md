@@ -118,7 +118,9 @@ standing for each — and take the **three strongest by |r|**.
 That last step is a cut, not a criterion. 629 eligible cells collapse to 253
 signals, and 250 of those are cut, so what makes these three the list is that
 they are the top of a ranking — which is exactly the kind of choice this section
-exists to make visible.
+exists to make visible. The ranking is on |r|, and so on effect size, which
+favours the shorter record at equal evidence: docs/04 §5 now says so, and
+`01-lag-screen.ipynb` §7 prints what it costs.
 
 **What the collapse is for.** Two cells agreeing on feature, lag and polygon are
 one claim about one bed measured by two instruments. `NDBC:LJAC1` and
@@ -151,6 +153,27 @@ What to weigh before registering any of them:
   not make two *adjacent* beds independent evidence, and it is not meant to.
   Encinitas and Solana Beach agreeing is mild reassurance that the association
   is not one bed's noise — nothing stronger.
+- **The list is ranked on |r|, and both standardised alternatives change it.**
+  |r| is an effect size and carries no sample size, while the signals it ranks
+  span `n_eff` 30.2 to 161.0. Ranking instead on Fisher *z*, or on the 95% lower
+  confidence bound of |ρ|, drops `KELP:LA-JOLLA` `degree_days_above_18c` at lag 1
+  and admits `KELP:LA-JOLLA` `days_below_14c` at lag 4 — the same substitution
+  either way, so it is not an artefact of one scale.
+
+  | Signal | r | n_eff | \|z\| | LCB | Rank by \|r\| |
+  |---|---|---|---|---|---|
+  | `KELP:SOLANA-BEACH` pier 5 m `days_below_14c` lag 4 | +0.406 | 117.3 | 4.61 | 0.243 | 2 |
+  | `KELP:ENCINITAS` `NDBC:LJAC1` `days_below_14c` lag 4 | +0.424 | 50.6 | 3.12 | 0.167 | 1 |
+  | `KELP:LA-JOLLA` pier 5 m `days_below_14c` lag 4 | +0.287 | 123.1 | 3.24 | 0.116 | 10 |
+  | `KELP:LA-JOLLA` `SST:LA-JOLLA` `degree_days_above_18c` lag 1 | −0.353 | 61.3 | 2.82 | 0.112 | 3 |
+
+  Read that beside the bullet above rather than as a correction to it. The
+  substitution would make the list one association read three times instead of
+  two hypotheses, so the tilted rule is returning the *better* list — which is
+  the point, because nobody had written down why. Across the whole pool the tilt
+  is mild, Spearman of |r| against `n_eff` being −0.097; it is decisive only
+  here, at the cut. docs/04 §5 keeps |r| and states the reason; §7 prints all
+  three rankings so the choice stays visible instead of being settled once.
 - **The reference behind each signal is not the evidence for it.** Which series
   stands for a signal is a ranking artefact: it is the strongest cell in the
   group, not the best instrument. Solana Beach would read almost the same
@@ -166,6 +189,26 @@ What to weigh before registering any of them:
   withheld on mechanistic grounds performs about as well as the one under test
   may be recovering shared seasonality rather than mechanism; that does not
   revive the controls, it discounts the predictors.
+
+  That comparison is between pools of unequal record length, and the direction
+  is not the obvious one. Both met parameters sit on the one station, so every
+  eligible control signal stops at `n_eff` ≤ 50.0 while predictors reach 161.0 —
+  the 0.38-against-0.42 line is a short-record maximum set against a
+  mixed-record one. Restated over the same 65 control and 253 predictor signals
+  on the scales `01-lag-screen.ipynb` §7 prints:
+
+  | Scale | Control max | Predictor max | Controls reaching the weakest registered signal |
+  |---|---|---|---|
+  | \|r\| | 0.380 | 0.424 | 1 of 65 |
+  | \|z\| | 2.74 | 4.61 | 0 of 65 |
+  | LCB | 0.114 | 0.243 | 1 of 65 |
+
+  The caution survives standardisation rather than dissolving in it: it clears
+  on Fisher *z* and returns on the confidence bound, where a control still edges
+  the weakest registered signal, 0.114 against 0.112. Read it across the three.
+  The |r| line alone is not the pessimistic reading of this table — it is one of
+  three, and the scale that is neither a raw effect size nor a significance
+  ranking agrees with it.
 - **The satellite series enters the pool crippled on exactly the features it
   was wanted for.** All six `SST:*` beds are flagged `low_resolution` on
   `days_above_23c` and four of six on `days_below_14c`, because a daily L4
