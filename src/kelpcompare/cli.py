@@ -1148,7 +1148,9 @@ def _ingest_pulled(
     declared = find_stations(registry, source)
     wanted = _select_stations(declared, stations)
     if not wanted:
-        known = ", ".join(s.station_code for s in declared) or "none"
+        # Every dataset, not just the current one: a run scoped to a superseded
+        # identifier that got the name slightly wrong should be told the name.
+        known = ", ".join(d.station_code for s in declared for d in s.datasets) or "none"
         raise SystemExit(
             f"no station to ingest for {source!r}; requested "
             f"{', '.join(stations) or 'all'}, registry declares: {known}"
@@ -1498,20 +1500,29 @@ def _session():
 
 
 def _select_stations(declared: tuple[Station, ...], requested: tuple[str, ...]) -> list[Station]:
-    """Match `--station` against either identifier, case-insensitively.
+    """Match `--station` against any identifier the site has, case-insensitively.
 
-    Both, because an operator thinks in station codes (`LJAC1`) while the rest of
-    the project joins on `site_id` (`NDBC:LJAC1`), and making them type the one
-    they were not thinking of buys nothing.
+    `site_id` and `station_code` both, because an operator thinks in station
+    codes (`LJAC1`) while the rest of the project joins on `site_id`
+    (`NDBC:LJAC1`), and making them type the one they were not thinking of buys
+    nothing.
+
+    A superseded dataset's identifier matches too, and it selects the *site* --
+    so naming the historic Point Loma dataset fetches both of Point Loma's
+    windows, not just its. That is the same answer `--station LJAC1` gives and
+    the alternative is worse: the identifier is in the registry and in every
+    manifest entry for the window it landed, so refusing it would be refusing a
+    name the operator read off this project's own output.
     """
     if not requested:
         return list(declared)
     wanted = {value.strip().upper() for value in requested}
-    return [
-        site
-        for site in declared
-        if site.station_code.upper() in wanted or site.site_id.upper() in wanted
-    ]
+    return [site for site in declared if wanted & _identifiers(site)]
+
+
+def _identifiers(site: Station) -> set[str]:
+    """Every name this site answers to, upper-cased for matching."""
+    return {site.site_id.upper(), *(d.station_code.upper() for d in site.datasets)}
 
 
 def _pulled_argv(source: str, stations: tuple[str, ...], years: tuple[int, ...]) -> list[str]:

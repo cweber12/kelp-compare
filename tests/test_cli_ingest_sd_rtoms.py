@@ -173,6 +173,24 @@ def test_a_site_with_one_dataset_is_asked_for_the_window_it_always_was(tmp_path,
     assert entry["path"] == sd_rtoms.archive_url(CURRENT, 2023)
 
 
+def test_a_superseded_identifier_selects_the_site_it_belongs_to(data_root, offline):
+    """It is in the registry and in every manifest entry for the window it
+    landed, so refusing a name the operator read off this project's own output
+    would be the wrong answer. It selects the site, so both windows are asked --
+    the same answer `--station LJAC1` gives."""
+    assert run(data_root, "--station", OLDER, "--year", "2021").exit_code == 0
+    assert [code for code, _, _, _ in offline] == [OLDER, CURRENT]
+
+
+def test_an_unknown_identifier_is_told_every_name_the_registry_has(data_root, offline):
+    """Including the superseded ones, or a run scoped to a near-miss of a
+    predecessor's name is told only about the current dataset."""
+    result = run(data_root, "--station", "point-loma-historic")
+    assert result.exit_code != 0
+    assert OLDER in result.output
+    assert CURRENT in result.output
+
+
 def test_both_datasets_rows_land_under_one_site_id(data_root, offline):
     """The reason this is one site record and not two: `site_id` is part of
     `OBSERVATION_KEY`, so a second record would split one mooring's series
