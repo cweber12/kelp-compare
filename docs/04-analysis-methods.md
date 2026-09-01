@@ -699,13 +699,16 @@ demotion below is a registry edit rather than a filter in a fetcher.
 **`air_temperature` and `wind_speed` are controls.** Two separate reasons, and
 neither is a coefficient that came out weak:
 
-- **Air temperature is largely re-measuring the water.** Across the 47 quarters
-  where all three `NDBC:LJAC1` series are usable, the quarterly mean anomalies
-  correlate at **r = 0.857** between air and sea water temperature (against
-  −0.341 air-to-wind and −0.117 water-to-wind). Coastal air temperature is
-  substantially a consequence of the SST beneath it, so as a predictor it is a
-  noisier proxy for a quantity this project measures directly, in the medium
-  kelp actually lives in.
+- **Air temperature is largely re-measuring the water.** Coastal air temperature
+  is substantially a consequence of the SST beneath it, so as a predictor it is
+  a noisier proxy for a quantity this project measures directly, in the medium
+  kelp actually lives in. How nearly it re-measures the water is printed by
+  `01-lag-screen.ipynb` §6.2, against the digest of the table it read: the
+  quarterly mean anomalies of all three `NDBC:LJAC1` parameters, over the
+  quarters where every one of them is usable — the gating this section used to
+  describe and nothing applied. §6.2 also prints what reading each pair on its
+  own quarters instead would give, because the comparison this demotion rests on
+  needs common quarters and that requirement costs something.
 - **Scalar wind speed mixes two opposite mechanisms.** Upwelling is driven by
   equatorward alongshore wind stress: a northwesterly is upwelling-favorable,
   bringing the cold nutrient-rich water §2 makes `days_below_14c` a proxy for. A
