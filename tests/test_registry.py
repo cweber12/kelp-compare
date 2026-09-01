@@ -595,3 +595,171 @@ def test_a_waverider_is_its_own_platform(site_id):
     one-instrument-counted-twice problem
     (https://github.com/cweber12/kelp-compare/issues/69) does not arise here."""
     assert committed(site_id).same_platform_as == ()
+
+
+# --------------------------------------------------------------------------
+# A station's record spread across more than one dataset (docs/03)
+# --------------------------------------------------------------------------
+
+
+def test_an_ordinary_station_is_one_dataset_with_no_window(tmp_path):
+    """Which is every station but one, and the reason callers can be written
+    against `datasets` without every registry record growing a block."""
+    found = station(tmp_path)
+    assert [(d.station_code, d.starts_at, d.ends_at) for d in found.datasets] == [
+        ("TEST", None, None)
+    ]
+    assert found.predecessors == ()
+    assert found.datasets[0].is_current
+
+
+def test_a_project_sensor_spans_no_dataset_at_all(tmp_path):
+    """No `station_code`, so there is nothing a fetcher could ask for -- and an
+    empty tuple rather than one dataset named by the empty string."""
+    loaded = registry(tmp_path, {"site_id": "PROJ:ONE", "operator": "project"})
+    assert find_station(loaded, "PROJ:ONE") is None
+
+
+def test_a_predecessor_and_its_successor_partition_the_timeline(tmp_path):
+    """The chain is half-open and consecutive, so no instant belongs to two
+    datasets and none belongs to neither."""
+    found = station(
+        tmp_path,
+        station_code="current",
+        predecessor_datasets=[
+            {"station_code": "older", "covers_until": "2021-11-04T00:00:00Z"},
+        ],
+    )
+    assert [(d.station_code, d.starts_at, d.ends_at) for d in found.datasets] == [
+        ("older", None, "2021-11-04T00:00:00Z"),
+        ("current", "2021-11-04T00:00:00Z", None),
+    ]
+
+
+def test_only_the_last_dataset_is_the_current_one(tmp_path):
+    """`is_current` is what keeps the realtime feed off a dataset whose record
+    stopped growing years ago."""
+    found = station(
+        tmp_path,
+        predecessor_datasets=[{"station_code": "older", "covers_until": "2021-11-04T00:00:00Z"}],
+    )
+    assert [d.is_current for d in found.datasets] == [False, True]
+
+
+def test_the_oldest_dataset_comes_first_so_the_current_one_wins_a_shared_key(tmp_path):
+    """`storage._write_partition` lets the rows written last win, so ingest
+    order is what decides which dataset's copy of a shared reading survives."""
+    found = station(
+        tmp_path,
+        station_code="current",
+        predecessor_datasets=[
+            {"station_code": "oldest", "covers_until": "2020-01-01T00:00:00Z"},
+            {"station_code": "middle", "covers_until": "2021-11-04T00:00:00Z"},
+        ],
+    )
+    assert [d.station_code for d in found.datasets] == ["oldest", "middle", "current"]
+    assert [d.starts_at for d in found.datasets] == [
+        None,
+        "2020-01-01T00:00:00Z",
+        "2021-11-04T00:00:00Z",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("year", "expected"),
+    [
+        (2019, ["older"]),
+        (2020, ["older"]),
+        (2021, ["older", "current"]),
+        (2022, ["current"]),
+    ],
+)
+def test_a_year_is_offered_only_to_the_datasets_that_hold_part_of_it(tmp_path, year, expected):
+    """The boundary falls inside 2021, so that year alone is asked of both --
+    and 2022 is never asked of the dataset that would answer it in the other
+    one's depth labels (docs/02)."""
+    found = station(
+        tmp_path,
+        station_code="current",
+        predecessor_datasets=[{"station_code": "older", "covers_until": "2021-11-04T00:00:00Z"}],
+    )
+    assert [d.station_code for d in found.datasets if d.covers_year(year)] == expected
+
+
+def test_a_predecessor_without_a_boundary_is_refused(tmp_path):
+    """The whole point of the block. An unbounded predecessor is fetched over
+    its successor's window too, and the two disagree about depth labels."""
+    with pytest.raises(ValueError, match="covers_until"):
+        station(tmp_path, predecessor_datasets=[{"station_code": "older"}])
+
+
+@pytest.mark.parametrize(
+    "until",
+    ["2021-11-04", "2021-11-04T00:00:00", "2021-11-04T00:00:00+00:00", "yesterday", 20211104],
+)
+def test_a_boundary_that_is_not_a_utc_instant_is_refused_by_name(tmp_path, until):
+    """One fixed-width spelling, because `covers_year` compares them as strings
+    and a second spelling would compare wrong rather than raise."""
+    with pytest.raises(ValueError, match="covers_until"):
+        station(
+            tmp_path,
+            predecessor_datasets=[{"station_code": "older", "covers_until": until}],
+        )
+
+
+def test_boundaries_out_of_order_are_refused_rather_than_read_backwards(tmp_path):
+    """Read as a chain, so a list in the wrong order hands a dataset a window
+    that runs backwards -- which fetches nothing and says nothing."""
+    with pytest.raises(ValueError, match="chain"):
+        station(
+            tmp_path,
+            predecessor_datasets=[
+                {"station_code": "a", "covers_until": "2021-11-04T00:00:00Z"},
+                {"station_code": "b", "covers_until": "2020-01-01T00:00:00Z"},
+            ],
+        )
+
+
+def test_one_dataset_named_twice_is_refused(tmp_path):
+    """Including naming the current one as its own predecessor: one dataset
+    holds one window, or the manifest reports one dataset under two entries."""
+    with pytest.raises(ValueError, match="twice"):
+        station(
+            tmp_path,
+            station_code="current",
+            predecessor_datasets=[
+                {"station_code": "older", "covers_until": "2020-01-01T00:00:00Z"},
+                {"station_code": "current", "covers_until": "2021-11-04T00:00:00Z"},
+            ],
+        )
+
+
+def test_a_predecessor_with_no_current_dataset_is_refused(tmp_path):
+    """Nothing would hold the record after the last boundary."""
+    loaded = registry(
+        tmp_path,
+        {
+            "site_id": "NDBC:TEST",
+            "operator": "ndbc",
+            "predecessor_datasets": [
+                {"station_code": "older", "covers_until": "2021-11-04T00:00:00Z"}
+            ],
+        },
+    )
+    with pytest.raises(ValueError, match="station_code"):
+        find_stations(loaded, "ndbc")
+
+
+@pytest.mark.parametrize("block", [[], {}, "older", 0])
+def test_a_predecessor_block_that_is_not_a_list_of_datasets_is_refused(tmp_path, block):
+    """An empty list is refused with the rest: omitting the block is how the
+    registry says there is one dataset, and an empty one says nothing."""
+    with pytest.raises(ValueError, match="predecessor_datasets"):
+        station(tmp_path, predecessor_datasets=block)
+
+
+def test_an_entry_that_is_not_a_dataset_names_the_site_it_is_on(tmp_path):
+    """A hand-edited registry is the only thing that produces this, so the
+    refusal has to say which record to open."""
+    with pytest.raises(ValueError, match="NDBC:TEST"):
+        station(tmp_path, predecessor_datasets=["point-loma-ocean-outfall-histori"])

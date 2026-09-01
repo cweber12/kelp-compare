@@ -254,6 +254,7 @@ One record per station or deployment location.
 | `deployments[]` | For project sensors: instrument model, serial, depth_m, start/end, calibration dates, clock-sync events |
 | `neighbor_refs[]` | Ordered public stations used for validation of this site |
 | `erddap_dataset_id` / `station_code` | Pinned source identifiers |
+| `predecessor_datasets[]` | Public stations only: the datasets this station's record used to live in, oldest first, each with the `covers_until` instant its authority ends at. See below |
 | `archive` | Hand-downloaded stations only: which snapshot the landings came from, and how to cite it. See below |
 | `sensor_depths_m` | For public stations: `{parameter: depth}`, positive down. A number is what the fetcher writes into `depth_m`; a **list** means the payload carries the depth and these are the ones seen so far |
 | `measured_parameters` | For public stations: the controlled parameters this station carries an instrument for. A fetcher stores only these |
@@ -317,6 +318,52 @@ of the pinned archive rather than of the program.
 — which says nothing at all about which geometry it describes — this file names
 its own station and position in its header, so the filename is recorded as
 provenance rather than used to decide what the file is.
+
+### A station's record may span more than one dataset
+
+`station_code` assumes the provider serves the whole record under one
+identifier, which is true of every station here but one. A provider that
+re-platforms splits it instead: City of San Diego RTOMS publishes Point Loma as
+a **real time** dataset covering 2021-11-04 onward and a separate **historic**
+one covering 2020-01 to 2023-01, and both are the same mooring.
+
+That is one site, not two. `site_id` is part of `OBSERVATION_KEY`, so a second
+site record would split one mooring's series permanently on the identifier —
+the analysis would see two stations at one position and no way to join them.
+The site record names the extra datasets instead:
+
+```json
+"station_code": "point-loma-ocean-outfall-real-ti",
+"predecessor_datasets": [
+  {
+    "station_code": "point-loma-ocean-outfall-histori",
+    "covers_until": "2021-11-04T00:00:00Z"
+  }
+]
+```
+
+Read as a **chain**, oldest first: each dataset starts where the one before it
+ended, the last boundary is where `station_code` takes over, and the windows are
+half-open so no instant belongs to two datasets. `Station.datasets` returns the
+whole chain and ingest asks each dataset only for the window it owns —
+`--year 2020` reaches the historic dataset alone, `--year 2022` the real-time
+one alone, and 2021, which the boundary falls inside, reaches both, each
+clipped.
+
+**The boundary is mandatory, and it is not bookkeeping.** Two datasets of one
+mooring overlap, and where they overlap they can agree exactly on a reading and
+disagree about its *label*: RTOMS Point Loma reports one deep sensor at 74 m in
+the historic dataset and 75 m in the real-time one, at the same timestamps, to
+the same millidegree (doc 02). `depth_m` is part of `OBSERVATION_KEY`, so
+fetching both over one window stores one reading twice under two permanent
+names, and nothing downstream can tell that from a mooring that really carried
+two sensors a metre apart. An unbounded predecessor is refused at load for that
+reason, as are boundaries out of order and one dataset named twice.
+
+Note what this does **not** do: it does not merge the depth labels. Each dataset
+still lands the depth it reported, and the record at a position still splits
+where the labels change — the rule below. What the window does is stop the two
+datasets reporting the *same* interval under different labels.
 
 ### A source may be self-describing on depth
 
