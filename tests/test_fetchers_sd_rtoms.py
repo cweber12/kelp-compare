@@ -1,15 +1,23 @@
 """The City of San Diego RTOMS fetcher (docs/02 "City of San Diego RTOMS").
 
-Two fixtures, and the split between them is the point. The recorded one is a
-real CeNCOOS payload and pins the *format* -- the two-line header, the CF unit
-token, the profile bins sharing a vertical axis with the temperature sensors.
-The hand-built one pins the *edge cases* a one-hour window does not happen to
-contain: a suspect and a fail flag, a sensor depth nobody has declared, and the
-same physical position reported at two depths across a redeployment.
+Three fixtures. Two are South Bay, and the split between them is the point: the
+recorded one is a real CeNCOOS payload and pins the *format* -- the two-line
+header, the CF unit token, the profile bins sharing a vertical axis with the
+temperature sensors -- while the hand-built one pins the *edge cases* a one-hour
+window does not happen to contain: a suspect and a fail flag, a sensor depth
+nobody has declared, and the same physical position reported at two depths
+across a redeployment.
 
 That mirrors the HOBO pair in `tests/fixtures/` and exists for the same reason:
 a fixture edited to contain an edge case can no longer prove what the source
 actually sends, so it must not be the only one.
+
+The third is recorded from `point-loma-ocean-outfall-histori`, the dataset that
+holds Point Loma before 2021-11-04, and it is here because that dataset is not
+the same shape as its real-time sibling: it carries no `_qc_tests` string on any
+row at all. The rule that separates another instrument's row from this sensor's
+outage reads that column, so this fixture is what pins what the parser does when
+the column is empty everywhere (docs/02).
 
 Network access is forbidden here (CLAUDE.md), so `fetch` is exercised through a
 stub session and everything else runs off the recorded bytes.
@@ -30,6 +38,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "sd_rtoms"
 RECORDED = FIXTURES / "south-bay-ocean-outfall_2025-06-01T00-01.csv"
 EDGE_CASES = FIXTURES / "south-bay-ocean-outfall_edge-cases.csv"
+HISTORIC = FIXTURES / "point-loma-ocean-outfall-histori_2020-06-01T00-01.csv"
+
+#: What `sites.json` declares for SDRTOMS:PLOO, whose record spans two datasets.
+PLOO_DATASET = "point-loma-ocean-outfall-histori"
+PLOO_SITE = "SDRTOMS:PLOO"
+PLOO_DECLARED = (1.0, 9.0, 10.0, 20.0, 30.0, 45.0, 60.0, 75.0, 85.0, 87.0, 89.0, 90.0)
 
 DATASET = "south-bay-ocean-outfall"
 SITE = "SDRTOMS:SBOO"
@@ -299,6 +313,48 @@ def test_every_requested_variable_is_named_in_the_url():
         assert variable in url
 
 
+# --------------------------------------------------------------------------
+# A year clipped to the dataset that owns it (docs/03)
+# --------------------------------------------------------------------------
+
+
+def test_a_station_with_one_dataset_lands_under_the_url_it_always_did():
+    """The clip is what a site with `predecessor_datasets` asks for, and every
+    other station has none -- so its URL, which is what `raw/` is addressed by
+    and what the validator cache is keyed on, must not move."""
+    assert sd_rtoms.archive_url(DATASET, 2023) == sd_rtoms.archive_url(
+        DATASET, 2023, since=None, until=None
+    )
+
+
+def test_a_boundary_inside_the_year_narrows_that_year_and_nothing_else():
+    """2021 is the one year the Point Loma boundary falls inside, and the two
+    datasets' halves of it have to meet exactly -- no gap, no overlap."""
+    older = sd_rtoms.archive_url(DATASET, 2021, until="2021-11-04T00:00:00Z")
+    current = sd_rtoms.archive_url(DATASET, 2021, since="2021-11-04T00:00:00Z")
+    assert "time%3E=2021-01-01T00%3A00%3A00Z" in older
+    assert "time%3C2021-11-04T00%3A00%3A00Z" in older
+    assert "time%3E=2021-11-04T00%3A00%3A00Z" in current
+    assert "time%3C2022-01-01T00%3A00%3A00Z" in current
+
+
+def test_a_year_wholly_inside_the_window_is_not_narrowed():
+    """A boundary years away must leave the calendar year alone, or every
+    landing carries a constraint that says nothing."""
+    url = sd_rtoms.archive_url(DATASET, 2023, since="2021-11-04T00:00:00Z")
+    assert "time%3E=2023-01-01T00%3A00%3A00Z" in url
+    assert "time%3C2024-01-01T00%3A00%3A00Z" in url
+
+
+def test_the_boundary_reaches_the_url_the_fetch_asks_for():
+    """The clip is in the URL rather than after the parse, so `raw/` holds the
+    authoritative rows and nothing else (docs/03)."""
+    session = _Session(_Response(200, b"body"))
+    sd_rtoms.fetch_archive(DATASET, 2021, session=session, until="2021-11-04T00:00:00Z")
+    (url, _) = session.calls[0]
+    assert "time%3C2021-11-04T00%3A00%3A00Z" in url
+
+
 class _Response:
     def __init__(self, status, body=b"", headers=None):
         self.status_code = status
@@ -351,3 +407,80 @@ def test_a_server_error_is_retried_once_then_recorded_as_a_gap(monkeypatch):
     with pytest.raises(SourceUnavailable):
         sd_rtoms.fetch_realtime(DATASET, session=session)
     assert len(session.calls) == 2
+
+
+# --------------------------------------------------------------------------
+# The dataset that holds Point Loma before the real-time one (docs/02)
+# --------------------------------------------------------------------------
+
+
+def parse_historic(parameters, *, declared=PLOO_DECLARED):
+    landed = new_payload(
+        sd_rtoms.SOURCE,
+        PLOO_DATASET,
+        HISTORIC.name,
+        f"https://erddap.cencoos.org/erddap/tabledap/{PLOO_DATASET}.csv",
+        HISTORIC.read_bytes(),
+    )
+    return sd_rtoms.parse(
+        landed,
+        parameters,
+        site_id=PLOO_SITE,
+        declared_depths=declared,
+        measured_parameters=MEASURED,
+        run_id=RUN,
+    )
+
+
+def test_the_older_dataset_is_the_same_layout_as_the_current_one(parameters):
+    """Same columns, same units line, same CF unit token -- which is what makes
+    one fetcher able to read both, and is checked rather than assumed."""
+    parsed = parse_historic(parameters)
+    assert set(parsed.frame["source"]) == {sd_rtoms.SOURCE}
+    assert set(parsed.frame["site_id"]) == {PLOO_SITE}
+    assert parsed.frame["value"].between(9.0, 21.0).all()
+
+
+def test_the_older_dataset_carries_no_per_test_qc_at_all(parameters):
+    """Not a parse failure and not a downgrade of the aggregate: `qc_agg` is
+    still read row for row, and `qc_tests` records that the provider offered no
+    per-test evidence rather than inventing one."""
+    parsed = parse_historic(parameters)
+    assert set(parsed.frame["qc_tests"]) == {""}
+    assert set(parsed.frame["qc_flag"]) == {1}
+
+
+def test_the_deep_sensor_this_dataset_alone_reports_lands_once_declared(parameters):
+    """89 m is the deep sensor's label for the 2020 deployment and appears in no
+    other dataset, so the nine months before the real-time record begins exist
+    only if the registry declares it."""
+    parsed = parse_historic(parameters)
+    assert 89.0 in set(parsed.frame["depth_m"])
+
+
+def test_an_undeclared_deep_sensor_is_refused_and_named(parameters):
+    """What the registry gate is for: the depth set read off the real-time feed
+    does not contain 89 m, so landing this dataset against it silently drops the
+    deepest series in the payload unless someone reviews it first."""
+    parsed = parse_historic(parameters, declared=tuple(d for d in PLOO_DECLARED if d != 89.0))
+    assert 89.0 not in set(parsed.frame["depth_m"])
+    assert any("89 m" in warning for warning in parsed.warnings)
+
+
+def test_another_instruments_rows_are_still_dropped_without_a_qc_verdict(parameters):
+    """This payload carries four off-grid timestamps whose only rows are three
+    null temperatures at 1, 30 and 89 m -- another instrument on its own clock,
+    the docs/02 case. With `_qc_tests` empty everywhere the phantom rule cannot
+    read the provider's evidence, and every absent reading is dropped instead.
+
+    Pinned because it costs something real: the two on-grid nulls at 30 m are a
+    dead temperature sensor, which docs/03 would keep in the record flagged
+    missing. No reading is ever lost -- the rule only ever drops absences -- but
+    the premise the rule was verified on does not hold on this dataset, which is
+    https://github.com/cweber12/kelp-compare/issues/129.
+    """
+    parsed = parse_historic(parameters)
+    assert parsed.rows_in == 56
+    assert len(parsed.frame) == 42
+    assert 30.0 not in set(parsed.frame["depth_m"])
+    assert not parsed.frame["value"].isna().any()

@@ -29,6 +29,13 @@ DEFAULT_REGISTRY_PATH = Path("data/registry/sites.json")
 #: spelling rather than parsed leniently.
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
+#: What `predecessor_datasets[].covers_until` has to look like. A UTC instant,
+#: spelled the way the providers spell `time_coverage_start` -- not a date,
+#: because the boundary between two datasets of one station falls where one
+#: record starts, which is a time of day and not a midnight. Fixed width and
+#: fixed offset, which is what lets `Dataset` compare two of them as strings.
+_ISO_INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+
 
 @dataclass(frozen=True)
 class Deployment:
@@ -128,6 +135,64 @@ class Derivation:
 
 
 @dataclass(frozen=True)
+class Dataset:
+    """One of the datasets a station's record is spread across, and the window it owns.
+
+    Most stations are one dataset: the provider serves the whole record under one
+    identifier and `station_code` is the whole answer. A provider that has
+    re-platformed splits the record instead -- City of San Diego RTOMS publishes
+    Point Loma as a "real time" dataset back to 2021-11-04 and a separate
+    "historic" one before it -- and then the site record has to name both, in
+    order, with the instant where authority passes from one to the next
+    (docs/03 "A station's record may span more than one dataset").
+
+    **The window is not a convenience, it is the thing that keeps the record
+    honest.** Two datasets of one mooring overlap, and where they overlap they
+    can disagree about the *label* on a reading while agreeing exactly on the
+    reading: RTOMS Point Loma reports the same deep sensor at 74 m in one
+    dataset and 75 m in the other, same timestamp, same value to the millidegree
+    (docs/02). `depth_m` is part of `OBSERVATION_KEY`, so landing both stores one
+    reading twice under two permanent names, and nothing downstream can tell that
+    from a mooring that really carried two sensors a metre apart. Giving each
+    dataset a window and asking it for nothing outside makes that impossible
+    rather than merely discouraged.
+
+    `starts_at` and `ends_at` are half-open -- `[starts_at, ends_at)` -- so two
+    consecutive datasets cannot both claim the boundary instant. `None` at either
+    end means unbounded, which is what the first and last dataset carry.
+    """
+
+    station_code: str
+    starts_at: str | None = None
+    ends_at: str | None = None
+
+    @property
+    def is_current(self) -> bool:
+        """Whether this is the dataset the provider is still adding to.
+
+        The realtime feed belongs to it alone. A superseded dataset has a fixed
+        end, so asking it for "the last 45 days" would either answer nothing or,
+        worse, answer with the last 45 days it happens to hold and label them as
+        current.
+        """
+        return self.ends_at is None
+
+    def covers_year(self, year: int) -> bool:
+        """Whether this dataset owns any part of one calendar year, UTC.
+
+        Compared as strings, which is exact rather than lax: `_ISO_INSTANT` pins
+        every boundary to one fixed-width UTC spelling, and those sort
+        lexicographically in chronological order. A boundary that did not match
+        never became a `Dataset` at all.
+        """
+        opens = f"{year:04d}-01-01T00:00:00Z"
+        closes = f"{year + 1:04d}-01-01T00:00:00Z"
+        return (self.ends_at is None or self.ends_at > opens) and (
+            self.starts_at is None or self.starts_at < closes
+        )
+
+
+@dataclass(frozen=True)
 class Station:
     """A public-station site record: what a fetcher needs in order to ask for it.
 
@@ -149,6 +214,11 @@ class Station:
     It is not derivable from `sensor_depths_m`: a met parameter has no depth and
     is measured anyway, so an absence there means "no depth published", never
     "no sensor" (docs/03).
+
+    `predecessors` records the datasets this station's record used to live in,
+    where a provider has split it across more than one identifier. Read through
+    `datasets`, never on its own: what a fetcher needs is the whole ordered
+    chain with a window on each, and the current dataset is not in this tuple.
 
     **`lat`/`lon` are carried here although `Deployment` deliberately refuses
     them**, and the asymmetry is the same fact twice. A project logger can be in
@@ -172,8 +242,33 @@ class Station:
     depth_set_m: dict[str, tuple[float, ...]] = field(default_factory=dict)
     measured_parameters: tuple[str, ...] = ()
     same_platform_as: tuple[str, ...] = ()
+    predecessors: tuple[Dataset, ...] = ()
     archive: Archive | None = None
     derived_from: Derivation | None = None
+
+    @property
+    def datasets(self) -> tuple[Dataset, ...]:
+        """Every dataset this station's record spans, oldest first, current last.
+
+        One entry for almost every station, and callers are written against the
+        tuple rather than against `station_code` so that stays true of the code
+        when it stops being true of a station. The current dataset is derived
+        here rather than stored, so it cannot drift from `station_code` -- which
+        is still the identifier the rest of the project addresses this station
+        by, and still what `--station` matches.
+
+        Oldest first because that is the order the windows have to be ingested
+        in: `storage._write_partition` lets the rows written last win a key they
+        share, so the dataset the provider is still maintaining settles any tie
+        with the one it superseded.
+
+        Empty for a site with no `station_code` -- a project sensor, which has no
+        dataset anywhere and is not something a fetcher can ask for.
+        """
+        if not self.station_code:
+            return ()
+        opens = self.predecessors[-1].ends_at if self.predecessors else None
+        return (*self.predecessors, Dataset(self.station_code, starts_at=opens))
 
     @property
     def is_derived(self) -> bool:
@@ -297,11 +392,17 @@ def find_stations(registry: Registry, operator: str) -> tuple[Station, ...]:
     A site with no `station_code` is skipped: without the identifier its provider
     knows it by, there is nothing a fetcher could ask for. Site order is
     preserved, so a run over "every NDBC station" is reproducible.
+
+    A site that declares `predecessor_datasets` and no `station_code` is *not*
+    skipped, and that is the point: it names datasets to fetch, so it is plainly
+    meant to be a public station, and dropping it would answer a half-finished
+    record by pretending the site is not there. `_station` refuses it by name
+    instead.
     """
     return tuple(
         _station(site)
         for site in registry.sites
-        if site.get("operator") == operator and site.get("station_code")
+        if site.get("operator") == operator and _is_public(site)
     )
 
 
@@ -325,7 +426,7 @@ def find_station(registry: Registry, site_id: str) -> Station | None:
     registry.
     """
     for site in registry.sites:
-        if _site_id(site) == site_id and site.get("station_code"):
+        if _site_id(site) == site_id and _is_public(site):
             return _station(site)
     return None
 
@@ -476,9 +577,106 @@ def _station(site: dict) -> Station:
         depth_set_m=sets,
         measured_parameters=tuple(str(p) for p in measured),
         same_platform_as=tuple(str(s) for s in platform),
+        predecessors=_predecessors(site),
         archive=_archive(site),
         derived_from=_derivation(site),
     )
+
+
+def _is_public(site: dict) -> bool:
+    """Whether this record is something a fetcher could be pointed at.
+
+    A `station_code`, or the `predecessor_datasets` block that only a public
+    station has. The second is not redundant: a record naming datasets and no
+    current identifier is a public station someone stopped editing halfway, and
+    it has to reach `_station` to be refused rather than be filtered out of the
+    run as though it were a project sensor.
+    """
+    return bool(site.get("station_code") or site.get("predecessor_datasets"))
+
+
+def _predecessors(site: dict) -> tuple[Dataset, ...]:
+    """The superseded datasets on a station record, oldest first (docs/03).
+
+    Empty for almost every station, which is what an absent block means: the
+    provider serves the whole record under one identifier.
+
+    Every rule here refuses rather than repairs, and each of them is a way a
+    hand-edited registry could silently halve or double a record:
+
+    - **A boundary is mandatory.** A predecessor with no `covers_until` is a
+      second dataset asked for every window its successor is also asked for,
+      which is the overlap this block exists to bound (see `Dataset`).
+    - **Boundaries increase.** They are read as a chain -- each dataset starts
+      where the one before it ended -- so a list out of order would hand a
+      dataset a window that runs backwards and fetch nothing, silently.
+    - **No identifier twice.** The same dataset named twice would be asked for
+      two adjacent windows and land both, which is not wrong so much as
+      unreadable: two manifest entries, two landings, one dataset.
+    - **A predecessor needs a successor.** Without `station_code` there is no
+      current dataset for the chain to end at, and the last boundary would name
+      an instant after which nothing is declared to hold the record.
+    """
+    block = site.get("predecessor_datasets")
+    if block is None:
+        return ()
+
+    site_id = _site_id(site) or "<unnamed site>"
+    if not isinstance(block, list) or not block:
+        raise ValueError(
+            f"`predecessor_datasets` on {site_id} is {block!r}; declare a non-empty list of "
+            "datasets this station's record continues from, or omit it, which is how the "
+            "registry says the provider serves the whole record under one identifier"
+        )
+    if not site.get("station_code"):
+        raise ValueError(
+            f"{site_id} declares `predecessor_datasets` but no `station_code`; a superseded "
+            "dataset is only superseded by a current one, and there is nothing here to hold "
+            "the record after the last boundary"
+        )
+
+    datasets: list[Dataset] = []
+    seen = {str(site.get("station_code"))}
+    for entry in block:
+        if not isinstance(entry, dict) or not entry:
+            raise ValueError(
+                f"`predecessor_datasets` on {site_id} carries {entry!r}; each entry is an "
+                "object with a `station_code` and the `covers_until` instant its record ends at"
+            )
+
+        code = entry.get("station_code")
+        if not isinstance(code, str) or not code:
+            raise ValueError(
+                f"`predecessor_datasets[].station_code` on {site_id} is {code!r}; it is the "
+                "identifier the provider knows the superseded dataset by, and there is nothing "
+                "to fetch without it"
+            )
+        if code in seen:
+            raise ValueError(
+                f"{site_id} names {code!r} twice; one dataset holds one window, so a repeated "
+                "identifier would be fetched and landed once per window it appears in"
+            )
+        seen.add(code)
+
+        until = entry.get("covers_until")
+        if not isinstance(until, str) or not _ISO_INSTANT.fullmatch(until):
+            raise ValueError(
+                f"`covers_until` on {site_id}'s {code!r} is {until!r}; it must be a UTC instant "
+                "spelled YYYY-MM-DDTHH:MM:SSZ. It is where this dataset stops being the record "
+                "and cannot be omitted -- an unbounded predecessor is fetched over its "
+                "successor's window too, and the two can disagree about a reading's depth "
+                "while agreeing about the reading (docs/02)"
+            )
+        opens = datasets[-1].ends_at if datasets else None
+        if opens is not None and until <= opens:
+            raise ValueError(
+                f"{site_id} declares {code!r} covering until {until}, which is not after the "
+                f"{opens} the entry before it ends at; `predecessor_datasets` is read as a "
+                "chain, oldest first, and each dataset starts where the last one ended"
+            )
+        datasets.append(Dataset(code, starts_at=opens, ends_at=until))
+
+    return tuple(datasets)
 
 
 def _archive(site: dict) -> Archive | None:
