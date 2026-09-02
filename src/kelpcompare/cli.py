@@ -64,6 +64,7 @@ from kelpcompare.storage import (
     read_observations,
     replace_features,
     stored_sources,
+    table_fingerprint,
     write_features,
     write_observations,
 )
@@ -548,6 +549,7 @@ def features(source: str | None, data_root: Path | None, qc_max_flag: int, dry_r
         written = () if dry_run else _write_feature_tables(outcomes, kelp, zones, run)
         if not dry_run:
             written += _write_comparison(zones, config, run)
+            _record_tables(run, written)
         _report_features(run, zones, written, dry_run=dry_run)
 
 
@@ -799,6 +801,31 @@ def _write_comparison(zones: Zones, config, run: RunManifest) -> tuple[Path, ...
         return ()
 
 
+def _record_tables(run: RunManifest, written: tuple[Path, ...]) -> None:
+    """Record the digest of every table this run wrote (docs/03 run manifests).
+
+    Once, over the paths the write functions returned, rather than at each
+    write: `written` is exactly the set of tables that reached disk -- a table
+    whose write failed is already absent from it -- so the manifest cannot claim
+    a file that is not there.
+
+    A table's name is its file's stem because every path here came from
+    `Zones.feature_table`, which is what makes that true rather than a
+    coincidence that holds until someone writes a table somewhere else.
+
+    Fail-soft like the writes themselves: a digest that cannot be taken becomes
+    a warning and the run keeps its manifest. A run that aborted over the audit
+    trail it was in the middle of writing would leave less behind, not more.
+    """
+    for path in written:
+        try:
+            sha256, rows = table_fingerprint(path)
+        except Exception as error:  # noqa: BLE001 -- report it, keep the manifest
+            run.note_warning(f"{path.stem}: digest not recorded: {type(error).__name__}: {error}")
+            continue
+        run.add_table(path.stem, path, sha256=sha256, rows=rows)
+
+
 def _stack(frames: list[pd.DataFrame]) -> pd.DataFrame:
     """Concatenate, ignoring empties so they cannot widen a column's dtype."""
     populated = [frame for frame in frames if not frame.empty]
@@ -843,8 +870,12 @@ def _report_features(
     for series in run.series:
         if series.source == COMPARISON_SERIES:
             click.echo(f"comparison: {series.rows} rows over {series.quarters} polygon-quarters")
+    # The 16-character prefix the notebooks print, so the operator can tell at a
+    # glance whether the notebook ran against the table this run just wrote.
+    digests = {entry.path: entry.sha256 for entry in run.tables}
     for path in written:
-        click.echo(f"wrote: {path}")
+        digest = digests.get(str(path))
+        click.echo(f"wrote: {path}" + (f"  sha256:{digest[:16]}" if digest else ""))
 
     if dry_run:
         click.echo("dry run: nothing written, no manifest")
@@ -946,6 +977,9 @@ def validate(
 
         path = replace_features(frame, zones, table="validation", key=VALIDATION_KEY)
         run.add_series(source="validation", rows=len(frame))
+        # Also a table in the features zone, and so also a table that could not
+        # be traced to the run that wrote it (docs/03 run manifests).
+        _record_tables(run, (path,))
         click.echo(f"wrote {path}")
         click.echo(f"manifest: {run.write(zones)}")
 

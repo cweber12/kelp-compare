@@ -31,10 +31,12 @@ timezone -- local time at presentation is exactly what docs/03 forbids.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 DEFAULT_ROOT = Path("data")
 
@@ -457,6 +459,22 @@ def replace_features(
     ordered = frame.sort_values(list(key), kind="stable", na_position="last")
     _write_table(ordered.reset_index(drop=True).astype(frame.dtypes.to_dict()), path)
     return path
+
+
+def table_fingerprint(path: Path) -> tuple[str, int]:
+    """The SHA-256 of a written table's bytes and the number of rows in it.
+
+    What a run records about a table it wrote (docs/03 run manifests). The
+    digest is taken over the file exactly as it landed, which is the same thing
+    the notebooks stamp the tables they read with -- so a digest in a figure
+    caption and a digest in a manifest are the same string rather than two
+    conventions that happen to agree today.
+
+    The row count comes from the Parquet footer rather than from the frame that
+    was built, because a source-scoped `write_features` merges back the rows it
+    did not rebuild: the frame is not the table.
+    """
+    return hashlib.sha256(path.read_bytes()).hexdigest(), pq.ParquetFile(path).metadata.num_rows
 
 
 def _write_table(typed: pd.DataFrame, path: Path) -> None:

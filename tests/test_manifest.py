@@ -120,6 +120,26 @@ def test_gaps_and_warnings_are_separate_records(tmp_path):
     assert payload["warnings"] == ["series 'Light' has no series_map entry; skipped"]
 
 
+def test_a_written_table_is_recorded_by_digest_not_by_run_id(tmp_path):
+    """The link a feature table cannot carry on its rows has to live here."""
+    manifest = RunManifest.start("features")
+    manifest.add_table("comparison", tmp_path / "comparison.parquet", sha256="ab" * 32, rows=51_000)
+    payload = json.loads(manifest.write(Zones.at(tmp_path)).read_text(encoding="utf-8"))
+
+    (table,) = payload["tables"]
+    assert table["table"] == "comparison"
+    assert table["path"].endswith("comparison.parquet")
+    assert (table["sha256"], table["rows"]) == ("ab" * 32, 51_000)
+
+
+def test_a_run_that_wrote_nothing_records_no_tables(tmp_path):
+    """An empty list, not a missing key: "wrote nothing" is a statement."""
+    payload = json.loads(
+        RunManifest.start("features").write(Zones.at(tmp_path)).read_text(encoding="utf-8")
+    )
+    assert payload["tables"] == []
+
+
 def test_writing_twice_keeps_the_first_finish_time(tmp_path):
     manifest = RunManifest.start("ingest").finish()
     finished = manifest.finished_at

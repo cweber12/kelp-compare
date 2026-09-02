@@ -1111,6 +1111,31 @@ pulled station-window has no adapter to name. Manifests are how any number in a 
 traces back to specific fetches — required for publication-grade
 reproducibility.
 
+A run also records **what it wrote**: for every table it produced, the table
+name, its path, the SHA-256 of the file's bytes, and its row count. The
+`features/` tables carry no run id and must not — a build id on the rows would
+change a table's bytes on every rebuild and cost the zone the "two runs over
+unchanged inputs write identical bytes" property that makes `rebuild` mean
+anything, which is why
+https://github.com/cweber12/kelp-compare/pull/28 removed exactly such a column.
+The trace therefore runs the other way: a digest quoted in a figure caption
+(docs/04 §5) is grepped through the manifests to the run that wrote it, and from
+there to its code SHA, the `--qc-max-flag` it was built at, and the warnings and
+gaps that run recorded. Two manifests naming the same digest is a correct
+statement rather than a collision — it is precisely what a rebuild over
+unchanged inputs is supposed to produce. The digest is recorded whole rather
+than as the 16-character prefix the notebooks print, so a caption quoting any
+prefix of it still matches. The row count is read back from the file rather than
+taken from the frame that was built, because a source-scoped write merges back
+the rows it did not rebuild: the frame is not the table.
+
+**Manifests written before the field are not backfilled.** A digest taken now
+would describe the file as it stands today, not what that run wrote — and a
+table rebuilt since would be attributed to the run it superseded, which is a
+false trail rather than a missing one. A manifest with no `tables` is read the
+same way as one with no `status`: it predates the field, and its tables can be
+traced no further than they ever could.
+
 A run records **how it ended** in a top-level `status`: `completed`, or
 `interrupted` where it stopped before its report, or `running` where it has not
 stopped yet. This is a property of the run, not of any one input — an input's

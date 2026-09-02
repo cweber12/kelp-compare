@@ -13,6 +13,8 @@ answer can be worked out by hand.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import shutil
 from pathlib import Path
 
@@ -94,6 +96,22 @@ def test_validate_writes_the_docs03_table(data_root):
     assert row["depth_comparable"]
     assert row["bias"] == pytest.approx(1.0)
     assert row["serial"] == KNOWN_SERIAL
+
+
+def test_the_run_manifest_records_the_table_it_wrote(data_root):
+    """`validation` is a features-zone table too, and was as untraceable as the
+    rest of the zone (docs/03 run manifests)."""
+    ingest_deployment(data_root)
+    land_reference(data_root, site_id="NDBC:LJAC1", depth_m=3.4, offset=1.0)
+
+    run(data_root, "validate")
+
+    manifests = sorted((data_root / "raw" / "_manifests").glob("*-validate.json"))
+    (entry,) = json.loads(manifests[-1].read_text(encoding="utf-8"))["tables"]
+    path = Zones.at(data_root).feature_table("validation")
+    assert entry["table"] == "validation"
+    assert entry["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert entry["rows"] == len(read_features(Zones.at(data_root), "validation"))
 
 
 def test_a_strictness_that_excludes_every_row_says_so(data_root):

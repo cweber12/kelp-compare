@@ -31,8 +31,20 @@ write-ups can be told apart when the table is rebuilt.
 table carries the id of the run that built it. `fetch_run_id` is on every
 observation row, but putting a build id on a derived table would change its bytes
 on every rebuild and cost the zone its reproducibility. A digest is strictly
-better anyway — it is verifiable rather than a pointer — but the manifest not
-recording what it wrote is a gap worth closing.
+better anyway — it is verifiable rather than a pointer.
+
+**To get from a digest to the run**, grep the manifests for it. Every `features`
+run records the SHA-256 of each table it wrote (docs/03), and `kelpcompare
+features` echoes the same 16-character prefix beside each path as it writes it:
+
+    grep -rl dbbed1264b9ee1d8 data/raw/_manifests/
+
+What comes back is the run that built that exact table — its code SHA, the
+`--qc-max-flag` it was built at, and the warnings and gaps it recorded, none of
+which the digest alone can give you. Two runs over unchanged inputs record the
+same digest, so more than one manifest may name it; that is the reproducibility
+property holding, not an ambiguity. Runs from before the field carry no `tables`
+and a digest older than it will not be found.
 
 **Nothing stochastic without a seed.** Nothing in these notebooks is stochastic
 yet; when something is, seed it in the first cell.
@@ -64,7 +76,8 @@ Editor*, select the `.venv` interpreter (nothing else has `kelpcompare`
 installed), Run All, and save. The outputs only reach the file when you save.
 
 Either way, check afterwards that the digest the notebook prints is the digest
-of the `comparison.parquet` you meant to run against. A notebook whose gate
+of the `comparison.parquet` you meant to run against — the same string the
+`kelpcompare features` run echoed when it wrote the table. A notebook whose gate
 cell reports an older digest did not pick up the rebuilt table.
 
 ## Index
