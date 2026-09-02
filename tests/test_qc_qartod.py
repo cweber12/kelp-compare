@@ -522,6 +522,84 @@ def test_a_verdict_stored_by_an_earlier_run_does_not_survive_an_exception(tmp_pa
 
 
 # --------------------------------------------------------------------------
+# Unreachable thresholds -- ADR-008, reported and not acted on
+# --------------------------------------------------------------------------
+
+#: A day apart, at 30 degC of valid_range, bounds every rate at 1.25 degC/h --
+#: far under the 18 the ten-minute loggers were tuned to. This is the arithmetic
+#: https://github.com/cweber12/kelp-compare/issues/68 found on both daily
+#: sources.
+DAILY = {"freq": "1D", "site": "SIO:LAJOLLA-PIER", "source": "sio_shore_stations"}
+
+
+def test_a_rate_threshold_no_step_could_reach_is_reported(tmp_path):
+    outcome = evaluate(
+        observations([16.0, 18.0, 16.0, 18.0], **DAILY),
+        registry(tmp_path, qc={"rate_of_change": RATE}),
+    )
+    (warning,) = outcome.warnings
+    assert "rate_of_change cannot fire" in warning
+    assert "1.25" in warning  # the largest rate 30 degC over 24 h allows
+    assert "18" in warning  # the suspect threshold it is measured against
+
+
+def test_the_warning_names_the_series_it_is_about(tmp_path):
+    outcome = evaluate(
+        observations([16.0, 18.0, 16.0, 18.0], **DAILY),
+        registry(tmp_path, qc={"rate_of_change": RATE}),
+    )
+    assert outcome.warnings[0].startswith("SIO:LAJOLLA-PIER/sea_water_temperature:")
+
+
+def test_an_unreachable_threshold_changes_no_stored_flag(tmp_path):
+    """It detects; the switch stays hand-declared in the registry (ADR-008)."""
+    parameters = registry(tmp_path, qc={"rate_of_change": RATE})
+    frame = observations([16.0, 18.0, 16.0, 18.0], **DAILY)
+    evaluated = evaluate(frame, parameters).frame
+
+    verdicts = [parse_tests(t) for t in evaluated["qc_tests"]]
+    assert [v.get("rate_of_change") for v in verdicts] == [None, "pass", "pass", "pass"]
+    assert set(evaluated["qc_flag"]) == {FLAG_PASS}
+
+
+def test_a_reachable_threshold_is_not_reported(tmp_path):
+    """Ten minutes apart, the same span bounds rates at 180 degC/h."""
+    outcome = evaluate(
+        observations([16.0, 18.0, 16.0, 18.0]), registry(tmp_path, qc={"rate_of_change": RATE})
+    )
+    assert outcome.warnings == ()
+
+
+def test_the_shortest_interval_is_what_decides_it(tmp_path):
+    """One close pair is enough to make the threshold reachable somewhere."""
+    frame = observations([16.0, 18.0, 16.0, 18.0], **DAILY)
+    frame.loc[3, "timestamp"] = frame.loc[2, "timestamp"] + pd.Timedelta(minutes=10)
+    outcome = evaluate(frame, registry(tmp_path, qc={"rate_of_change": RATE}))
+    assert outcome.warnings == ()
+
+
+def test_a_parameter_with_no_valid_range_bounds_nothing_and_is_not_reported(tmp_path):
+    outcome = evaluate(
+        observations([16.0, 18.0, 16.0, 18.0], **DAILY),
+        registry(tmp_path, valid_range=None, qc={"rate_of_change": RATE}),
+    )
+    assert not any("cannot fire" in warning for warning in outcome.warnings)
+
+
+def test_a_source_excepted_from_the_rate_test_is_not_reported_either(tmp_path):
+    """Nothing ran, so there is no threshold in force to call unreachable."""
+    parameters = registry(
+        tmp_path,
+        qc={
+            "rate_of_change": RATE,
+            "by_source": {"sio_shore_stations": {"rate_of_change": None}},
+        },
+    )
+    outcome = evaluate(observations([16.0, 18.0, 16.0, 18.0], **DAILY), parameters)
+    assert outcome.warnings == ()
+
+
+# --------------------------------------------------------------------------
 # The reference deployment -- docs/06 s5 check 6
 # --------------------------------------------------------------------------
 

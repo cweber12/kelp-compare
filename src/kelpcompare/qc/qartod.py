@@ -6,7 +6,7 @@ it decides what counts as one series, which tests a parameter has thresholds
 for, and nothing else. The thresholds themselves live in `parameters.json`, and
 the roll-up lives in `flags.py`.
 
-Four decisions here are load-bearing.
+Five decisions here are load-bearing.
 
 **What one series is.** Rows are grouped by source, site, parameter, and depth,
 and the whole group is tested in time order regardless of which year partition
@@ -25,6 +25,13 @@ default threshold anywhere in this module. A guessed threshold that flagged real
 data would be indistinguishable, in the stored flags, from a real QC failure --
 and because the default analysis filter is `qc_flag <= 2`, it would quietly
 remove the cold upwelling excursions docs/04 s2 relies on.
+
+**An unreachable threshold is reported, never acted on** (ADR-008). Where the
+rate test runs on a series whose sampling interval is too long for its threshold
+to be crossed by anything `gross_range` would not already condemn, the run says
+so and the stored flags do not change. Switching the test off on that evidence
+would make a stored flag depend on which rows happened to land, which is what
+ADR-007 rejected for baseline windows.
 
 **A source may be excepted from a test, and the exception is silent** (ADR-008).
 Where `parameters.json` declares a `by_source` exception, that test is not run
@@ -234,8 +241,55 @@ def _run_tests(
                 ),
                 values,
             )
+            notes.extend(
+                _unreachable_rate(parameter, timestamps, suspect_per_hour=rate.suspect_per_hour)
+            )
 
     return verdicts, notes
+
+
+def _unreachable_rate(
+    parameter: Parameter, timestamps: pd.Series, *, suspect_per_hour: float
+) -> list[str]:
+    """Report a rate threshold no reading in this series could cross (ADR-008).
+
+    An **unreachable threshold** is one no value `gross_range` would leave
+    standing can reach. For a rate that is arithmetic: the widest step the
+    valid range admits is its own span, and dividing that by the shortest
+    interval the series actually samples at bounds every rate it can produce.
+    Where the bound is under the suspect threshold, the test can fire only on a
+    row another test has already condemned -- and it records `pass` on all the
+    rest, which moves them from flag 2 to flag 1 and reads as "checked".
+
+    It reports and does nothing else. Which tests run is declared in the
+    registry, never derived from the data that happened to land (ADR-007,
+    ADR-008); a switch thrown here would be that derivation by another name.
+
+    Silent where the parameter declares no `valid_range`, because then nothing
+    bounds a step and no threshold is unreachable.
+    """
+    if parameter.valid_range is None:
+        return []
+
+    intervals = timestamps.diff().dropna()
+    intervals = intervals[intervals > pd.Timedelta(0)]
+    if intervals.empty:
+        return []
+
+    shortest_hours = intervals.min() / pd.Timedelta(hours=1)
+    span = parameter.valid_range[1] - parameter.valid_range[0]
+    largest = span / shortest_hours
+    if largest >= suspect_per_hour:
+        return []
+
+    return [
+        (
+            f"rate_of_change cannot fire: the {span:g} {parameter.unit} valid_range span "
+            f"over the shortest interval in this series ({shortest_hours:g} h) bounds every "
+            f"rate at {largest:.2f} {parameter.unit}/h, under the suspect threshold of "
+            f"{suspect_per_hour:g} {parameter.unit}/h; the verdicts it records are still stored"
+        )
+    ]
 
 
 def _without_unmeasured_rates(result: np.ndarray, values: np.ndarray) -> np.ndarray:
