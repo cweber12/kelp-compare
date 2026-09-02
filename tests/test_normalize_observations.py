@@ -17,6 +17,7 @@ import pytest
 
 from kelpcompare.adapters import hobo_xlsx
 from kelpcompare.adapters.base import RawSeries, SeriesInfo
+from kelpcompare.cli import SOURCE_NAMES
 from kelpcompare.normalize import NormalizedBatch, convert_unit, to_observations
 from kelpcompare.parameters import load_parameters
 from kelpcompare.registry import Deployment, find_deployment, load_registry
@@ -38,7 +39,7 @@ PDT = timedelta(hours=-7)
 
 @pytest.fixture(scope="module")
 def parameters():
-    return load_parameters(PARAMETERS_PATH)
+    return load_parameters(PARAMETERS_PATH, sources=SOURCE_NAMES)
 
 
 @pytest.fixture(scope="module")

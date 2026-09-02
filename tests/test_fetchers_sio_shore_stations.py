@@ -23,6 +23,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from kelpcompare.cli import SOURCE_NAMES
 from kelpcompare.fetchers import sio_shore_stations as sio
 from kelpcompare.parameters import load_parameters
 from kelpcompare.qc.flags import parse_tests
@@ -52,7 +53,9 @@ MEASURED = ("sea_water_temperature",)
 
 @pytest.fixture
 def parameters():
-    return load_parameters(REPO_ROOT / "data" / "registry" / "parameters.json")
+    return load_parameters(
+        REPO_ROOT / "data" / "registry" / "parameters.json", sources=SOURCE_NAMES
+    )
 
 
 def parse(parameters, path: Path = PINNED, *, declared=DECLARED, measured=MEASURED):

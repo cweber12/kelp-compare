@@ -259,3 +259,126 @@ reviewable `data(registry)` edit. Harder: two windows can coexist in one
 screen, and anomalies taken against different windows are not strictly
 comparable. That cost is accepted and made visible on every row rather
 than mitigated; doc 04 §4.5 carries the reporting consequence.
+
+## ADR-008: QC test exceptions per source — declared removals, never retuned numbers
+
+**Status:** Proposed · **Date:** 2026-09-02
+
+### Context
+`parameters.json` holds one `qc` block per controlled parameter, so every
+source reporting that parameter is judged by the same thresholds. The
+`sea_water_temperature` numbers were tuned against a single 21-day TidbiT
+deployment logging every ten minutes; the project now stores temperature
+from six sources. The share of judged rows sitting at flag 3 or 4 ranges
+over two orders of magnitude across them — `SIO:LAJOLLA-PIER` 5.76 %,
+`SDRTOMS:SBOO` 0.50 %, `PROJ:TIDBIT-1` 0.23 %, `NDBC:LJAC1` 0.053 %,
+`SST:*` (MUR) 0.032 %, `NDBC:46254` 0.025 %.
+
+Two distinct defects sit behind that spread. On the Scripps Pier record
+`spike` condemns real ocean. On its own it flags **3,021 of 34,158 judged
+bottom readings (8.84 %)** and 753 of 38,704 at the surface (1.95 %) —
+the rest of that source's flagged share is verdicts the Shore Stations
+program itself supplied at ingest. And it is seasonal: 20.9 % of Q3 at
+5 m against 0.41 % of Q1, with the readings it removes averaging 0.46 °C
+(Q3) and 0.57 °C (Q2) *colder* than the ones it keeps. A test measuring
+instrument error has no reason to fire fifty times more often in summer.
+On both daily sources `rate_of_change` is unreachable besides: the
+shortest observed interval is 13 h at Scripps and 24 h for MUR, which
+caps the largest arithmetically possible rate at 2.31 and 1.25 °C/h
+against an 18 °C/h suspect threshold — yet the test records `pass`,
+moving rows from flag 2 to flag 1, which reads as "checked" when nothing
+was.
+
+Because the default analysis filter is `qc_flag <= 2`, each spike flag is
+a silent deletion from every downstream feature
+(https://github.com/cweber12/kelp-compare/issues/68 and
+https://github.com/cweber12/kelp-compare/issues/113).
+
+### Options
+**A — Leave it and retune the shared thresholds.** Rejected on
+measurement: no single number works. A spike threshold with the project's
+own headroom rule (1.59× the worst real excursion, from the wave note)
+applied to Scripps' 9.0 °C worst day gives 14.3 °C — a threshold that
+could never fire, the exact defect this ADR condemns in `rate_of_change`
+— while 1.5 °C is right on the ten-minute loggers, where a 1.5 °C step
+between samples really is a spike.
+**B — Per-source threshold *values*.** The direct fix, and the one that
+puts a second set of numbers per parameter into the registry. Rejected:
+no stored series needs a different threshold, which is measured across
+all twelve rather than argued, and a format able to express something
+nobody needs will eventually have someone express it.
+**C — Key the thresholds on a declared sampling cadence.** The framing
+https://github.com/cweber12/kelp-compare/issues/68 opened with. Rejected
+on measurement: the two daily series
+differ in flagged share by a factor of 180 (Scripps 5.76 %, MUR
+0.032 %), and the 30-minute buoys at three times the tuned interval are
+the cleanest series in the project. Cadence does not predict the defect.
+What separates the two daily series is that MUR is a smoothed analysis
+whose consecutive days barely move, while Scripps is a point bottle
+sample in an upwelling zone.
+**D — Derive the threshold from the series' own cadence at qc time.** The
+option ADR-007 already rejected for baseline windows, for the same
+reason: it makes a stored flag depend on what data happens to have
+landed.
+**E — Declared per-source *removals* (chosen).** A parameter's `qc`
+block may carry a `by_source` map naming a source and mapping one or
+more implemented test names to `null`, meaning that test does not run
+for that source's series of that parameter. Those rows come back with
+the test omitted from `qc_tests` entirely — the same shape a parameter
+with no thresholds already produces — rather than carrying a verdict.
+
+### Decision & consequences
+E, with four rules that follow from it.
+
+**Removal only; a `by_source` entry supplying numbers is refused at parse
+time.** Widening the format later is backward-compatible, narrowing it is
+not, and a format permitting numbers would contradict the ADR shipping
+with it.
+
+**Per-source, not per-site or per-depth.** Both Scripps depths are broken
+— spike's own share is 1.95 % at 0.5 m and 8.84 % at 5 m — and the milder
+of the two is still nearly four times worse than the next worst series in
+the project; narrower aim would imply the surface series is fine when it
+is not. The accepted cost
+is that `ndbc` holds a 6-minute station and two 30-minute buoys under one
+source name, so per-source would be too blunt there — it needs no
+exception, every NDBC series being at or below 0.053 %.
+
+**Declared in `parameters.json`, not on the station record.** The
+exception stays next to the rule it excepts, so one file still answers
+"what tests run on this parameter". `sites.json` records which instrument
+was where, not what QC does.
+
+**A wrong source name raises; a source that matched nothing warns.** A
+typo is a typo whether or not rows exist, and its silent failure mode —
+the exception not applying and `spike` quietly resuming — looks exactly
+like the bug regressing. A correctly-named source whose series a run
+looked for and did not find is data-dependent rather than wrong, so it
+reaches the run manifest as a warning instead — and a run that never read
+that source says nothing about it at all, since a standing warning on
+every run in a partly-ingested zone is one nobody reads.
+
+**The pipeline reports an unreachable threshold but never acts on it.**
+An **unreachable threshold** is one that cannot be crossed by any value
+`gross_range` would not already condemn: for `rate_of_change`, where the
+`valid_range` span divided by the series' shortest observed interval
+falls below `suspect_per_hour`. Every run says so, naming the series and
+both numbers; stored flags do not change. The root failure in both issues
+was not that a threshold was wrong but that nothing reported it — and
+switching a test off on a computed quantity would be option D by the back
+door.
+
+The two removals this ships are switched off for different reasons, and
+the distinction is the reviewable part. At Scripps no threshold separates
+upwelling from instrument error. On MUR there is no instrument to have an
+error: it is an L4 analysis, smoothed in space and time and area-averaged
+again by our own reduction, and reading its own `mask` and
+`analysis_error` fields is the right control instead
+(https://github.com/cweber12/kelp-compare/issues/137), so this change
+knowingly leaves `mur_sst` with `gross_range` alone.
+
+Easier: a daily series stops being scored with a handicap, by a
+reviewable `data(registry)` edit that never touches code. Harder: "which
+tests ran" is now a question about a parameter *and* a source rather than
+about a parameter alone, and two series of the same parameter can carry
+different `qc_tests`. That is visible on every row, which is the trade.

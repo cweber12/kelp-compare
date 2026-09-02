@@ -19,11 +19,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from kelpcompare import parameters as parameters_module
 from kelpcompare.adapters import hobo_xlsx
+from kelpcompare.cli import SOURCE_NAMES
 from kelpcompare.normalize import to_observations
 from kelpcompare.parameters import load_parameters
 from kelpcompare.qc.flags import parse_tests
-from kelpcompare.qc.qartod import evaluate
+from kelpcompare.qc.qartod import IMPLEMENTED_TESTS, evaluate
 from kelpcompare.registry import find_deployments, load_registry
 from kelpcompare.storage import (
     FLAG_FAIL,
@@ -46,7 +48,7 @@ RATE = {"suspect_per_hour": 18.0, "fail_per_hour": 36.0}
 
 
 def registry(tmp_path: Path, *, valid_range=(5.0, 35.0), qc: dict | None = None):
-    """A one-parameter `parameters.json`, loaded.
+    """A one-parameter `parameters.json`, loaded against the real source names.
 
     `valid_range=None` leaves the parameter with no gross-range thresholds,
     which is the only way to watch one test's verdicts reach the roll-up alone.
@@ -60,7 +62,7 @@ def registry(tmp_path: Path, *, valid_range=(5.0, 35.0), qc: dict | None = None)
     target.write_text(
         json.dumps({"parameters": {"sea_water_temperature": record}}), encoding="utf-8"
     )
-    return load_parameters(target)
+    return load_parameters(target, sources=SOURCE_NAMES)
 
 
 def observations(
@@ -72,6 +74,7 @@ def observations(
     qc_tests: str = "deployment_window:pass",
     start: str = "2026-07-11 14:00",
     freq: str = "10min",
+    source: str = "project",
 ) -> pd.DataFrame:
     """docs/03 rows for one series, as ingest would have left them."""
     stamps = pd.date_range(start, periods=len(values), freq=freq, tz="UTC")
@@ -84,7 +87,7 @@ def observations(
             "depth_m": depth,
             "qc_flag": np.int8(FLAG_NOT_EVALUATED),
             "qc_tests": qc_tests,
-            "source": "project",
+            "source": source,
             "fetch_run_id": "20260824T000000000Z-ingest",
         }
     )[list(OBSERVATION_COLUMNS)]
@@ -421,6 +424,182 @@ def test_each_series_reports_what_ran_for_the_manifest(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# Per-source exceptions -- ADR-008
+# --------------------------------------------------------------------------
+
+#: A series a shared spike threshold condemns: every step is 2.0 degC, well
+#: over the 1.5 the reviewed TidbiT deployment was tuned to, and none of it is
+#: instrument error. This is the shape of the Scripps Pier record that
+#: https://github.com/cweber12/kelp-compare/issues/68 measured.
+SAWTOOTH = [16.0, 18.0, 16.0, 18.0, 16.0, 18.0, 16.0]
+
+EXCEPT_SIO_SPIKE = {"by_source": {"sio_shore_stations": {"spike": None}}}
+
+
+def test_the_registry_and_this_stage_name_the_same_implemented_tests():
+    """A name the registry accepts and this stage does not run is a dead threshold."""
+    assert set(parameters_module.IMPLEMENTED_TESTS) == set(IMPLEMENTED_TESTS)
+
+
+def test_an_excepted_source_gets_no_verdict_from_that_test(tmp_path):
+    parameters = registry(tmp_path, qc={"spike": SPIKE, **EXCEPT_SIO_SPIKE})
+    frame = observations(SAWTOOTH, site="SIO:LAJOLLA-PIER", source="sio_shore_stations", freq="1D")
+    evaluated = evaluate(frame, parameters).frame
+
+    assert all("spike" not in parse_tests(t) for t in evaluated["qc_tests"])
+    assert set(evaluated["qc_flag"]) == {FLAG_PASS}
+
+
+def test_the_same_readings_from_another_source_are_still_spike_tested(tmp_path):
+    """The exception is about the source, not about the numbers (ADR-008)."""
+    parameters = registry(tmp_path, qc={"spike": SPIKE, **EXCEPT_SIO_SPIKE})
+    evaluated = evaluate(observations(SAWTOOTH), parameters).frame
+
+    assert any(parse_tests(t).get("spike") == "suspect" for t in evaluated["qc_tests"])
+    assert FLAG_SUSPECT in set(evaluated["qc_flag"])
+
+
+def test_an_exception_leaves_the_other_tests_running(tmp_path):
+    parameters = registry(tmp_path, qc={"spike": SPIKE, **EXCEPT_SIO_SPIKE})
+    frame = observations(
+        [16.0, 99.0, 16.0], site="SIO:LAJOLLA-PIER", source="sio_shore_stations", freq="1D"
+    )
+    verdicts = [parse_tests(t) for t in evaluate(frame, parameters).frame["qc_tests"]]
+
+    assert [v["gross_range"] for v in verdicts] == ["pass", "fail", "pass"]
+    assert all("spike" not in v for v in verdicts)
+
+
+def test_an_exception_preserves_the_verdicts_ingest_recorded(tmp_path):
+    """The source's own flags are the reason the exception is safe to take."""
+    parameters = registry(tmp_path, qc={"spike": SPIKE, **EXCEPT_SIO_SPIKE})
+    frame = observations(
+        SAWTOOTH,
+        site="SIO:LAJOLLA-PIER",
+        source="sio_shore_stations",
+        qc_tests="source_flag:suspect",
+        freq="1D",
+    )
+    evaluated = evaluate(frame, parameters).frame
+
+    assert all(parse_tests(t)["source_flag"] == "suspect" for t in evaluated["qc_tests"])
+    assert set(evaluated["qc_flag"]) == {FLAG_SUSPECT}
+
+
+def test_an_excepted_series_reports_only_the_tests_that_ran(tmp_path):
+    """What records the exception on a run is the series entry, not a warning."""
+    parameters = registry(tmp_path, qc={"spike": SPIKE, **EXCEPT_SIO_SPIKE})
+    frame = observations(SAWTOOTH, site="SIO:LAJOLLA-PIER", source="sio_shore_stations", freq="1D")
+    outcome = evaluate(frame, parameters)
+
+    (series,) = outcome.series
+    assert set(series.tests) == {"gross_range"}
+    assert outcome.warnings == ()
+
+
+def test_a_source_may_be_excepted_from_gross_range_too(tmp_path):
+    parameters = registry(tmp_path, qc={"by_source": {"project": {"gross_range": None}}})
+    outcome = evaluate(observations([16.0, 99.0, 16.0], qc_tests=""), parameters)
+
+    assert outcome.series[0].tests == ()
+    assert set(outcome.frame["qc_flag"]) == {FLAG_NOT_EVALUATED}
+    assert outcome.warnings == ()
+
+
+def test_a_verdict_stored_by_an_earlier_run_does_not_survive_an_exception(tmp_path):
+    """The stage owns its own names, so switching a test off clears its record."""
+    parameters = registry(tmp_path, qc={"spike": SPIKE, **EXCEPT_SIO_SPIKE})
+    frame = observations(
+        SAWTOOTH,
+        site="SIO:LAJOLLA-PIER",
+        source="sio_shore_stations",
+        qc_tests="spike:fail",
+        freq="1D",
+    )
+    evaluated = evaluate(frame, parameters).frame
+
+    assert all("spike" not in parse_tests(t) for t in evaluated["qc_tests"])
+
+
+# --------------------------------------------------------------------------
+# Unreachable thresholds -- ADR-008, reported and not acted on
+# --------------------------------------------------------------------------
+
+#: A day apart, at 30 degC of valid_range, bounds every rate at 1.25 degC/h --
+#: far under the 18 the ten-minute loggers were tuned to. This is the arithmetic
+#: https://github.com/cweber12/kelp-compare/issues/68 found on both daily
+#: sources.
+DAILY = {"freq": "1D", "site": "SIO:LAJOLLA-PIER", "source": "sio_shore_stations"}
+
+
+def test_a_rate_threshold_no_step_could_reach_is_reported(tmp_path):
+    outcome = evaluate(
+        observations([16.0, 18.0, 16.0, 18.0], **DAILY),
+        registry(tmp_path, qc={"rate_of_change": RATE}),
+    )
+    (warning,) = outcome.warnings
+    assert "rate_of_change cannot fire" in warning
+    assert "1.25" in warning  # the largest rate 30 degC over 24 h allows
+    assert "18" in warning  # the suspect threshold it is measured against
+
+
+def test_the_warning_names_the_series_it_is_about(tmp_path):
+    outcome = evaluate(
+        observations([16.0, 18.0, 16.0, 18.0], **DAILY),
+        registry(tmp_path, qc={"rate_of_change": RATE}),
+    )
+    assert outcome.warnings[0].startswith("SIO:LAJOLLA-PIER/sea_water_temperature:")
+
+
+def test_an_unreachable_threshold_changes_no_stored_flag(tmp_path):
+    """It detects; the switch stays hand-declared in the registry (ADR-008)."""
+    parameters = registry(tmp_path, qc={"rate_of_change": RATE})
+    frame = observations([16.0, 18.0, 16.0, 18.0], **DAILY)
+    evaluated = evaluate(frame, parameters).frame
+
+    verdicts = [parse_tests(t) for t in evaluated["qc_tests"]]
+    assert [v.get("rate_of_change") for v in verdicts] == [None, "pass", "pass", "pass"]
+    assert set(evaluated["qc_flag"]) == {FLAG_PASS}
+
+
+def test_a_reachable_threshold_is_not_reported(tmp_path):
+    """Ten minutes apart, the same span bounds rates at 180 degC/h."""
+    outcome = evaluate(
+        observations([16.0, 18.0, 16.0, 18.0]), registry(tmp_path, qc={"rate_of_change": RATE})
+    )
+    assert outcome.warnings == ()
+
+
+def test_the_shortest_interval_is_what_decides_it(tmp_path):
+    """One close pair is enough to make the threshold reachable somewhere."""
+    frame = observations([16.0, 18.0, 16.0, 18.0], **DAILY)
+    frame.loc[3, "timestamp"] = frame.loc[2, "timestamp"] + pd.Timedelta(minutes=10)
+    outcome = evaluate(frame, registry(tmp_path, qc={"rate_of_change": RATE}))
+    assert outcome.warnings == ()
+
+
+def test_a_parameter_with_no_valid_range_bounds_nothing_and_is_not_reported(tmp_path):
+    outcome = evaluate(
+        observations([16.0, 18.0, 16.0, 18.0], **DAILY),
+        registry(tmp_path, valid_range=None, qc={"rate_of_change": RATE}),
+    )
+    assert not any("cannot fire" in warning for warning in outcome.warnings)
+
+
+def test_a_source_excepted_from_the_rate_test_is_not_reported_either(tmp_path):
+    """Nothing ran, so there is no threshold in force to call unreachable."""
+    parameters = registry(
+        tmp_path,
+        qc={
+            "rate_of_change": RATE,
+            "by_source": {"sio_shore_stations": {"rate_of_change": None}},
+        },
+    )
+    outcome = evaluate(observations([16.0, 18.0, 16.0, 18.0], **DAILY), parameters)
+    assert outcome.warnings == ()
+
+
+# --------------------------------------------------------------------------
 # The reference deployment -- docs/06 s5 check 6
 # --------------------------------------------------------------------------
 
@@ -429,7 +608,7 @@ def test_each_series_reports_what_ran_for_the_manifest(tmp_path):
 def reference() -> pd.DataFrame:
     """The reviewed HOBO export, normalized exactly as `ingest` leaves it."""
     registry_file = load_registry(REGISTRY_SOURCE / "sites.json")
-    parameters = load_parameters(REGISTRY_SOURCE / "parameters.json")
+    parameters = load_parameters(REGISTRY_SOURCE / "parameters.json", sources=SOURCE_NAMES)
     deployment = find_deployments(registry_file, "22506632")[0]
     batch = to_observations(
         hobo_xlsx.parse(ORIGINAL),
@@ -443,7 +622,7 @@ def reference() -> pd.DataFrame:
 
 @pytest.fixture
 def evaluated(reference) -> pd.DataFrame:
-    parameters = load_parameters(REGISTRY_SOURCE / "parameters.json")
+    parameters = load_parameters(REGISTRY_SOURCE / "parameters.json", sources=SOURCE_NAMES)
     return evaluate(reference, parameters).frame.sort_values("timestamp").reset_index(drop=True)
 
 
@@ -486,7 +665,7 @@ def test_the_install_transient_is_caught_twice_over(evaluated):
 @pytest.fixture
 def committed():
     """The registry as shipped. These assert the *decision*, not just the file."""
-    return load_parameters(REGISTRY_SOURCE / "parameters.json")
+    return load_parameters(REGISTRY_SOURCE / "parameters.json", sources=SOURCE_NAMES)
 
 
 def test_wave_height_carries_spike_and_deliberately_no_rate_of_change(committed):

@@ -295,7 +295,7 @@ def ingest(
 
     zones = Zones.at(data_root)
     registry = load_registry(registry_path or zones.sites_json)
-    parameters = load_parameters(zones.parameters_json)
+    parameters = load_parameters(zones.parameters_json, sources=SOURCE_NAMES)
 
     inputs = _discover(path or zones.raw_source(entry.raw_directory) / INCOMING)
     if not inputs:
@@ -349,7 +349,7 @@ def qc(source: str | None, data_root: Path | None, dry_run: bool) -> None:
     conclusion about it than the run that landed the rows did.
     """
     zones = Zones.at(data_root)
-    parameters = load_parameters(zones.parameters_json)
+    parameters = load_parameters(zones.parameters_json, sources=SOURCE_NAMES)
     sources = [source] if source else list(stored_sources(zones))
 
     run = RunManifest.start("qc", argv=_argv(source), sources=sources)
@@ -358,6 +358,7 @@ def qc(source: str | None, data_root: Path | None, dry_run: bool) -> None:
             _qc_source(name, zones=zones, parameters=parameters, run=run, dry_run=dry_run)
             for name in sources
         ]
+        _note_unmatched_exceptions(run, parameters, sources=sources)
 
         if not any(evaluated):
             click.echo("nothing to evaluate" + (f" for {source!r}" if source else ""))
@@ -407,6 +408,34 @@ def _qc_source(name: str, *, zones: Zones, parameters, run: RunManifest, dry_run
     except Exception as error:  # noqa: BLE001 -- one bad source must not end the run
         run.note_warning(f"{name}: {type(error).__name__}: {error}")
     return True
+
+
+def _note_unmatched_exceptions(run: RunManifest, parameters, *, sources: list[str]) -> None:
+    """Say when a declared QC exception applied to nothing this run evaluated.
+
+    A `by_source` entry's source name is checked against the source table when
+    the registry loads, so by here it is real (ADR-008). Whether it matched any
+    rows is a different question and a data-dependent one, so it is a warning
+    rather than a refusal, and the run finishes.
+
+    Only for the sources this run read. A run says nothing about a source it
+    never opened -- neither one left out by `--source`, nor one with no stored
+    rows at all, where the exception is dormant rather than wrong. Warning about
+    those would put a standing warning on every run in a zone that has not
+    ingested everything yet, and a warning nobody can clear is one nobody reads.
+    """
+    read = set(sources)
+    covered = {(entry.source, entry.parameter) for entry in run.series}
+    for exception in parameters.source_exceptions:
+        if exception.source not in read:
+            continue
+        if (exception.source, exception.parameter) in covered:
+            continue
+        run.note_warning(
+            f"{parameters.path} excepts {exception.source!r} from "
+            f"{', '.join(exception.tests)} on {exception.parameter}, and this run "
+            f"evaluated no {exception.parameter} series for it"
+        )
 
 
 def _argv(source: str | None) -> list[str]:
@@ -1070,7 +1099,7 @@ def _ingest_shore_stations(
     """
     zones = Zones.at(data_root)
     registry = load_registry(registry_path or zones.sites_json)
-    parameters = load_parameters(zones.parameters_json)
+    parameters = load_parameters(zones.parameters_json, sources=SOURCE_NAMES)
     stations = find_stations(registry, sio_shore_stations.SOURCE)
 
     source = sio_shore_stations.SOURCE
@@ -1221,7 +1250,7 @@ def _ingest_pulled(
     """
     zones = Zones.at(data_root)
     registry = load_registry(registry_path or zones.sites_json)
-    parameters = load_parameters(zones.parameters_json)
+    parameters = load_parameters(zones.parameters_json, sources=SOURCE_NAMES)
     fetcher = SOURCE_BY_NAME[source].fetcher
 
     # Only a fetcher whose source is a grid needs the outlines, and it is asked

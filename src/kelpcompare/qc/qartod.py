@@ -6,7 +6,7 @@ it decides what counts as one series, which tests a parameter has thresholds
 for, and nothing else. The thresholds themselves live in `parameters.json`, and
 the roll-up lives in `flags.py`.
 
-Three decisions here are load-bearing.
+Five decisions here are load-bearing.
 
 **What one series is.** Rows are grouped by source, site, parameter, and depth,
 and the whole group is tested in time order regardless of which year partition
@@ -25,6 +25,21 @@ default threshold anywhere in this module. A guessed threshold that flagged real
 data would be indistinguishable, in the stored flags, from a real QC failure --
 and because the default analysis filter is `qc_flag <= 2`, it would quietly
 remove the cold upwelling excursions docs/04 s2 relies on.
+
+**An unreachable threshold is reported, never acted on** (ADR-008). Where the
+rate test runs on a series whose sampling interval is too long for its threshold
+to be crossed by anything `gross_range` would not already condemn, the run says
+so and the stored flags do not change. Switching the test off on that evidence
+would make a stored flag depend on which rows happened to land, which is what
+ADR-007 rejected for baseline windows.
+
+**A source may be excepted from a test, and the exception is silent** (ADR-008).
+Where `parameters.json` declares a `by_source` exception, that test is not run
+for that source's series and the rows come out shaped exactly as they would for
+a parameter with no thresholds -- the name absent from `qc_tests` rather than
+carrying a verdict. It draws no warning, because it is a decision an operator
+wrote down rather than something this run could not do; what records it is the
+series entry, which lists the tests that ran.
 """
 
 from __future__ import annotations
@@ -44,11 +59,14 @@ from kelpcompare.storage import (
     validate_frame,
 )
 
-#: The tests this stage runs. A verdict recorded under one of these names is
-#: owned by this stage: it is re-derived every run, so a stale result from a
-#: threshold that has since been removed does not survive as evidence. Anything
-#: else in `qc_tests` -- `deployment_window`, or a test added later -- is
-#: preserved untouched.
+#: The tests this stage runs. The same names `parameters.py` will accept a
+#: threshold or a `by_source` exception for, and the two lists are held to each
+#: other by a test -- a name the registry accepts and this stage does not run
+#: would be a threshold nobody applies. A verdict recorded under one of these
+#: names is owned by this stage: it is re-derived every run, so a stale result
+#: from a threshold that has since been removed does not survive as evidence.
+#: Anything else in `qc_tests` -- `deployment_window`, or a test added later --
+#: is preserved untouched.
 IMPLEMENTED_TESTS = ("gross_range", "spike", "rate_of_change")
 
 #: What makes rows one series. Depth is in the key because one site can carry a
@@ -122,8 +140,8 @@ def evaluate(frame: pd.DataFrame, parameters: Parameters) -> QcOutcome:
             continue
 
         ordered = group.sort_values("timestamp", kind="stable")
-        verdicts, skipped = _run_tests(ordered, parameter)
-        warnings.extend(f"{site_id}/{parameter_name}: {reason}" for reason in skipped)
+        verdicts, notes = _run_tests(ordered, parameter, source=source)
+        warnings.extend(f"{site_id}/{parameter_name}: {note}" for note in notes)
 
         preserved = {
             name: vector
@@ -154,25 +172,34 @@ def evaluate(frame: pd.DataFrame, parameters: Parameters) -> QcOutcome:
 
 
 def _run_tests(
-    series: pd.DataFrame, parameter: Parameter
+    series: pd.DataFrame, parameter: Parameter, *, source: str
 ) -> tuple[dict[str, np.ndarray], list[str]]:
-    """Every test this parameter has thresholds for, plus why any was skipped."""
+    """Every test this parameter has thresholds for and this source is not
+    excepted from, plus anything the run should say about the series.
+
+    The notes become manifest warnings. A test skipped for want of thresholds,
+    of rows, or of a suspect rate is one; an ADR-008 exception is not, because
+    it is a decision already written down rather than something this run could
+    not do.
+    """
     values = series["value"].to_numpy(dtype="float64")
     timestamps = series["timestamp"]
+    suppressed = parameter.qc.suppressed_for(source)
 
     verdicts: dict[str, np.ndarray] = {}
-    skipped: list[str] = []
+    notes: list[str] = []
 
-    if parameter.valid_range is None:
-        skipped.append("gross_range not run: the parameter declares no valid_range")
-    else:
-        spans = {"fail_span": parameter.valid_range}
-        if parameter.qc.gross_range is not None:
-            spans["suspect_span"] = parameter.qc.gross_range.suspect_span
-        verdicts["gross_range"] = _flags(qartod.gross_range_test(inp=values, **spans))
+    if "gross_range" not in suppressed:
+        if parameter.valid_range is None:
+            notes.append("gross_range not run: the parameter declares no valid_range")
+        else:
+            spans = {"fail_span": parameter.valid_range}
+            if parameter.qc.gross_range is not None:
+                spans["suspect_span"] = parameter.qc.gross_range.suspect_span
+            verdicts["gross_range"] = _flags(qartod.gross_range_test(inp=values, **spans))
 
     spike = parameter.qc.spike
-    if spike is not None:
+    if spike is not None and "spike" not in suppressed:
         # Three points, because the test judges a sample against the midpoint of
         # its two neighbours. Below that `spike_test` returns UNKNOWN rather than
         # raising -- it raises only on an empty series, which `evaluate` cannot
@@ -180,7 +207,7 @@ def _run_tests(
         # the guard buys is the manifest: a skip reason a reader can act on,
         # instead of a series whose recorded `tests` claim spike ran.
         if len(values) < 3:
-            skipped.append(f"spike not run: {len(values)} rows is fewer than the three it needs")
+            notes.append(f"spike not run: {len(values)} rows is fewer than the three it needs")
         else:
             verdicts["spike"] = _flags(
                 qartod.spike_test(
@@ -191,17 +218,17 @@ def _run_tests(
             )
 
     rate = parameter.qc.rate_of_change
-    if rate is not None:
+    if rate is not None and "rate_of_change" not in suppressed:
         if rate.suspect_per_second is None:
             # QARTOD's rate test has no fail-only form: the suspect rate is the
             # required argument. Report the gap rather than promote the fail
             # threshold into a role its number was not chosen for.
-            skipped.append(
+            notes.append(
                 "rate_of_change not run: the registry declares fail_per_hour but no "
                 "suspect_per_hour, and the test has no fail-only form"
             )
         elif len(values) < 2:
-            skipped.append("rate_of_change not run: a rate needs two rows")
+            notes.append("rate_of_change not run: a rate needs two rows")
         else:
             verdicts["rate_of_change"] = _without_unmeasured_rates(
                 _flags(
@@ -214,8 +241,55 @@ def _run_tests(
                 ),
                 values,
             )
+            notes.extend(
+                _unreachable_rate(parameter, timestamps, suspect_per_hour=rate.suspect_per_hour)
+            )
 
-    return verdicts, skipped
+    return verdicts, notes
+
+
+def _unreachable_rate(
+    parameter: Parameter, timestamps: pd.Series, *, suspect_per_hour: float
+) -> list[str]:
+    """Report a rate threshold no reading in this series could cross (ADR-008).
+
+    An **unreachable threshold** is one no value `gross_range` would leave
+    standing can reach. For a rate that is arithmetic: the widest step the
+    valid range admits is its own span, and dividing that by the shortest
+    interval the series actually samples at bounds every rate it can produce.
+    Where the bound is under the suspect threshold, the test can fire only on a
+    row another test has already condemned -- and it records `pass` on all the
+    rest, which moves them from flag 2 to flag 1 and reads as "checked".
+
+    It reports and does nothing else. Which tests run is declared in the
+    registry, never derived from the data that happened to land (ADR-007,
+    ADR-008); a switch thrown here would be that derivation by another name.
+
+    Silent where the parameter declares no `valid_range`, because then nothing
+    bounds a step and no threshold is unreachable.
+    """
+    if parameter.valid_range is None:
+        return []
+
+    intervals = timestamps.diff().dropna()
+    intervals = intervals[intervals > pd.Timedelta(0)]
+    if intervals.empty:
+        return []
+
+    shortest_hours = intervals.min() / pd.Timedelta(hours=1)
+    span = parameter.valid_range[1] - parameter.valid_range[0]
+    largest = span / shortest_hours
+    if largest >= suspect_per_hour:
+        return []
+
+    return [
+        (
+            f"rate_of_change cannot fire: the {span:g} {parameter.unit} valid_range span "
+            f"over the shortest interval in this series ({shortest_hours:g} h) bounds every "
+            f"rate at {largest:.2f} {parameter.unit}/h, under the suspect threshold of "
+            f"{suspect_per_hour:g} {parameter.unit}/h; the verdicts it records are still stored"
+        )
+    ]
 
 
 def _without_unmeasured_rates(result: np.ndarray, values: np.ndarray) -> np.ndarray:
