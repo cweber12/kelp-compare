@@ -19,7 +19,8 @@ import pytest
 from click.testing import CliRunner
 
 from kelpcompare import storage
-from kelpcompare.cli import main
+from kelpcompare.cli import Source, main
+from kelpcompare.fetchers import ndbc
 from kelpcompare.registry import find_deployment, load_registry
 from kelpcompare.storage import Zones
 
@@ -382,6 +383,25 @@ def test_an_unimplemented_source_says_so(data_root):
     # The message lists what an operator can actually run, both shapes together.
     assert "ndbc" in str(result.exception)
     assert "project" in str(result.exception)
+
+
+@pytest.mark.parametrize(
+    ("fetcher", "raw_directory"),
+    [(None, None), (ndbc, "ndbc")],
+    ids=["neither", "both"],
+)
+def test_a_source_is_pulled_or_dropped_but_never_both(fetcher, raw_directory):
+    """The two routes are exclusive, and the table says so rather than assuming it.
+
+    `is_pulled` is read as a complete answer -- a source that is not pulled takes
+    the file-drop branch, which then dereferences `raw_directory`. A row declaring
+    neither would reach that branch and fail on `None` somewhere further in; a row
+    declaring both would silently take the pulled route and leave its raw directory
+    unreachable. Both are registry-shaped mistakes, so they are refused where the
+    table is written rather than diagnosed where it is read.
+    """
+    with pytest.raises(ValueError, match="either pulled .* or dropped"):
+        Source("elsewhere", fetcher=fetcher, raw_directory=raw_directory)
 
 
 # --------------------------------------------------------------------------
