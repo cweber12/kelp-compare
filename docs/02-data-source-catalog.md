@@ -1121,11 +1121,12 @@ computes fine and means something different.
 
 **The QARTOD thresholds in `parameters.json` were the same problem, and this
 source is now excepted from them.** They are keyed by parameter and were tuned
-against a 10-minute logger, so on this daily series `spike` condemned **3,229 of
-34,158 bottom readings (9.5%)** as suspect or failed — the threshold of 1.5 °C
-sits near the 88th percentile of ordinary day-to-day variation at 5 m, which off
-this pier is upwelling rather than instrument error — while `rate_of_change`
-could not fail at all and recorded a `pass` on 70,462 rows regardless. A
+against a 10-minute logger, so on this daily series `spike` condemned **3,021 of
+34,158 judged bottom readings (8.84%)** and 753 of 38,704 at the surface (1.95%)
+— the threshold of 1.5 °C sits near the 88th percentile of ordinary day-to-day
+variation at 5 m, which off this pier is upwelling rather than instrument error —
+while `rate_of_change` could not fail at all and recorded a `pass` on 70,462 rows
+regardless. A
 `qc.by_source` exception switches both off for `sio_shore_stations` (ADR-008),
 so `kelpcompare qc` is safe to run here and leaves **gross range beside the
 verdicts the program's own vocabulary supplied at ingest**, which were correct
