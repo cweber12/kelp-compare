@@ -977,6 +977,9 @@ def validate(
 
         path = replace_features(frame, zones, table="validation", key=VALIDATION_KEY)
         run.add_series(source="validation", rows=len(frame))
+        # Also a table in the features zone, and so also a table that could not
+        # be traced to the run that wrote it (docs/03 run manifests).
+        _record_tables(run, (path,))
         click.echo(f"wrote {path}")
         click.echo(f"manifest: {run.write(zones)}")
 
