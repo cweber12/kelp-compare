@@ -586,30 +586,48 @@ on the 2021 window is expected, not a registry gap.
 **What the backfill is actually worth is nine months, not three years.** The
 historic dataset reports no temperature at all from 2020-10 through 2021-10, so
 its usable contribution is 2020-01-01 to 2020-09-30 plus that evening in
-November 2021. Measured on a real ingest — 262,667 readings stored:
+November 2021. Measured on a real ingest — 269,398 rows stored, of which
+262,667 carry a reading. `Mean` and `Days` are over the readings; a row without
+one is an outage marker flagged `9`, and the two columns differ only where a
+declared depth was down while the string was sampling:
 
-| Depth | Readings | Mean °C | Days |
-|---|---|---|---|
-| 1 m | 35,223 | 18.747 | 265 |
-| 10 m | 37,519 | 16.129 | 273 |
-| 20 m | 37,543 | 14.137 | 274 |
-| 30 m | 4,609 | 15.145 | 42 |
-| 45 m | 37,513 | 12.139 | 274 |
-| 60 m | 37,506 | 11.435 | 274 |
-| 75 m | 37,463 | 11.020 | 273 |
-| 89 m | 35,237 | 10.720 | 266 |
+| Depth | Rows | Readings | Mean °C | Days |
+|---|---|---|---|---|
+| 1 m | 35,594 | 35,223 | 18.747 | 265 |
+| 9 m | 36 | 36 | 18.276 | 1 |
+| 10 m | 37,524 | 37,519 | 16.129 | 273 |
+| 20 m | 37,543 | 37,543 | 14.137 | 274 |
+| 30 m | 10,096 | 4,609 | 15.145 | 42 |
+| 45 m | 37,513 | 37,513 | 12.139 | 274 |
+| 60 m | 37,506 | 37,506 | 11.435 | 274 |
+| 75 m | 37,463 | 37,463 | 11.020 | 273 |
+| 87 m | 18 | 18 | 11.368 | 1 |
+| 89 m | 36,105 | 35,237 | 10.720 | 266 |
+
+9 m and 87 m are the November 2021 evening and nothing else — one day each,
+where the string reported at labels the 2020 record does not use.
 
 **Eight degrees over eighty-nine metres**, which is the deepest gradient in the
 record — the South Bay figure below is six degrees over twenty-five. The 30 m
-row is the one to read carefully: that sensor died in 2020-03, so its 42 days
-are all winter and its mean is warmer than 20 m's for that reason and not
-because the water column inverted.
+row is the one to read carefully: that sensor stops reporting after 2020-02-10
+and 5,487 outage markers stand where its readings would be — all but six of
+them before 2020-08 — so its 42 days are 41 in January and February plus the
+November 2021 evening, and its mean is warmer than 20 m's for that reason and
+not because the water column inverted.
 
-**The landed record predates the phantom-row fix below**, so it holds 262,667
-rows where a re-ingest now stores 269,398. The extra 6,731 are missing-markers
-and not readings — outages at declared depths the old rule dropped — so every
-figure in the table above still stands. Refreshing them is a `rebuild` the
-operator chooses, not something a parser change does.
+**The landed record was re-ingested onto the sampling-grid rule below on
+2026-09-01** (https://github.com/cweber12/kelp-compare/issues/132). Under the
+phantom-row rule that preceded it the record held 262,667 rows where the parser
+now stores 269,398, and the 6,731 difference is entirely the missing-markers
+above — 5,487 at 30 m, 868 at 89 m, 371 at 1 m and 5 at 10 m. No reading moved
+in either direction, which is why every mean and day count in the table is the
+figure the earlier ingest measured.
+
+What the markers buy is downstream. The 30 m series now carries four quarterly
+rows where it carried two, with 2020Q2 and 2020Q3 landing at `n_obs = 0`,
+`pct_coverage = 0.0`, `usable = False` rather than not existing at all — a
+dead sensor at a declared depth reads as a dead sensor instead of as a depth
+that was never deployed.
 
 **The older dataset carries no `_qc_tests` at all** — the column is `NaN` on
 every row, including rows carrying readings. `qc_agg` is still read row for row,
@@ -733,7 +751,8 @@ is the signal, and 21-38 km of coastline is the confound.
 
 **None of this reaches `comparison.parquet`, by construction.** The features
 run that landed these series left the comparison table byte-identical, first
-when South Bay landed and again when the Point Loma backfill did
+when South Bay landed, again when the Point Loma backfill did, and again when
+that backfill was re-ingested to restore its missing-markers
 (`sha256:4cde6f9d95207dc1`, 51,000 rows, re-measured 2026-09-01 — the digest
 moves with unrelated work on the feature tables, so what is load-bearing is that
 it did not move across *this*). Two independent reasons, and both should be
@@ -741,7 +760,7 @@ understood before anyone expects a lag screen to change: no polygon lists these
 sites in `site_ids`, and the climatology baseline is fixed at 2007-2019 while
 these records begin in 2020, so every series lands with `baseline_years = 0` and
 every anomaly null. A five-year record cannot support a ten-year climatology,
-and the backfill demonstrates it rather than arguing it — all 30 Point Loma
+and the backfill demonstrates it rather than arguing it — all 32 Point Loma
 quarterly rows, 2020 included, carry `baseline_years = 0`.
 
 ### `south-bay-ocean-outfall-historic` disagrees with itself about where it is
