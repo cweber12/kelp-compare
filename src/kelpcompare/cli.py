@@ -19,6 +19,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 
 import click
 import pandas as pd
@@ -71,20 +72,61 @@ from kelpcompare.storage import (
 #: brand is one adapter module and one entry here (docs/06 s4).
 ADAPTERS = (hobo_xlsx,)
 
-#: docs/03 source vocabulary -> its raw landing directory. The names differ for
-#: project sensors on purpose: the source is `project`, the directory is
-#: `project_sensors/`.
-RAW_DIRECTORY = {
-    "project": "project_sensors",
-    kelpwatch.SOURCE: kelpwatch.SOURCE,
-    sio_shore_stations.SOURCE: sio_shore_stations.SOURCE,
-}
 
-#: Sources that are pulled rather than dropped. A new public source is one
-#: fetcher module and one entry here (docs/02). Keyed by the docs/03 source name,
-#: which is also the raw landing directory for these -- the asymmetry above is
-#: peculiar to project sensors.
-FETCHERS = {ndbc.SOURCE: ndbc, sd_rtoms.SOURCE: sd_rtoms, mur_sst.SOURCE: mur_sst}
+@dataclass(frozen=True)
+class Source:
+    """One source this build can ingest, and how a payload reaches it (docs/02).
+
+    A source is *pulled* -- a fetcher module requests it over the network -- or
+    *dropped*, its files landed by hand in a raw directory. Never both, and never
+    neither: the two fields are exclusive, which is what makes `is_pulled` a
+    complete answer rather than a first guess.
+
+    The raw directory is carried rather than derived because the two names differ
+    for project sensors on purpose: the source is `project`, the directory is
+    `project_sensors/`. Every other dropped source names them alike, and deriving
+    from that majority would make the one exception a special case in code
+    instead of a value in a table.
+    """
+
+    name: str
+    fetcher: ModuleType | None = None
+    raw_directory: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.fetcher is None) == (self.raw_directory is None):
+            raise ValueError(
+                f"{self.name!r} must be either pulled (a fetcher) or dropped (a raw "
+                "directory), and is declared as both or as neither"
+            )
+
+    @property
+    def is_pulled(self) -> bool:
+        return self.fetcher is not None
+
+
+#: Every source this build can ingest -- the vocabulary and the dispatch in one
+#: table, so a source cannot be addable by one route and unknown to the other.
+#: A new public source is one fetcher module and one entry here; a new file-drop
+#: source is one entry here and the branch in `ingest` that attributes its files
+#: (docs/02).
+#:
+#: Narrower than the docs/03 `source` column, which is an open vocabulary naming
+#: sources this build cannot yet ingest (`coops`, `sccoos`, `cdip`, `oisst`).
+#: Rows carrying those names are storable; asking `ingest` for one is not.
+SOURCES = (
+    Source("project", raw_directory="project_sensors"),
+    Source(kelpwatch.SOURCE, raw_directory=kelpwatch.SOURCE),
+    Source(sio_shore_stations.SOURCE, raw_directory=sio_shore_stations.SOURCE),
+    Source(ndbc.SOURCE, fetcher=ndbc),
+    Source(sd_rtoms.SOURCE, fetcher=sd_rtoms),
+    Source(mur_sst.SOURCE, fetcher=mur_sst),
+)
+
+#: The table above, keyed for lookup, and its names in the order help text and
+#: refusals list them.
+SOURCE_BY_NAME = {source.name: source for source in SOURCES}
+SOURCE_NAMES = tuple(sorted(SOURCE_BY_NAME))
 
 #: Where a file-drop source expects its files (docs/02 "Project sensors").
 INCOMING = "incoming"
@@ -148,9 +190,9 @@ def main() -> None:
 @click.option(
     "--source",
     required=True,
-    # Listed from the registries rather than spelled out, so adding a source
+    # Listed from the source table rather than spelled out, so adding a source
     # cannot leave the help text claiming it does not exist.
-    help=f"Source name per docs/02 (currently: {', '.join(sorted(set(RAW_DIRECTORY) | set(FETCHERS)))}).",
+    help=f"Source name per docs/02 (currently: {', '.join(SOURCE_NAMES)}).",
 )
 @click.option(
     "--path",
@@ -218,7 +260,14 @@ def ingest(
     export carries nothing at all and is claimed by filename; a Shore Stations
     archive declares its own position and is matched on that (docs/02).
     """
-    if source in FETCHERS:
+    entry = SOURCE_BY_NAME.get(source)
+    if entry is None:
+        raise SystemExit(
+            f"ingest --source {source!r} is not implemented; available: "
+            f"{', '.join(SOURCE_NAMES)}. See docs/02 for the rest."
+        )
+
+    if entry.is_pulled:
         if path is not None:
             raise SystemExit(f"--path does not apply to {source!r}, which is pulled, not dropped")
         return _ingest_pulled(
@@ -230,11 +279,6 @@ def ingest(
             dry_run=dry_run,
         )
 
-    if source not in RAW_DIRECTORY:
-        raise SystemExit(
-            f"ingest --source {source!r} is not implemented; available: "
-            f"{', '.join(sorted(set(RAW_DIRECTORY) | set(FETCHERS)))}. See docs/02 for the rest."
-        )
     if station or year:
         raise SystemExit(
             f"--station/--year do not apply to {source!r}, which is a file-drop source; "
@@ -253,8 +297,7 @@ def ingest(
     registry = load_registry(registry_path or zones.sites_json)
     parameters = load_parameters(zones.parameters_json)
 
-    raw_directory = RAW_DIRECTORY[source]
-    inputs = _discover(path or zones.raw_source(raw_directory) / INCOMING)
+    inputs = _discover(path or zones.raw_source(entry.raw_directory) / INCOMING)
     if not inputs:
         click.echo(f"nothing to ingest for {source!r}")
         return
@@ -269,7 +312,7 @@ def ingest(
                 parameters=parameters,
                 run=run,
                 source=source,
-                raw_directory=raw_directory,
+                raw_directory=entry.raw_directory,
                 dry_run=dry_run,
             )
 
@@ -1179,7 +1222,7 @@ def _ingest_pulled(
     zones = Zones.at(data_root)
     registry = load_registry(registry_path or zones.sites_json)
     parameters = load_parameters(zones.parameters_json)
-    fetcher = FETCHERS[source]
+    fetcher = SOURCE_BY_NAME[source].fetcher
 
     # Only a fetcher whose source is a grid needs the outlines, and it is asked
     # for once per run rather than per window. Not loaded for the others at all:
