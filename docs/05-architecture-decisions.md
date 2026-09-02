@@ -308,7 +308,8 @@ no stored series needs a different threshold, which is measured across
 all twelve rather than argued, and a format able to express something
 nobody needs will eventually have someone express it.
 **C — Key the thresholds on a declared sampling cadence.** The framing
-issue #68 opened with. Rejected on measurement: the two daily series
+https://github.com/cweber12/kelp-compare/issues/68 opened with. Rejected
+on measurement: the two daily series
 differ in flagged share by a factor of 180 (Scripps 5.76 %, MUR
 0.032 %), and the 30-minute buoys at three times the tuned interval are
 the cleanest series in the project. Cadence does not predict the defect.
