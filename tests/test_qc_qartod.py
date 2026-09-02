@@ -20,6 +20,7 @@ import pandas as pd
 import pytest
 
 from kelpcompare.adapters import hobo_xlsx
+from kelpcompare.cli import SOURCE_NAMES
 from kelpcompare.normalize import to_observations
 from kelpcompare.parameters import load_parameters
 from kelpcompare.qc.flags import parse_tests
@@ -429,7 +430,7 @@ def test_each_series_reports_what_ran_for_the_manifest(tmp_path):
 def reference() -> pd.DataFrame:
     """The reviewed HOBO export, normalized exactly as `ingest` leaves it."""
     registry_file = load_registry(REGISTRY_SOURCE / "sites.json")
-    parameters = load_parameters(REGISTRY_SOURCE / "parameters.json")
+    parameters = load_parameters(REGISTRY_SOURCE / "parameters.json", sources=SOURCE_NAMES)
     deployment = find_deployments(registry_file, "22506632")[0]
     batch = to_observations(
         hobo_xlsx.parse(ORIGINAL),
@@ -443,7 +444,7 @@ def reference() -> pd.DataFrame:
 
 @pytest.fixture
 def evaluated(reference) -> pd.DataFrame:
-    parameters = load_parameters(REGISTRY_SOURCE / "parameters.json")
+    parameters = load_parameters(REGISTRY_SOURCE / "parameters.json", sources=SOURCE_NAMES)
     return evaluate(reference, parameters).frame.sort_values("timestamp").reset_index(drop=True)
 
 
@@ -486,7 +487,7 @@ def test_the_install_transient_is_caught_twice_over(evaluated):
 @pytest.fixture
 def committed():
     """The registry as shipped. These assert the *decision*, not just the file."""
-    return load_parameters(REGISTRY_SOURCE / "parameters.json")
+    return load_parameters(REGISTRY_SOURCE / "parameters.json", sources=SOURCE_NAMES)
 
 
 def test_wave_height_carries_spike_and_deliberately_no_rate_of_change(committed):

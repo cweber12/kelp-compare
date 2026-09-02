@@ -31,6 +31,7 @@ import pandas as pd
 import pytest
 from shapely.geometry import Point, box
 
+from kelpcompare.cli import SOURCE_NAMES
 from kelpcompare.fetchers import mur_sst
 from kelpcompare.fetchers.base import SourceUnavailable, new_payload
 from kelpcompare.parameters import load_parameters
@@ -49,7 +50,9 @@ MEASURED = ("sea_water_temperature",)
 
 @pytest.fixture
 def parameters():
-    return load_parameters(REPO_ROOT / "data" / "registry" / "parameters.json")
+    return load_parameters(
+        REPO_ROOT / "data" / "registry" / "parameters.json", sources=SOURCE_NAMES
+    )
 
 
 @pytest.fixture(scope="module")

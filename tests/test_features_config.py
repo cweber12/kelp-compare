@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from kelpcompare.cli import SOURCE_NAMES
 from kelpcompare.features.config import (
     ANALYSIS_ROLES,
     DEFAULT_ANALYSIS_ROLE,
@@ -250,7 +251,9 @@ def test_the_committed_configuration_uses_the_baseline_the_prd_settled():
 
 def test_the_committed_configuration_covers_every_controlled_parameter():
     """A parameter with no entry is skipped and warned about; none should be."""
-    parameters = load_parameters(REPO_ROOT / "data" / "registry" / "parameters.json")
+    parameters = load_parameters(
+        REPO_ROOT / "data" / "registry" / "parameters.json", sources=SOURCE_NAMES
+    )
     assert set(load_feature_config(COMMITTED).names) == set(parameters.names)
 
 

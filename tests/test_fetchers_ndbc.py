@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from kelpcompare.cli import SOURCE_NAMES
 from kelpcompare.fetchers import ndbc
 from kelpcompare.fetchers.base import SourceUnavailable, new_payload
 from kelpcompare.parameters import load_parameters
@@ -27,7 +28,7 @@ DEPTHS = {"sea_water_temperature": 3.4}  # station page: sea temp depth 3.4 m be
 
 @pytest.fixture
 def parameters():
-    return load_parameters(Path("data/registry/parameters.json"))
+    return load_parameters(Path("data/registry/parameters.json"), sources=SOURCE_NAMES)
 
 
 def _payload(path: Path, *, gzipped: bool = False):

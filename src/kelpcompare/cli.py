@@ -295,7 +295,7 @@ def ingest(
 
     zones = Zones.at(data_root)
     registry = load_registry(registry_path or zones.sites_json)
-    parameters = load_parameters(zones.parameters_json)
+    parameters = load_parameters(zones.parameters_json, sources=SOURCE_NAMES)
 
     inputs = _discover(path or zones.raw_source(entry.raw_directory) / INCOMING)
     if not inputs:
@@ -349,7 +349,7 @@ def qc(source: str | None, data_root: Path | None, dry_run: bool) -> None:
     conclusion about it than the run that landed the rows did.
     """
     zones = Zones.at(data_root)
-    parameters = load_parameters(zones.parameters_json)
+    parameters = load_parameters(zones.parameters_json, sources=SOURCE_NAMES)
     sources = [source] if source else list(stored_sources(zones))
 
     run = RunManifest.start("qc", argv=_argv(source), sources=sources)
@@ -1070,7 +1070,7 @@ def _ingest_shore_stations(
     """
     zones = Zones.at(data_root)
     registry = load_registry(registry_path or zones.sites_json)
-    parameters = load_parameters(zones.parameters_json)
+    parameters = load_parameters(zones.parameters_json, sources=SOURCE_NAMES)
     stations = find_stations(registry, sio_shore_stations.SOURCE)
 
     source = sio_shore_stations.SOURCE
@@ -1221,7 +1221,7 @@ def _ingest_pulled(
     """
     zones = Zones.at(data_root)
     registry = load_registry(registry_path or zones.sites_json)
-    parameters = load_parameters(zones.parameters_json)
+    parameters = load_parameters(zones.parameters_json, sources=SOURCE_NAMES)
     fetcher = SOURCE_BY_NAME[source].fetcher
 
     # Only a fetcher whose source is a grid needs the outlines, and it is asked
