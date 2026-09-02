@@ -119,6 +119,7 @@ FEATURE_TABLES = (
     "climatology_kelp",
     "comparison",
     "validation",
+    "deployment",
 )
 
 

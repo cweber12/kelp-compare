@@ -1091,6 +1091,81 @@ pair the registry no longer declares must lose its row rather than keep it
 forever — the same argument as `comparison`, and it is written through
 `replace_features` for the same reason.
 
+## Deployment features: `deployment.parquet`
+
+**Implemented** — `src/kelpcompare/features/deployment.py`, written by
+`kelpcompare deployments`. The same doc 04 §2 features `quarterly_env` computes,
+reduced over the window the instrument was in the water rather than over the
+Kelp Watch calendar.
+
+One row per **`site_id × serial × deployment_number × parameter × depth_m`** —
+`validation.parquet`'s key without its two reference columns, so the two tables
+join on the deployment: what the instrument recorded, beside how it compared to
+its neighbours.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `site_id`, `serial`, `deployment_number` | VARCHAR, VARCHAR, INT | Which instrument, in which deployment |
+| `parameter`, `depth_m` | VARCHAR, DOUBLE | The deployment's series |
+| `source`, `instrument` | VARCHAR | The observation `source`, and the logger model from the registry |
+| `window_start`, `window_end` | TIMESTAMP | The registry's in-water window, in UTC. **Closed at both ends** |
+| `feature_set` | VARCHAR | Which doc 04 §2 set the parameter's features came from |
+| `n_obs`, `n_days_observed` | BIGINT, INT | Observations kept, and distinct UTC days among them |
+| `cadence_s`, `expected_obs` | DOUBLE | Median native interval, and how many samples the window should have held |
+| `pct_coverage` | DOUBLE | `n_obs / expected_obs`, clamped to 1.0 |
+| `usable` | BOOLEAN | Whether coverage cleared `policy.coverage_floor` |
+| `deployment_complete` | BOOLEAN | Whether the window had ended at run time |
+| `qc_max_flag` | TINYINT | The strictness rows were filtered at |
+| *feature columns* | DOUBLE / BOOLEAN | As `quarterly_env`, per the configured feature set |
+
+**Why this is not a view over `quarterly_env`.** Three of that table's columns
+are about the quarter rather than about the logger, and all three mislead when a
+deployment is read off them. `pct_coverage` divides by a quarter, so a logger
+that recorded every sample of a three-week deployment reads 0.228, and `usable`
+falls out false on the strength of it — marking a complete record unusable.
+Worse, `max_spell_above_20c_gap_interrupted` comes out **true**, because Q3 opens
+on 1 July and the logger went in on the 11th: the unobserved days before the
+deployment sit inside the quarter, so a warm spell running to the start of the
+record is flagged as a floor that may have been longer. It may not have been.
+The logger was not in the water. **The quarterly calendar prints a deployment
+boundary as a data gap**, and correcting that is what this table is for.
+
+Both tables are produced by one implementation (`features/windowed.py`), which
+knows nothing about what a window means, so the two cannot drift apart in how
+they compute a mean or a spell.
+
+**The window is closed, and that is worth one sentence of arithmetic.** A
+quarter is half-open `[start, end)` so consecutive quarters tile the record; a
+deployment is `[start, end]` because both edges are events that happened and the
+sample at the closing edge is a real reading. Sampling every *c* seconds across a
+closed span of *D* seconds yields `D/c + 1` readings, so `expected_obs` carries
+the `+1`. Without it every healthy deployment lands fractionally over full
+coverage, clamps, and emits a cadence warning on precisely the deployments where
+nothing went wrong.
+
+**There are no `_anom` columns, and their absence is deliberate.** An anomaly
+needs a climatology, a climatology needs ten usable years (doc 04 §3), and
+ADR-007 makes that minimum non-overridable — so a project sensor will not have
+one for a decade. Shipping null anomaly twins here would offer columns that can
+only ever be empty and invite the reading ADR-007 refuses, that a thin baseline
+is a baseline. A column that does not exist cannot be misread. This is the one
+feature table that differs from `quarterly_env` in schema rather than only in
+key, and this is why.
+
+**Coverage means something different here, and something more useful.** Against
+a deployment's own window, coverage below the floor is not a calendar artifact:
+it is the instrument stopping early, flooding, or failing QC. `usable` reads as
+instrument health.
+
+**A deployment with no window or no timezone produces no row**, and a warning
+instead. That is the doc 06 §5 registry gate showing through — coverage against
+a window nobody declared would be a guess wearing a measurement's clothes.
+
+**Regenerated wholesale** by `kelpcompare deployments`, from the observations
+zone and the registry as they stand, for the same reason as `comparison` and
+`validation`: a deployment the registry no longer declares must lose its row
+rather than keep it forever.
+
 ## Run manifests
 
 Every ingest/QC/feature run writes
