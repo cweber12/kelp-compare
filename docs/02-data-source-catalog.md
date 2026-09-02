@@ -1119,18 +1119,20 @@ source is put beside one from a continuous source, that has to be said. Doc 04's
 neighbor-validation caveat about depth is the same shape of problem: the number
 computes fine and means something different.
 
-**The QARTOD thresholds in `parameters.json` are the same problem, and they are
-live.** They are keyed by parameter and were tuned against a 10-minute logger,
-so on this daily series `spike` flags **3,043 of 34,158 bottom readings (8.9%)**
-as suspect or failed — the threshold of 1.5 °C sits near the 88th percentile of
-ordinary day-to-day variation at 5 m, which off this pier is upwelling rather
-than instrument error — while `rate_of_change` cannot fail at all and records a
-`pass` on 70,462 rows regardless. **Do not run `kelpcompare qc` over
-`source=sio_shore_stations`** until that is resolved: the ingest-time flags from
-the program's own vocabulary are correct and sufficient, and a qc run would
-overwrite 3,043 good readings with a suspect verdict that the default
-`qc_flag <= 2` filter then drops. Tracked, with the measured percentiles and the
-options, at https://github.com/cweber12/kelp-compare/issues/68.
+**The QARTOD thresholds in `parameters.json` were the same problem, and this
+source is now excepted from them.** They are keyed by parameter and were tuned
+against a 10-minute logger, so on this daily series `spike` condemned **3,229 of
+34,158 bottom readings (9.5%)** as suspect or failed — the threshold of 1.5 °C
+sits near the 88th percentile of ordinary day-to-day variation at 5 m, which off
+this pier is upwelling rather than instrument error — while `rate_of_change`
+could not fail at all and recorded a `pass` on 70,462 rows regardless. A
+`qc.by_source` exception switches both off for `sio_shore_stations` (ADR-008),
+so `kelpcompare qc` is safe to run here and leaves **gross range beside the
+verdicts the program's own vocabulary supplied at ingest**, which were correct
+and sufficient all along. Measured over the landed record, that is the
+difference between 4,200 rows at flag 3 or 4 and the 426 the program itself
+flagged. Tracked, with the measured percentiles and the options rejected, at
+https://github.com/cweber12/kelp-compare/issues/68.
 
 ### Co-located with `NDBC:LJAC1`, but not the same instrument
 
@@ -1410,12 +1412,16 @@ than the whole record.
 - A day the product covers nowhere over a bed is stored as a row flagged
   missing, not dropped — a dropped day is a hole the doc 04 §3 coverage
   arithmetic cannot see.
-- **QARTOD thresholds are per-parameter, not per-source**, so these rows inherit
-  bounds tuned for in-situ loggers. On a daily gap-filled L4 analysis the spike
-  and rate-of-change tests are effectively inert (consecutive samples are 24 h
-  apart against an 18 °C/h suspect rate). Gross range still applies. This is
-  recorded rather than fixed here, because narrowing them is a `parameters.json`
-  decision about evidence, not a parsing one.
+- **QARTOD thresholds are per-parameter, not per-source**, so these rows would
+  inherit bounds tuned for in-situ loggers. On a daily gap-filled L4 analysis the
+  spike and rate-of-change tests are inert or worse (consecutive samples are 24 h
+  apart against an 18 °C/h suspect rate, which no step could reach), and a
+  `qc.by_source` exception switches both off for `mur_sst` (ADR-008) — a
+  `parameters.json` decision about evidence, as it always was, rather than a
+  parsing one. Gross range still applies, and is knowingly all this source gets:
+  there is no instrument here to have an error, and reading the product's own
+  `mask` and `analysis_error` fields is the right control instead, filed
+  separately.
 
 ## CDFW / marineBIOS
 
