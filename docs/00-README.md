@@ -136,13 +136,23 @@ Not built yet: the climatology and flat-line QC tests and neighbor validation
 dashboard.
 
 Not yet possible: doc 04 §4.5's spatial signal test, the project's key question.
-It needs project-sensor rows, which `observations/` does not yet hold: no
-project-sensor deployment has been ingested (doc 04, "Neighbor validation").
-That is now the only blocker. The sensor positions it also needs were surveyed
-into `sites.json` on 2026-08-27, and the polygon geometry it also needs was
-recorded on 2026-08-30 — all six beds carry a reconstructed outline verified
-cell-for-cell against its landed export (doc 02, "How the six bed outlines were
-reconstructed"), so the registry is no longer one of the blockers at all.
+Every blocker this paragraph used to name is now gone, and the one that remains
+was behind them. The sensor positions were surveyed into `sites.json` on
+2026-08-27; the polygon geometry was recorded on 2026-08-30, all six beds
+carrying an outline verified cell-for-cell against its landed export (doc 02,
+"How the six bed outlines were reconstructed"); and both project-sensor
+deployments are ingested, so `observations/` does hold project-sensor rows.
+
+What blocks §4.5 now is sample size. The two loggers hold one partial quarter
+between them and the kelp record ends 2026 Q2, so nothing joins at any lag — in
+raw space as well as in anomaly space. Behind that sits a climatology needing ten
+usable years (doc 04 §3), which this record cannot reach before the mid-2030s.
+Whether §4.5 is therefore respecified or deferred is a decision, taken separately
+(https://github.com/cweber12/kelp-compare/issues/120).
+
+What a project sensor *can* support today is doc 04 §1: neighbour validation
+against `NDBC:LJAC1`, and `deployment.parquet`, which describes each deployment
+over the window it was in the water and needs no climatology.
 
 Deferred rather than abandoned: fetching the published SBC LTER data package
 directly. It carries giant and bull kelp separately plus biomass, at per-pixel
