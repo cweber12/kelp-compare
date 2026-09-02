@@ -285,13 +285,25 @@ What to weigh before registering any of them:
   ranking agrees with it.
 - **The satellite series enters the pool crippled on exactly the features it
   was wanted for.** All six `SST:*` beds are flagged `low_resolution` on
-  `days_above_23c` and four of six on `days_below_14c`, because a daily L4
-  analysis inherits QC and threshold settings sized for a 10-minute logger
-  ([#113](https://github.com/cweber12/kelp-compare/issues/113)). So the SST leg
-  reaches this list through the continuous features rather than the ecological
-  count features, and `SST:ENCINITAS` `days_below_14c` at lag 4 — r = +0.391,
-  which would otherwise rank eighth in the whole screen — is dropped by the
-  audit rather than by the rule.
+  `days_above_23c` and five of six on `days_below_14c`: over 470 bed-quarters
+  those counts take only 15 to 23 distinct values, because a smoothed L4
+  analysis area-averaged over a bed seldom crosses a threshold chosen against
+  the in-situ record. So the SST leg reaches this list through the continuous
+  features rather than the ecological count features, and `SST:ENCINITAS`
+  `days_below_14c` at lag 4 — r = +0.391, which would otherwise rank seventh in
+  the whole screen — is dropped by the audit rather than by the rule.
+
+  **This is the feature thresholds, and not the QC settings, and the
+  re-measurement is what separates them.** This paragraph used to lay the
+  flagging at the door of
+  [#113](https://github.com/cweber12/kelp-compare/issues/113) — a daily source
+  inheriting QARTOD thresholds sized for a ten-minute logger. That was fixed on
+  2026-09-02, `mur_sst` now running gross range alone, and **every one of these
+  eleven audit rows came back byte-identical**: same 470 present, same distinct
+  counts, same flags. A cause that can be removed without moving the effect was
+  not the cause. What is left is `features.json`'s 23 °C and 14 °C, which are
+  ecological thresholds rather than instrument ones and are not wrong — the
+  satellite simply resolves them coarsely, and no QC change will alter that.
 - **docs/04 §4.5 still cannot be attempted, and not only for want of data.**
   No project-sensor cell can enter this list: `PROJ:TIDBIT-1` holds 22 observed
   days and `PROJ:TIDBIT-2` holds 44, both in 2026 Q3, so neither clears the
