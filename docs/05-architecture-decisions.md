@@ -269,21 +269,25 @@ than mitigated; doc 04 §4.5 carries the reporting consequence.
 source reporting that parameter is judged by the same thresholds. The
 `sea_water_temperature` numbers were tuned against a single 21-day TidbiT
 deployment logging every ten minutes; the project now stores temperature
-from six sources. The share of judged rows the QARTOD tests flag ranges
+from six sources. The share of judged rows sitting at flag 3 or 4 ranges
 over two orders of magnitude across them — `SIO:LAJOLLA-PIER` 5.76 %,
-`SST:*` (MUR) 0.034 %, `NDBC:46254` 0.025 %, `SDRTOMS:SBOO` 0.50 %,
-`PROJ:TIDBIT-1` 0.23 %.
+`SDRTOMS:SBOO` 0.50 %, `PROJ:TIDBIT-1` 0.23 %, `NDBC:LJAC1` 0.053 %,
+`SST:*` (MUR) 0.032 %, `NDBC:46254` 0.025 %.
 
 Two distinct defects sit behind that spread. On the Scripps Pier record
-`spike` condemns real ocean: 9.45 % of bottom readings, 21.6 % in Q3
-against 1.06 % in Q1, the dropped readings averaging ~0.55 °C *colder*
-than the kept ones in the upwelling quarters. A test measuring instrument
-error has no reason to fire twenty times more often in summer. And on
-both daily sources `rate_of_change` is unreachable: the shortest observed
-interval is 13 h at Scripps and 24 h for MUR, which caps the largest
-arithmetically possible rate at 2.31 and 1.25 °C/h against an 18 °C/h
-suspect threshold — yet the test records `pass`, moving rows from flag 2
-to flag 1, which reads as "checked" when nothing was.
+`spike` condemns real ocean. On its own it flags **3,021 of 34,158 judged
+bottom readings (8.84 %)** and 753 of 38,704 at the surface (1.95 %) —
+the rest of that source's flagged share is verdicts the Shore Stations
+program itself supplied at ingest. And it is seasonal: 20.9 % of Q3 at
+5 m against 0.41 % of Q1, with the readings it removes averaging 0.46 °C
+(Q3) and 0.57 °C (Q2) *colder* than the ones it keeps. A test measuring
+instrument error has no reason to fire fifty times more often in summer.
+On both daily sources `rate_of_change` is unreachable besides: the
+shortest observed interval is 13 h at Scripps and 24 h for MUR, which
+caps the largest arithmetically possible rate at 2.31 and 1.25 °C/h
+against an 18 °C/h suspect threshold — yet the test records `pass`,
+moving rows from flag 2 to flag 1, which reads as "checked" when nothing
+was.
 
 Because the default analysis filter is `qc_flag <= 2`, each spike flag is
 a silent deletion from every downstream feature
@@ -305,8 +309,8 @@ all twelve rather than argued, and a format able to express something
 nobody needs will eventually have someone express it.
 **C — Key the thresholds on a declared sampling cadence.** The framing
 issue #68 opened with. Rejected on measurement: the two daily series
-differ in flagged share by a factor of 170 (Scripps 5.76 %, MUR
-0.034 %), and the 30-minute buoys at three times the tuned interval are
+differ in flagged share by a factor of 180 (Scripps 5.76 %, MUR
+0.032 %), and the 30-minute buoys at three times the tuned interval are
 the cleanest series in the project. Cadence does not predict the defect.
 What separates the two daily series is that MUR is a smoothed analysis
 whose consecutive days barely move, while Scripps is a point bottle
@@ -331,9 +335,10 @@ not, and a format permitting numbers would contradict the ADR shipping
 with it.
 
 **Per-source, not per-site or per-depth.** Both Scripps depths are broken
-(2.51 % at 0.5 m and 9.45 % at 5 m), and the milder of the two is still
-five times worse than the next worst series in the project; narrower aim
-would imply the surface series is fine when it is not. The accepted cost
+— spike's own share is 1.95 % at 0.5 m and 8.84 % at 5 m — and the milder
+of the two is still nearly four times worse than the next worst series in
+the project; narrower aim would imply the surface series is fine when it
+is not. The accepted cost
 is that `ndbc` holds a 6-minute station and two 30-minute buoys under one
 source name, so per-source would be too blunt there — it needs no
 exception, every NDBC series being at or below 0.053 %.
