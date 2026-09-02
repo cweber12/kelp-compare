@@ -19,12 +19,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from kelpcompare import parameters as parameters_module
 from kelpcompare.adapters import hobo_xlsx
 from kelpcompare.cli import SOURCE_NAMES
 from kelpcompare.normalize import to_observations
 from kelpcompare.parameters import load_parameters
 from kelpcompare.qc.flags import parse_tests
-from kelpcompare.qc.qartod import evaluate
+from kelpcompare.qc.qartod import IMPLEMENTED_TESTS, evaluate
 from kelpcompare.registry import find_deployments, load_registry
 from kelpcompare.storage import (
     FLAG_FAIL,
@@ -47,7 +48,7 @@ RATE = {"suspect_per_hour": 18.0, "fail_per_hour": 36.0}
 
 
 def registry(tmp_path: Path, *, valid_range=(5.0, 35.0), qc: dict | None = None):
-    """A one-parameter `parameters.json`, loaded.
+    """A one-parameter `parameters.json`, loaded against the real source names.
 
     `valid_range=None` leaves the parameter with no gross-range thresholds,
     which is the only way to watch one test's verdicts reach the roll-up alone.
@@ -61,7 +62,7 @@ def registry(tmp_path: Path, *, valid_range=(5.0, 35.0), qc: dict | None = None)
     target.write_text(
         json.dumps({"parameters": {"sea_water_temperature": record}}), encoding="utf-8"
     )
-    return load_parameters(target)
+    return load_parameters(target, sources=SOURCE_NAMES)
 
 
 def observations(
@@ -73,6 +74,7 @@ def observations(
     qc_tests: str = "deployment_window:pass",
     start: str = "2026-07-11 14:00",
     freq: str = "10min",
+    source: str = "project",
 ) -> pd.DataFrame:
     """docs/03 rows for one series, as ingest would have left them."""
     stamps = pd.date_range(start, periods=len(values), freq=freq, tz="UTC")
@@ -85,7 +87,7 @@ def observations(
             "depth_m": depth,
             "qc_flag": np.int8(FLAG_NOT_EVALUATED),
             "qc_tests": qc_tests,
-            "source": "project",
+            "source": source,
             "fetch_run_id": "20260824T000000000Z-ingest",
         }
     )[list(OBSERVATION_COLUMNS)]
@@ -419,6 +421,104 @@ def test_each_series_reports_what_ran_for_the_manifest(tmp_path):
         str(FLAG_SUSPECT): 2,
         str(FLAG_FAIL): 1,
     }
+
+
+# --------------------------------------------------------------------------
+# Per-source exceptions -- ADR-008
+# --------------------------------------------------------------------------
+
+#: A series a shared spike threshold condemns: every step is 2.0 degC, well
+#: over the 1.5 the reviewed TidbiT deployment was tuned to, and none of it is
+#: instrument error. This is the shape of the Scripps Pier record that
+#: https://github.com/cweber12/kelp-compare/issues/68 measured.
+SAWTOOTH = [16.0, 18.0, 16.0, 18.0, 16.0, 18.0, 16.0]
+
+EXCEPT_SIO_SPIKE = {"by_source": {"sio_shore_stations": {"spike": None}}}
+
+
+def test_the_registry_and_this_stage_name_the_same_implemented_tests():
+    """A name the registry accepts and this stage does not run is a dead threshold."""
+    assert set(parameters_module.IMPLEMENTED_TESTS) == set(IMPLEMENTED_TESTS)
+
+
+def test_an_excepted_source_gets_no_verdict_from_that_test(tmp_path):
+    parameters = registry(tmp_path, qc={"spike": SPIKE, **EXCEPT_SIO_SPIKE})
+    frame = observations(SAWTOOTH, site="SIO:LAJOLLA-PIER", source="sio_shore_stations", freq="1D")
+    evaluated = evaluate(frame, parameters).frame
+
+    assert all("spike" not in parse_tests(t) for t in evaluated["qc_tests"])
+    assert set(evaluated["qc_flag"]) == {FLAG_PASS}
+
+
+def test_the_same_readings_from_another_source_are_still_spike_tested(tmp_path):
+    """The exception is about the source, not about the numbers (ADR-008)."""
+    parameters = registry(tmp_path, qc={"spike": SPIKE, **EXCEPT_SIO_SPIKE})
+    evaluated = evaluate(observations(SAWTOOTH), parameters).frame
+
+    assert any(parse_tests(t).get("spike") == "suspect" for t in evaluated["qc_tests"])
+    assert FLAG_SUSPECT in set(evaluated["qc_flag"])
+
+
+def test_an_exception_leaves_the_other_tests_running(tmp_path):
+    parameters = registry(tmp_path, qc={"spike": SPIKE, **EXCEPT_SIO_SPIKE})
+    frame = observations(
+        [16.0, 99.0, 16.0], site="SIO:LAJOLLA-PIER", source="sio_shore_stations", freq="1D"
+    )
+    verdicts = [parse_tests(t) for t in evaluate(frame, parameters).frame["qc_tests"]]
+
+    assert [v["gross_range"] for v in verdicts] == ["pass", "fail", "pass"]
+    assert all("spike" not in v for v in verdicts)
+
+
+def test_an_exception_preserves_the_verdicts_ingest_recorded(tmp_path):
+    """The source's own flags are the reason the exception is safe to take."""
+    parameters = registry(tmp_path, qc={"spike": SPIKE, **EXCEPT_SIO_SPIKE})
+    frame = observations(
+        SAWTOOTH,
+        site="SIO:LAJOLLA-PIER",
+        source="sio_shore_stations",
+        qc_tests="source_flag:suspect",
+        freq="1D",
+    )
+    evaluated = evaluate(frame, parameters).frame
+
+    assert all(parse_tests(t)["source_flag"] == "suspect" for t in evaluated["qc_tests"])
+    assert set(evaluated["qc_flag"]) == {FLAG_SUSPECT}
+
+
+def test_an_excepted_series_reports_only_the_tests_that_ran(tmp_path):
+    """What records the exception on a run is the series entry, not a warning."""
+    parameters = registry(tmp_path, qc={"spike": SPIKE, **EXCEPT_SIO_SPIKE})
+    frame = observations(SAWTOOTH, site="SIO:LAJOLLA-PIER", source="sio_shore_stations", freq="1D")
+    outcome = evaluate(frame, parameters)
+
+    (series,) = outcome.series
+    assert set(series.tests) == {"gross_range"}
+    assert outcome.warnings == ()
+
+
+def test_a_source_may_be_excepted_from_gross_range_too(tmp_path):
+    parameters = registry(tmp_path, qc={"by_source": {"project": {"gross_range": None}}})
+    outcome = evaluate(observations([16.0, 99.0, 16.0], qc_tests=""), parameters)
+
+    assert outcome.series[0].tests == ()
+    assert set(outcome.frame["qc_flag"]) == {FLAG_NOT_EVALUATED}
+    assert outcome.warnings == ()
+
+
+def test_a_verdict_stored_by_an_earlier_run_does_not_survive_an_exception(tmp_path):
+    """The stage owns its own names, so switching a test off clears its record."""
+    parameters = registry(tmp_path, qc={"spike": SPIKE, **EXCEPT_SIO_SPIKE})
+    frame = observations(
+        SAWTOOTH,
+        site="SIO:LAJOLLA-PIER",
+        source="sio_shore_stations",
+        qc_tests="spike:fail",
+        freq="1D",
+    )
+    evaluated = evaluate(frame, parameters).frame
+
+    assert all("spike" not in parse_tests(t) for t in evaluated["qc_tests"])
 
 
 # --------------------------------------------------------------------------

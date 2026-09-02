@@ -84,6 +84,21 @@ def partitions(data_root: Path) -> list[Path]:
     return sorted((data_root / "observations" / "source=project" / "year=2026").glob("part-*"))
 
 
+def except_project(data_root: Path, *tests: str) -> None:
+    """Declare an ADR-008 exception in this run's own copy of the registry.
+
+    The committed file excepts the two daily sources, not `project`; writing the
+    exception here keeps the case about the mechanism rather than about which
+    sources the project has decided to except today.
+    """
+    path = data_root / "registry" / "parameters.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["parameters"]["sea_water_temperature"]["qc"]["by_source"] = {
+        "project": dict.fromkeys(tests)
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 # --------------------------------------------------------------------------
 # The reference deployment -- docs/06 s5 check 6
 # --------------------------------------------------------------------------
@@ -323,3 +338,61 @@ def test_a_partition_left_holding_two_files_does_not_change_what_qc_stores(data_
     assert again["qc_flag"].equals(clean["qc_flag"])
     assert again["qc_tests"].equals(clean["qc_tests"])
     assert len(partitions(data_root)) == 1
+
+
+# --------------------------------------------------------------------------
+# Per-source exceptions -- ADR-008
+# --------------------------------------------------------------------------
+
+
+def test_an_excepted_test_stores_no_verdict_for_the_rows_it_covered(data_root):
+    ingest(data_root)
+    except_project(data_root, "spike", "rate_of_change")
+    run(data_root, "qc")
+
+    verdicts = [parse_tests(t) for t in stored(data_root)["qc_tests"]]
+    assert all("spike" not in v for v in verdicts)
+    assert all("rate_of_change" not in v for v in verdicts)
+    assert all("gross_range" in v for v in verdicts)
+
+
+def test_an_exception_clears_a_verdict_an_earlier_run_stored(data_root):
+    """The run that takes the exception has to undo the run that did not."""
+    ingest(data_root)
+    run(data_root, "qc")
+    assert any("spike" in parse_tests(t) for t in stored(data_root)["qc_tests"])
+
+    except_project(data_root, "spike")
+    run(data_root, "qc")
+    assert all("spike" not in parse_tests(t) for t in stored(data_root)["qc_tests"])
+
+
+def test_an_exception_leaves_the_flags_the_other_tests_earned(data_root):
+    """docs/06 s5 check 6's out-of-window readings are not a spike finding."""
+    ingest(data_root)
+    except_project(data_root, "spike", "rate_of_change")
+    run(data_root, "qc")
+
+    rows = stored(data_root)
+    assert len(rows) == 3029
+    assert len(rows.loc[rows["qc_flag"] == FLAG_FAIL]) == 7
+    assert len(rows.loc[rows["qc_flag"] <= 2]) == 3022
+
+
+def test_the_manifest_series_entry_lists_only_the_tests_that_ran(data_root):
+    ingest(data_root)
+    except_project(data_root, "spike")
+    run(data_root, "qc")
+
+    (series,) = qc_manifest(data_root)["series"]
+    assert set(series["tests"]) == {"gross_range", "rate_of_change"}
+
+
+def test_an_exception_is_not_a_warning_and_does_not_set_the_exit_code(data_root):
+    """It is a decision an operator wrote down, not a gap in the run."""
+    ingest(data_root)
+    except_project(data_root, "spike", "rate_of_change")
+    result = run(data_root, "qc")
+
+    assert qc_manifest(data_root)["warnings"] == []
+    assert "warning" not in result.output
