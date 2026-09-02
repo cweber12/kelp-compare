@@ -286,6 +286,10 @@ the run manifest as a warning. A run that never read that source, because
 `--source` excluded it or because the zone holds none of its rows, says nothing:
 a dormant exception is not a wrong one.
 
+Excepting a source from a test the parameter would not have run anyway is
+refused as well, for the same reason the loader refuses an empty threshold
+block: it removes nothing, while reading in the registry as though it did.
+
 An **unreachable threshold** is one that cannot be crossed by any value the
 gross-range test would not already condemn. For `rate_of_change` that is
 arithmetic: the `valid_range` span divided by the series' shortest observed
