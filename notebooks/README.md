@@ -89,6 +89,11 @@ number, and all three are reported whatever they come out as — a registered
 relationship that fails is a result, and dropping it is the thing registration
 exists to prevent.
 
+*This block and the table under it are frozen as registered, digest and
+coefficients included, and are not edited when the table is rebuilt. What the
+current screen says goes in the re-measurement below, so the two can be read
+against each other rather than one replacing the other.*
+
 **Only predictors are eligible.** docs/04 §5 makes `air_temperature` and
 `wind_speed` **controls**: screened and reported, never pre-registered. The
 reasons are mechanistic and prior to any coefficient — air temperature
@@ -149,6 +154,46 @@ rather than summarised here, so the claim that they are one signal can be
 checked against how closely they actually agree — and the La Jolla signal is the
 one to check, since −0.353 against −0.242 and −0.220 is a wider spread than the
 word "agree" comfortably covers.
+
+### Re-measured 2026-09-02, against `sha256:dbbed1264b9ee1d8`
+
+**The registration above is unchanged and was not re-made.** The screen was
+re-run because its input was corrected, not because anything was re-chosen, and
+it returned **the same three `(polygon, feature, lag)` signals**. That is the
+useful part: the list survived a correction to the data underneath it, which is
+a stronger statement than a fresh registration could have made — a registration
+written after seeing a screen is weaker than one written before it, whatever it
+says.
+
+What moved is which cell stands for each signal, and how strongly:
+
+| Signal | As registered | Re-measured |
+|---|---|---|
+| `KELP:ENCINITAS` `days_below_14c` lag 4 | `NDBC:LJAC1` 3.4 m, +0.424, n_eff 50.6, 1 cell | `SIO:LAJOLLA-PIER` 5 m, **+0.465**, n_eff 115.8, 2 cells |
+| `KELP:SOLANA-BEACH` `days_below_14c` lag 4 | `SIO:LAJOLLA-PIER` 5 m, +0.406, n_eff 117.3, 2 cells | `SIO:LAJOLLA-PIER` 0.5 m, **+0.443**, n_eff 125.3, 3 cells |
+| `KELP:LA-JOLLA` `degree_days_above_18c` lag 1 | `SST:LA-JOLLA`, −0.353, n_eff 61.3, 3 cells | `SST:LA-JOLLA`, −0.353, n_eff 61.3, **2 cells** |
+
+**Where the movement came from, and why that ordering matters.** ADR-008 let a
+source be declared exempt from a named QARTOD test; `spike`, tuned on a
+ten-minute logger, had been removing one Scripps Pier bottom reading in five in
+Q3, and stopped. So the 110-year pier record now carries the strongest cell in
+two of the three groups as well as the longest one, where before it was beaten
+in one group by a 71-quarter buoy series.
+
+That correction was found and argued entirely on QC flag counts and their
+seasonality
+([#68](https://github.com/cweber12/kelp-compare/issues/68),
+[#139](https://github.com/cweber12/kelp-compare/pull/139)), never mentioning
+this screen, and its own evidence says the anomalies barely move — the
+climatology absorbs almost all of the level shift. That the correction happened
+to strengthen two registered signals is therefore a consequence and not a
+motive, and this paragraph exists so that is checkable rather than asserted.
+
+**Nothing here revises the registration.** Both changed references are the
+ranking artefact the third bullet below already warned about: which series
+stands for a signal is the strongest cell in its group, not the best instrument.
+The signals are the same three; only their spokesmen changed.
+
 
 What to weigh before registering any of them:
 
