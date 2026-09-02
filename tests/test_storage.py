@@ -7,6 +7,7 @@ that wrote there would be unrepeatable by construction.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pandas as pd
@@ -691,6 +692,28 @@ def test_a_feature_table_is_one_file_in_the_features_zone(tmp_path):
     path = write(features([("ndbc", "NDBC:LJAC1", 2007, 1, 15.0)]), zones, replacing=("ndbc",))
     assert path == tmp_path / "features" / "quarterly_env.parquet"
     assert path.exists()
+
+
+def test_a_tables_fingerprint_is_its_own_bytes_and_its_own_row_count(tmp_path):
+    """What a run records about a table it wrote: the digest a caption quotes,
+    over the file as it landed, and the count of what is actually in it."""
+    zones = Zones.at(tmp_path)
+    rows = [("ndbc", "NDBC:LJAC1", 2007, 1, 15.0), ("ndbc", "NDBC:LJAC1", 2007, 2, 16.0)]
+    path = write(features(rows), zones, replacing=("ndbc",))
+
+    sha256, count = storage.table_fingerprint(path)
+    assert sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert count == 2
+
+
+def test_a_scoped_writes_fingerprint_counts_the_rows_it_kept_as_well(tmp_path):
+    """The row count is the table's, not the frame's -- a `--source` rerun
+    merges back every source it did not build."""
+    zones = Zones.at(tmp_path)
+    write(features([("ndbc", "NDBC:LJAC1", 2007, 1, 15.0)]), zones, replacing=("ndbc",))
+    path = write(features([("project", "PROJ:A", 2007, 1, 18.0)]), zones, replacing=("project",))
+
+    assert storage.table_fingerprint(path)[1] == 2
 
 
 def test_a_written_table_reads_back_with_its_dtypes(tmp_path):

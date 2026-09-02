@@ -13,6 +13,7 @@ is required for the other to build.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -314,6 +315,25 @@ def test_the_comparison_is_written_when_both_halves_exist(data_root, with_enviro
     assert len(comparison) == len(series) * 170 * len(LAGS)
     assert sorted(set(comparison["lag"])) == list(LAGS)
     assert set(comparison["polygon_id"]) == {"KELP:LA-JOLLA", "KELP:DEL-MAR"}
+
+
+def test_the_manifest_records_all_five_tables_the_run_wrote(data_root, with_environment):
+    """A full run writes five tables, and the comparison is the one a notebook
+    reads -- so the digest that closes docs/04 s5's loop is in this list or the
+    loop is still open."""
+    root = with_both_halves(data_root)
+
+    recorded = {entry["table"]: entry for entry in manifest(root)["tables"]}
+    assert set(recorded) == {
+        "quarterly_env",
+        "climatology_env",
+        "quarterly_kelp",
+        "climatology_kelp",
+        "comparison",
+    }
+    path = root / "features" / "comparison.parquet"
+    assert recorded["comparison"]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert recorded["comparison"]["rows"] == len(table(root, "comparison"))
 
 
 def test_only_the_pairs_the_registry_declares_appear(data_root, with_environment):

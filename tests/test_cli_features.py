@@ -17,6 +17,7 @@ moving underneath the test.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -348,6 +349,62 @@ def test_the_run_manifest_records_each_series_quarter_counts(data_root):
     assert (series["first_quarter"], series["last_quarter"]) == ("2026Q3", "2026Q3")
 
 
+def test_the_run_manifest_records_the_digest_of_every_table_it_wrote(data_root):
+    """The other half of the link: a table names no run, so the run names the
+    table -- by the digest of the bytes it wrote, which is what a caption quotes.
+    """
+    hobo(data_root)
+    run(data_root, "features")
+
+    recorded = {entry["table"]: entry for entry in features_manifest(data_root)["tables"]}
+    assert set(recorded) == {"quarterly_env", "climatology_env"}
+    for name, entry in recorded.items():
+        path = data_root / "features" / f"{name}.parquet"
+        assert entry["path"] == str(path)
+        assert entry["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        assert entry["rows"] == len(pd.read_parquet(path))
+
+
+def test_the_recorded_row_count_is_the_tables_not_the_frames(data_root, offline):
+    """A source-scoped run merges back the sources it did not rebuild, so a
+    count taken from the frame it built would understate the file it wrote."""
+    hobo(data_root)
+    ljac1(data_root)
+    run(data_root, "features")
+    ndbc_rows = (quarterly(data_root)["source"] == "ndbc").sum()
+
+    run(data_root, "features", "--source", "project")
+
+    latest = manifests(data_root, "features")[-1]
+    recorded = {entry["table"]: entry for entry in latest["tables"]}
+    assert recorded["quarterly_env"]["rows"] == len(quarterly(data_root))
+    assert ndbc_rows and recorded["quarterly_env"]["rows"] > ndbc_rows
+
+
+def test_the_run_id_reaches_the_manifest_and_never_the_rows(data_root):
+    """https://github.com/cweber12/kelp-compare/pull/28 removed a build id from
+    the rows for costing the zone identical bytes over unchanged inputs. The
+    digest is recorded instead of putting it back, so this stays true."""
+    hobo(data_root)
+    run(data_root, "features")
+
+    payload = features_manifest(data_root)
+    built = quarterly(data_root)
+    assert payload["tables"]
+    assert [column for column in built.columns if "run" in column] == []
+    assert not built.astype(str).isin([payload["run_id"]]).any().any()
+
+
+def test_each_written_table_is_echoed_with_the_digest_a_caption_quotes(data_root):
+    """The prefix the notebooks print, so a table and a notebook can be told
+    apart by eye rather than by opening the manifest."""
+    hobo(data_root)
+    output = run(data_root, "features").output
+
+    for entry in features_manifest(data_root)["tables"]:
+        assert f"sha256:{entry['sha256'][:16]}" in output
+
+
 def test_the_manifest_path_is_echoed_along_with_both_tables(data_root):
     hobo(data_root)
     output = run(data_root, "features").output
@@ -427,6 +484,22 @@ def test_two_runs_over_unchanged_inputs_write_the_same_bytes(data_root, offline)
 
     run(data_root, "features")
     assert (data_root / "features" / "quarterly_env.parquet").read_bytes() == first
+
+
+def test_a_rebuild_over_unchanged_inputs_records_the_same_digest(data_root, offline):
+    """Two manifests naming one digest is the property above, stated: the runs
+    agree about the table because the table did not change. A collision would be
+    the useful case failing, not a bug."""
+    hobo(data_root)
+    ljac1(data_root)
+    run(data_root, "features")
+    run(data_root, "features")
+
+    first, second = (
+        {entry["table"]: entry["sha256"] for entry in payload["tables"]}
+        for payload in manifests(data_root, "features")
+    )
+    assert first and first == second
 
 
 def test_the_feature_row_key_matches_the_qc_series_key(data_root, offline):
