@@ -125,3 +125,58 @@ def test_writing_twice_keeps_the_first_finish_time(tmp_path):
     finished = manifest.finished_at
     manifest.write(Zones.at(tmp_path))
     assert manifest.finished_at == finished
+
+
+def test_a_started_run_is_running_and_claims_no_finish_time():
+    """The state every run is in while it is still doing work."""
+    manifest = RunManifest.start("ingest")
+    assert manifest.status == "running"
+    assert manifest.finished_at is None
+
+
+def test_the_start_record_is_written_before_any_work(tmp_path):
+    """What survives a process killed without unwinding (issue #115).
+
+    A closed console window on Windows terminates without running `finally`, so
+    this file is the only evidence such a run existed at all.
+    """
+    zones = Zones.at(tmp_path)
+    manifest = RunManifest.start("ingest", run_id="20260824T120000000Z-ingest")
+    path = manifest.write_start(zones)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["status"] == "running"
+    assert payload["started_at"] and payload["finished_at"] is None
+
+
+def test_writing_the_terminal_record_completes_a_running_run(tmp_path):
+    """The report functions rely on `write` finishing the run for them."""
+    zones = Zones.at(tmp_path)
+    manifest = RunManifest.start("ingest", run_id="20260824T120000000Z-ingest")
+    manifest.write_start(zones)
+    path = manifest.write(zones)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["status"] == "completed"
+    assert payload["finished_at"]
+    # Overwritten in place: one run, one manifest, whatever happened to it.
+    assert list(zones.manifests.glob("*.json")) == [path]
+
+
+def test_an_interrupted_run_is_never_promoted_to_completed(tmp_path):
+    """`write` is also the unwind path's own call, and must not undo it.
+
+    Promoting it would put back exactly the lie the status field exists to
+    prevent: rows on disk under a run the manifest claims finished cleanly.
+    """
+    zones = Zones.at(tmp_path)
+    manifest = RunManifest.start("ingest")
+    manifest.add_file("2019.nc", "ingested", rows_out=4380)
+    manifest.interrupt()
+    payload = json.loads(manifest.write(zones).read_text(encoding="utf-8"))
+
+    assert payload["status"] == "interrupted"
+    assert payload["finished_at"]
+    # The work that did complete is still described -- that is the point of
+    # writing the record at all.
+    assert payload["counts"] == {"ingested": 1}

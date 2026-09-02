@@ -1067,6 +1067,13 @@ pulled station-window has no adapter to name. Manifests are how any number in a 
 traces back to specific fetches — required for publication-grade
 reproducibility.
 
+A run records **how it ended** in a top-level `status`: `completed`, or
+`interrupted` where it stopped before its report, or `running` where it has not
+stopped yet. This is a property of the run, not of any one input — an input's
+`outcome` says whether that window was ingested, and `status` says whether the
+run that ingested it reached the end. A manifest carrying no `status` predates
+the field and describes a completed run.
+
 The per-series entry is shared between the stages that read a zone rather than
 recorded as files, because such a run has no input files. Each fills the fields
 it has: `qc` the flag histogram and the tests it ran, `features` the quarters
