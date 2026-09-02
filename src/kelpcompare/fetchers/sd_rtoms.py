@@ -71,6 +71,7 @@ from kelpcompare.storage import (
     FLAG_PASS,
     FLAG_SUSPECT,
     OBSERVATION_COLUMNS,
+    STORABLE_FLAGS,
     empty_observations,
 )
 
@@ -148,14 +149,6 @@ TEST_NAMES = (
     "attenuated_signal",
     "neighbor",
 )
-
-#: Every value docs/03 allows in `qc_flag`. Wider than `qc.flags.STATUS_BY_FLAG`
-#: on purpose: that map deliberately has no word for "not evaluated", because a
-#: test reaching no verdict should record nothing rather than record that it said
-#: nothing -- but 2 is still a perfectly good flag for a *row*, and it is the one
-#: the provider writes on every profile bin. Validating the aggregate against the
-#: narrower map would reject the commonest value on the feed.
-STORABLE_FLAGS = frozenset({FLAG_PASS, FLAG_NOT_EVALUATED, FLAG_SUSPECT, FLAG_FAIL, FLAG_MISSING})
 
 #: Seconds to wait before the single retry docs/02 asks for.
 RETRY_DELAY_SECONDS = 2.0

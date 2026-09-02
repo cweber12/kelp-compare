@@ -72,6 +72,15 @@ FLAG_SUSPECT = 3
 FLAG_FAIL = 4
 FLAG_MISSING = 9
 
+#: Every value docs/03 allows in `qc_flag`. Wider than `qc.flags.STATUS_BY_FLAG`
+#: on purpose: that map deliberately has no word for "not evaluated", because a
+#: test reaching no verdict should record nothing rather than record that it said
+#: nothing -- but 2 is still a perfectly good flag for a *row*, and it is the one
+#: every ingest writes and the one the RTOMS provider puts on every profile bin.
+#: Validating a flag against the narrower map would reject the commonest value in
+#: the zone.
+STORABLE_FLAGS = frozenset({FLAG_PASS, FLAG_NOT_EVALUATED, FLAG_SUSPECT, FLAG_FAIL, FLAG_MISSING})
+
 #: The one test ingest can decide, named in the docs/03 `qc_tests` description
 #: (docs/06 s3). Here for the same reason: the stage that writes it and the stage
 #: forbidden from relaxing it must agree on the spelling.
