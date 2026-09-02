@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -96,6 +98,45 @@ TIMEZONE_CHECK = "timezone_crosscheck"
 #: join of two of them, and it is recorded as a series entry only because that
 #: is where a run says how much it produced.
 COMPARISON_SERIES = "comparison"
+
+
+@contextmanager
+def _manifested(run: RunManifest, zones: Zones, *, dry_run: bool) -> Iterator[RunManifest]:
+    """Hold a run's manifest open around its work (hard rule 7, docs/03).
+
+    The `running` record goes down before any work does, and is replaced when
+    the run stops -- `completed` by the report function on its way out, or
+    `interrupted` here when the run is unwinding instead. Without the pair, a
+    run stopped partway left rows in `observations/` under a `fetch_run_id` no
+    manifest described: the bytes stayed traceable and the run did not.
+
+    Both halves earn their place. Ctrl+C unwinds and reaches the `except`;
+    closing a console window on Windows terminates the process without running
+    it at all, and there the start record is the only trace left behind.
+
+    Wrapped at the CLI boundary rather than inside the per-window and
+    per-source bodies, which have their own fail-soft contract and keep it
+    (docs/02 cross-cutting rules). This is about the run, not about one input.
+
+    A run whose report already wrote a terminal record is left alone. `ingest`
+    and `features` both signal failure by raising `SystemExit` *after* writing,
+    and rewriting that as `interrupted` would report a run that finished as one
+    that did not.
+    """
+    if not dry_run:
+        run.write_start(zones)
+    try:
+        yield run
+    except BaseException:
+        if not dry_run and run.status == "running":
+            run.interrupt()
+            run.write(zones)
+        raise
+    else:
+        # A command that returned before its report -- "nothing to evaluate" --
+        # is a run that completed having done nothing, not one still running.
+        if not dry_run and run.status == "running":
+            run.write(zones)
 
 
 @click.group()
@@ -219,19 +260,20 @@ def ingest(
         return
 
     run = RunManifest.start("ingest", argv=[f"--source={source}"], sources=[source])
-    for candidate in inputs:
-        _ingest_file(
-            candidate,
-            zones=zones,
-            registry=registry,
-            parameters=parameters,
-            run=run,
-            source=source,
-            raw_directory=raw_directory,
-            dry_run=dry_run,
-        )
+    with _manifested(run, zones, dry_run=dry_run):
+        for candidate in inputs:
+            _ingest_file(
+                candidate,
+                zones=zones,
+                registry=registry,
+                parameters=parameters,
+                run=run,
+                source=source,
+                raw_directory=raw_directory,
+                dry_run=dry_run,
+            )
 
-    _report(run, zones, dry_run=dry_run)
+        _report(run, zones, dry_run=dry_run)
 
 
 @main.command()
@@ -268,16 +310,17 @@ def qc(source: str | None, data_root: Path | None, dry_run: bool) -> None:
     sources = [source] if source else list(stored_sources(zones))
 
     run = RunManifest.start("qc", argv=_argv(source), sources=sources)
-    evaluated = [
-        _qc_source(name, zones=zones, parameters=parameters, run=run, dry_run=dry_run)
-        for name in sources
-    ]
+    with _manifested(run, zones, dry_run=dry_run):
+        evaluated = [
+            _qc_source(name, zones=zones, parameters=parameters, run=run, dry_run=dry_run)
+            for name in sources
+        ]
 
-    if not any(evaluated):
-        click.echo("nothing to evaluate" + (f" for {source!r}" if source else ""))
-        return
+        if not any(evaluated):
+            click.echo("nothing to evaluate" + (f" for {source!r}" if source else ""))
+            return
 
-    _report_qc(run, zones, dry_run=dry_run)
+        _report_qc(run, zones, dry_run=dry_run)
 
 
 def _qc_source(name: str, *, zones: Zones, parameters, run: RunManifest, dry_run: bool) -> bool:
@@ -406,33 +449,34 @@ def features(source: str | None, data_root: Path | None, qc_max_flag: int, dry_r
     run = RunManifest.start(
         "features", argv=_features_argv(source, qc_max_flag), sources=list(env_sources)
     )
-    now = pd.Timestamp.now(tz="UTC")
-    outcomes: dict[str, BuildOutcome] = {}
+    with _manifested(run, zones, dry_run=dry_run):
+        now = pd.Timestamp.now(tz="UTC")
+        outcomes: dict[str, BuildOutcome] = {}
 
-    attempted = [
-        _build_source(
-            name,
-            zones=zones,
-            config=config,
-            run=run,
-            qc_max_flag=qc_max_flag,
-            now=now,
-            outcomes=outcomes,
-        )
-        for name in env_sources
-    ]
-    kelp = _build_kelp(zones, config, run, now=now) if _wants_kelp(source) else None
-    if kelp is not None:
-        run.sources.append(kelpwatch.SOURCE)
+        attempted = [
+            _build_source(
+                name,
+                zones=zones,
+                config=config,
+                run=run,
+                qc_max_flag=qc_max_flag,
+                now=now,
+                outcomes=outcomes,
+            )
+            for name in env_sources
+        ]
+        kelp = _build_kelp(zones, config, run, now=now) if _wants_kelp(source) else None
+        if kelp is not None:
+            run.sources.append(kelpwatch.SOURCE)
 
-    if not any(attempted) and kelp is None:
-        click.echo("nothing to build" + (f" for {source!r}" if source else ""))
-        return
+        if not any(attempted) and kelp is None:
+            click.echo("nothing to build" + (f" for {source!r}" if source else ""))
+            return
 
-    written = () if dry_run else _write_feature_tables(outcomes, kelp, zones, run)
-    if not dry_run:
-        written += _write_comparison(zones, config, run)
-    _report_features(run, zones, written, dry_run=dry_run)
+        written = () if dry_run else _write_feature_tables(outcomes, kelp, zones, run)
+        if not dry_run:
+            written += _write_comparison(zones, config, run)
+        _report_features(run, zones, written, dry_run=dry_run)
 
 
 def _env_sources(zones: Zones, source: str | None) -> list[str]:
@@ -790,47 +834,48 @@ def validate(
     run = RunManifest.start(
         "validate", argv=[f"--qc-max-flag={qc_max_flag}"], sources=list(stored_sources(zones))
     )
-    try:
-        frame, warnings = build_validation(
-            read_observations(zones),
-            registry,
-            tolerance_m=config.neighbor_depth_tolerance_m,
-            qc_max_flag=qc_max_flag,
-        )
-    except Exception as error:  # noqa: BLE001 -- report it, keep the manifest
-        run.note_warning(f"validation: {type(error).__name__}: {error}")
-        frame, warnings = None, ()
+    with _manifested(run, zones, dry_run=dry_run):
+        try:
+            frame, warnings = build_validation(
+                read_observations(zones),
+                registry,
+                tolerance_m=config.neighbor_depth_tolerance_m,
+                qc_max_flag=qc_max_flag,
+            )
+        except Exception as error:  # noqa: BLE001 -- report it, keep the manifest
+            run.note_warning(f"validation: {type(error).__name__}: {error}")
+            frame, warnings = None, ()
 
-    for warning in warnings:
-        run.note_warning(warning)
+        for warning in warnings:
+            run.note_warning(warning)
 
-    if frame is None or frame.empty:
+        if frame is None or frame.empty:
+            for warning in run.warnings:
+                click.echo(f"     warning  {warning}")
+            click.echo("nothing to validate")
+            return
+
+        for row in frame.to_dict("records"):
+            verdict = (
+                f"bias {row['bias']:+.2f} rmse {row['rmse']:.2f}"
+                if row["depth_comparable"]
+                else f"bias/rmse refused across {row['depth_gap_m']:.2f} m"
+            )
+            click.echo(
+                f"{row['site_id']:>16} vs {row['reference_site_id']:<16} "
+                f"{row['n_pairs']} pairs  r {row['correlation']:.3f}  {verdict}"
+            )
         for warning in run.warnings:
             click.echo(f"     warning  {warning}")
-        click.echo("nothing to validate")
-        return
 
-    for row in frame.to_dict("records"):
-        verdict = (
-            f"bias {row['bias']:+.2f} rmse {row['rmse']:.2f}"
-            if row["depth_comparable"]
-            else f"bias/rmse refused across {row['depth_gap_m']:.2f} m"
-        )
-        click.echo(
-            f"{row['site_id']:>16} vs {row['reference_site_id']:<16} "
-            f"{row['n_pairs']} pairs  r {row['correlation']:.3f}  {verdict}"
-        )
-    for warning in run.warnings:
-        click.echo(f"     warning  {warning}")
+        if dry_run:
+            click.echo("dry run: nothing written, no manifest")
+            return
 
-    if dry_run:
-        click.echo("dry run: nothing written, no manifest")
-        return
-
-    path = replace_features(frame, zones, table="validation", key=VALIDATION_KEY)
-    run.add_series(source="validation", rows=len(frame))
-    click.echo(f"wrote {path}")
-    click.echo(f"manifest: {run.write(zones)}")
+        path = replace_features(frame, zones, table="validation", key=VALIDATION_KEY)
+        run.add_series(source="validation", rows=len(frame))
+        click.echo(f"wrote {path}")
+        click.echo(f"manifest: {run.write(zones)}")
 
 
 @main.command()
@@ -880,10 +925,11 @@ def _ingest_kelpwatch(*, path: Path | None, data_root: Path | None, dry_run: boo
         argv=[f"--source={kelpwatch.SOURCE}"],
         sources=[kelpwatch.SOURCE],
     )
-    for candidate in inputs:
-        _ingest_export(candidate, zones=zones, polygons=polygons, run=run, dry_run=dry_run)
+    with _manifested(run, zones, dry_run=dry_run):
+        for candidate in inputs:
+            _ingest_export(candidate, zones=zones, polygons=polygons, run=run, dry_run=dry_run)
 
-    _report(run, zones, dry_run=dry_run)
+        _report(run, zones, dry_run=dry_run)
 
 
 def _ingest_export(
@@ -991,17 +1037,18 @@ def _ingest_shore_stations(
         return
 
     run = RunManifest.start("ingest", argv=[f"--source={source}"], sources=[source])
-    for candidate in inputs:
-        _ingest_archive(
-            candidate,
-            zones=zones,
-            stations=stations,
-            parameters=parameters,
-            run=run,
-            dry_run=dry_run,
-        )
+    with _manifested(run, zones, dry_run=dry_run):
+        for candidate in inputs:
+            _ingest_archive(
+                candidate,
+                zones=zones,
+                stations=stations,
+                parameters=parameters,
+                run=run,
+                dry_run=dry_run,
+            )
 
-    _report(run, zones, dry_run=dry_run)
+        _report(run, zones, dry_run=dry_run)
 
 
 def _ingest_archive(
@@ -1157,43 +1204,44 @@ def _ingest_pulled(
         )
 
     run = RunManifest.start("ingest", argv=_pulled_argv(source, stations, years), sources=[source])
-    # One session for the whole run rather than one per window: a nineteen-year
-    # backfill would otherwise open nineteen TLS connections to say the same
-    # thing. Built here rather than in the fetcher so the tests keep driving the
-    # same seam they already do.
-    session = _session()
-    for site in wanted:
-        # Oldest dataset first, so the one the provider still maintains is
-        # written last and settles any key the two share
-        # (`storage._write_partition`, docs/03). One dataset for every station
-        # but Point Loma, whose record the provider split when it re-platformed.
-        for dataset in site.datasets:
-            for window in years or (None,):
-                # A combination that was never this dataset's to answer produces
-                # no manifest entry, rather than a "skipped" one: `skipped` means
-                # the source did not answer a question we were right to ask, and
-                # asking a superseded dataset for last month is not that. It is
-                # also what keeps the two datasets from both being handed the
-                # window where their depth labels disagree (docs/02).
-                if window is None and not dataset.is_current:
-                    continue
-                if window is not None and not dataset.covers_year(window):
-                    continue
-                _ingest_window(
-                    site,
-                    dataset,
-                    window,
-                    zones=zones,
-                    parameters=parameters,
-                    run=run,
-                    source=source,
-                    fetcher=fetcher,
-                    polygons=polygons,
-                    session=session,
-                    dry_run=dry_run,
-                )
+    with _manifested(run, zones, dry_run=dry_run):
+        # One session for the whole run rather than one per window: a nineteen-year
+        # backfill would otherwise open nineteen TLS connections to say the same
+        # thing. Built here rather than in the fetcher so the tests keep driving the
+        # same seam they already do.
+        session = _session()
+        for site in wanted:
+            # Oldest dataset first, so the one the provider still maintains is
+            # written last and settles any key the two share
+            # (`storage._write_partition`, docs/03). One dataset for every station
+            # but Point Loma, whose record the provider split when it re-platformed.
+            for dataset in site.datasets:
+                for window in years or (None,):
+                    # A combination that was never this dataset's to answer produces
+                    # no manifest entry, rather than a "skipped" one: `skipped` means
+                    # the source did not answer a question we were right to ask, and
+                    # asking a superseded dataset for last month is not that. It is
+                    # also what keeps the two datasets from both being handed the
+                    # window where their depth labels disagree (docs/02).
+                    if window is None and not dataset.is_current:
+                        continue
+                    if window is not None and not dataset.covers_year(window):
+                        continue
+                    _ingest_window(
+                        site,
+                        dataset,
+                        window,
+                        zones=zones,
+                        parameters=parameters,
+                        run=run,
+                        source=source,
+                        fetcher=fetcher,
+                        polygons=polygons,
+                        session=session,
+                        dry_run=dry_run,
+                    )
 
-    _report(run, zones, dry_run=dry_run)
+        _report(run, zones, dry_run=dry_run)
 
 
 def _ingest_window(
