@@ -256,6 +256,44 @@ recorded as one: a missing threshold never becomes a default guess, because a
 guessed threshold that flags real data is indistinguishable in the stored
 flags from a real QC failure.
 
+**A source may be excepted from a named test** (ADR-008). A `qc` block may
+carry a `by_source` map, whose entries name a source and map one or more
+implemented test names to `null`:
+
+```json
+"qc": {
+  "spike": {"suspect": 1.5, "fail": 3.0},
+  "rate_of_change": {"suspect_per_hour": 18.0, "fail_per_hour": 36.0},
+  "by_source": {
+    "sio_shore_stations": {"spike": null, "rate_of_change": null}
+  }
+}
+```
+
+`null` is the only value the map accepts: an exception removes a test for
+that source's series of that parameter, and never supplies a different
+threshold for it. Those rows come back with the test omitted from `qc_tests`
+entirely — the same shape a parameter with no thresholds already produces —
+and their `qc_flag` follows from the tests that did run. The observation
+schema does not change.
+
+The map is validated against the source vocabulary the caller supplies, so a
+name that is not a known source is refused when the file is read: a typo
+would leave the exception unapplied, which is indistinguishable from the bug
+it was written to fix. A correctly-named entry that matched no series in a
+run is a different thing — the ingest may simply not have happened yet — and
+reaches the run manifest as a warning.
+
+An **unreachable threshold** is one that cannot be crossed by any value the
+gross-range test would not already condemn. For `rate_of_change` that is
+arithmetic: the `valid_range` span divided by the series' shortest observed
+interval is the largest rate the series can produce, and where that falls
+below `suspect_per_hour` the test can only ever fire on a row another test
+has already failed — while still recording `pass`, which moves the row from
+flag 2 to flag 1 and reads as "checked". Every `qc` run reports such a
+series in its manifest, naming both numbers. It does not switch the test
+off: which tests run is declared, never derived (ADR-008).
+
 ## Site registry: `sites.json`
 
 One record per station or deployment location.
@@ -1097,7 +1135,11 @@ The per-series entry is shared between the stages that read a zone rather than
 recorded as files, because such a run has no input files. Each fills the fields
 it has: `qc` the flag histogram and the tests it ran, `features` the quarters
 produced, the quarters usable, and the first and last quarter covered — which
-is what makes coverage attrition readable without opening the Parquet.
+is what makes coverage attrition readable without opening the Parquet. A
+series a `by_source` exception applies to records fewer tests, which is where
+that decision shows up on the run; the two warning kinds ADR-008 adds — an
+exception that matched no series, and an unreachable threshold — go in the
+run's `warnings` alongside every other thing a run did not do.
 
 A **kelp** series is a polygon rather than a site and has no parameter or depth,
 so it fills `polygon_id` and leaves those empty — the same alternative the file
