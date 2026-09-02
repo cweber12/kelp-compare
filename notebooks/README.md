@@ -1,16 +1,32 @@
 # Notebooks — analyses of record
 
 The science lives here. The dashboard computes no statistics of record (hard
-rule 6) and the pipeline computes no results — it produces
-`features/comparison.parquet` and stops. Everything downstream of that is a
-notebook, versioned in git beside the package that built its inputs.
+rule 6) and the pipeline computes no results — it produces the `features/`
+tables and stops. Everything downstream of those is a notebook, versioned in git
+beside the package that built its inputs.
 
 ## Conventions
 
-**Run top to bottom from `features/comparison.parquet` and nothing else.** No
+**Run top to bottom from tables of record in `features/`, and nothing else.** No
 side reads of `observations/` or `raw/`. A notebook that reaches around the
-comparison table is a notebook whose result cannot be reproduced from a stated
+features zone is a notebook whose result cannot be reproduced from a stated
 input, and it stops being an analysis of record.
+
+*Which tables* is the notebook's business, and more than one is fine — `02`
+reads `deployment.parquet` and `validation.parquet` together, because the join
+between them is its subject. What is not fine is a number that came from
+anywhere else. The rule used to name `comparison.parquet` specifically, which
+was true while it was the only table a notebook read and would have made `02`
+non-compliant on the day it was written.
+
+*Why the zone and not the observations behind it.* Two reasons, and the second
+is the one that bites. A features table is a stated input with a digest, so a
+result computed from it can be reproduced; the observations zone is a moving
+partition set with no such handle. And reading it correctly is harder than it
+looks — a DuckDB glob over the partition files can double-count where
+`storage.read_observations` dedupes
+(https://github.com/cweber12/kelp-compare/issues/8), so the obvious side read is
+not merely untraceable but arithmetically wrong.
 
 *Importing from `kelpcompare` is not a side read.* The rule is about **data** —
 a second source of numbers is what makes a result untraceable. Schema facts are
@@ -22,10 +38,10 @@ never open a second file. A notebook doing this should check on load that the
 table still matches what it imported, so a package and a table that have drifted
 apart say so rather than quietly analysing the overlap.
 
-**Quote the digest.** Each notebook prints the SHA-256 of the comparison file it
-ran against. Put that digest in any figure caption or write-up, so a number in a
-document can be traced to the exact table that produced it — and so two
-write-ups can be told apart when the table is rebuilt.
+**Quote the digest.** Each notebook prints the SHA-256 of every features table
+it ran against. Put those digests in any figure caption or write-up, so a number
+in a document can be traced to the exact tables that produced it — and so two
+write-ups can be told apart when a table is rebuilt.
 
 *Why a digest rather than the run manifest ID docs/04 §5 asks for:* no feature
 table carries the id of the run that built it. `fetch_run_id` is on every
@@ -76,15 +92,16 @@ Editor*, select the `.venv` interpreter (nothing else has `kelpcompare`
 installed), Run All, and save. The outputs only reach the file when you save.
 
 Either way, check afterwards that the digest the notebook prints is the digest
-of the `comparison.parquet` you meant to run against — the same string the
-`kelpcompare features` run echoed when it wrote the table. A notebook whose gate
-cell reports an older digest did not pick up the rebuilt table.
+of the table you meant to run against — the same string the run that wrote it
+echoed beside the path. A notebook whose gate cell reports an older digest did
+not pick up the rebuilt table.
 
 ## Index
 
 | Notebook | docs/04 | What it does |
 |---|---|---|
 | `01-lag-screen.ipynb` | §4.1 | Kelp anomaly at *t* against every environmental feature anomaly at *t−0…4*, per polygon × series. Ranks candidates; claims nothing |
+| `02-deployment-profile.ipynb` | §1 | What each project-sensor deployment recorded over its own in-water window, and how it compared to its neighbour. Describes; tests nothing |
 
 ## Pre-registration
 
