@@ -31,7 +31,7 @@ doc in the same PR. Docs and code must not drift.
 - `src/kelpcompare/parameters.py` — `parameters.json`: controlled names, SI units, QC ranges
 - `src/kelpcompare/storage.py` — the docs/03 zones and the only writer into `observations/`
 - `src/kelpcompare/manifest.py` — one run manifest per pipeline run (docs/03)
-- `src/kelpcompare/cli.py` — `kelpcompare ingest|qc|features|rebuild`
+- `src/kelpcompare/cli.py` — `kelpcompare ingest|qc|features|validate|deployments|rebuild`
 - `data/` — gitignored except `data/registry/`; zones per docs/03
 - `notebooks/` — analyses of record; must run top-to-bottom from `comparison.parquet`
 - `dashboard/` — Streamlit; reads Layer-2 Parquet only, computes no statistics of record
