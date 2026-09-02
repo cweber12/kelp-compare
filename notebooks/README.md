@@ -151,9 +151,9 @@ independence, the six satellite pixels sitting at r ≥ 0.96 with one another.
 The `Cells` column is how many eligible cells the signal merged. Where it is
 more than one, the merged coefficients are printed by `01-lag-screen.ipynb` §6
 rather than summarised here, so the claim that they are one signal can be
-checked against how closely they actually agree — and the La Jolla signal is
-still the one to check, at −0.353 against −0.252 on the re-measured screen, a
-wider spread than the word "agree" comfortably covers.
+checked against how closely they actually agree — and the La Jolla signal is the
+one to check, since −0.353 against −0.242 and −0.220 is a wider spread than the
+word "agree" comfortably covers.
 
 ### Re-measured 2026-09-02, against `sha256:dbbed1264b9ee1d8`
 
@@ -194,6 +194,10 @@ ranking artefact the third bullet below already warned about: which series
 stands for a signal is the strongest cell in its group, not the best instrument.
 The signals are the same three; only their spokesmen changed.
 
+**The La Jolla spread the note above flags is still worth checking**, and is now
+between two cells rather than three: −0.353 through `SST:LA-JOLLA` against
+−0.252 through the pier at 0.5 m, the 5 m cell having dropped out of the
+eligible set. Wider than "agree" comfortably covers, as it was.
 
 What to weigh before registering any of them:
 
