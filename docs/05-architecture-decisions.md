@@ -346,9 +346,11 @@ was where, not what QC does.
 **A wrong source name raises; a source that matched nothing warns.** A
 typo is a typo whether or not rows exist, and its silent failure mode —
 the exception not applying and `spike` quietly resuming — looks exactly
-like the bug regressing. A correctly-named source that matched no series
-in a run is data-dependent and may simply mean the ingest has not
-happened yet, so it reaches the run manifest as a warning instead.
+like the bug regressing. A correctly-named source whose series a run
+looked for and did not find is data-dependent rather than wrong, so it
+reaches the run manifest as a warning instead — and a run that never read
+that source says nothing about it at all, since a standing warning on
+every run in a partly-ingested zone is one nobody reads.
 
 **The pipeline reports an unreachable threshold but never acts on it.**
 An **unreachable threshold** is one that cannot be crossed by any value

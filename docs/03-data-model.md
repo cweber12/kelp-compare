@@ -281,8 +281,10 @@ The map is validated against the source vocabulary the caller supplies, so a
 name that is not a known source is refused when the file is read: a typo
 would leave the exception unapplied, which is indistinguishable from the bug
 it was written to fix. A correctly-named entry that matched no series in a
-run is a different thing — the ingest may simply not have happened yet — and
-reaches the run manifest as a warning.
+run of the source it names is a different thing — data, not a typo — and reaches
+the run manifest as a warning. A run that never read that source, because
+`--source` excluded it or because the zone holds none of its rows, says nothing:
+a dormant exception is not a wrong one.
 
 An **unreachable threshold** is one that cannot be crossed by any value the
 gross-range test would not already condemn. For `rate_of_change` that is

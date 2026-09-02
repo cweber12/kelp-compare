@@ -84,19 +84,23 @@ def partitions(data_root: Path) -> list[Path]:
     return sorted((data_root / "observations" / "source=project" / "year=2026").glob("part-*"))
 
 
-def except_project(data_root: Path, *tests: str) -> None:
+def except_source(
+    data_root: Path, source: str, *tests: str, parameter: str = "sea_water_temperature"
+) -> None:
     """Declare an ADR-008 exception in this run's own copy of the registry.
 
-    The committed file excepts the two daily sources, not `project`; writing the
-    exception here keeps the case about the mechanism rather than about which
+    Written here rather than read from the committed file, which excepts the two
+    daily sources: the cases below are about the mechanism, not about which
     sources the project has decided to except today.
     """
     path = data_root / "registry" / "parameters.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["parameters"]["sea_water_temperature"]["qc"]["by_source"] = {
-        "project": dict.fromkeys(tests)
-    }
+    payload["parameters"][parameter]["qc"]["by_source"] = {source: dict.fromkeys(tests)}
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def except_project(data_root: Path, *tests: str) -> None:
+    return except_source(data_root, "project", *tests)
 
 
 # --------------------------------------------------------------------------
@@ -396,3 +400,49 @@ def test_an_exception_is_not_a_warning_and_does_not_set_the_exit_code(data_root)
 
     assert qc_manifest(data_root)["warnings"] == []
     assert "warning" not in result.output
+
+
+def test_an_exception_the_run_looked_for_and_did_not_match_is_a_warning(data_root):
+    """The source was read; it just reports no series of that parameter."""
+    ingest(data_root)
+    except_source(data_root, "project", "spike", parameter="wave_significant_height")
+    result = run(data_root, "qc", expect=1)
+
+    (warning,) = qc_manifest(data_root)["warnings"]
+    assert "project" in warning
+    assert "wave_significant_height" in warning
+    assert result.exit_code == 1
+
+
+def test_a_run_that_matched_its_exception_says_nothing_about_it(data_root):
+    ingest(data_root)
+    except_project(data_root, "spike")
+    run(data_root, "qc")
+
+    assert qc_manifest(data_root)["warnings"] == []
+
+
+def test_a_scoped_run_does_not_speak_for_the_sources_it_did_not_read(data_root):
+    """Every `--source project` run would otherwise warn about the daily sources."""
+    ingest(data_root)
+    except_source(data_root, "ndbc", "spike")
+    run(data_root, "qc", "--source", "project")
+
+    assert qc_manifest(data_root)["warnings"] == []
+
+
+def test_an_exception_for_a_source_the_zone_does_not_hold_is_dormant_not_wrong(data_root):
+    """Otherwise a partly-ingested zone carries a warning nobody can clear."""
+    ingest(data_root)
+    except_source(data_root, "ndbc", "spike")
+    run(data_root, "qc")
+
+    assert qc_manifest(data_root)["warnings"] == []
+
+
+def test_an_empty_zone_is_still_not_an_error_with_exceptions_declared(data_root):
+    except_source(data_root, "ndbc", "spike")
+    result = run(data_root, "qc")
+
+    assert "nothing to evaluate" in result.output
+    assert qc_manifest(data_root)["warnings"] == []
