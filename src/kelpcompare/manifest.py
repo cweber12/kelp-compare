@@ -6,6 +6,12 @@ offers in place of a scheduler UI, and the reason CLAUDE.md hard rule 7 forbids
 writing Parquet outside the CLI: a file with no manifest cannot be traced, and an
 untraceable number cannot be published.
 
+A run records what it *wrote* as well as what it read: the SHA-256 of every
+table it produced. The `features/` tables carry no run id and must not carry
+one -- an id on the rows changes their bytes on every rebuild -- so the trace
+from a published number back to its run runs through the digest instead, and
+only closes if the run wrote that digest down.
+
 The manifest is also where a run says what it did *not* do. A quarantined file, a
 source that was down, an unmapped series -- all are recorded and the run
 continues (docs/02 cross-cutting rules: fail soft, never fatal). Silence about a
@@ -162,6 +168,32 @@ class SeriesEntry:
 
 
 @dataclass
+class TableEntry:
+    """One table a run wrote, named by its contents rather than by a pointer.
+
+    The `features/` tables carry no run id, and must not: a build id on a
+    derived table changes its bytes on every rebuild, which costs the zone the
+    "two runs over unchanged inputs write identical bytes" property that makes
+    `rebuild` mean anything. So the link is recorded the other way round -- the
+    run says what it wrote, and a digest quoted in a figure caption (docs/04 s5)
+    is grepped back through the manifests to the run that produced it, and from
+    there to its code SHA, its `--qc-max-flag`, and its warnings.
+
+    `sha256` is the whole digest rather than the 16-character prefix the
+    notebooks print, so a caption quoting any prefix of it still matches.
+
+    Not a `FileEntry`: that entry is an *input*'s story, and its `outcome`
+    vocabulary -- ingested, quarantined, skipped -- has nothing to say about an
+    output this run produced itself.
+    """
+
+    table: str
+    path: str
+    sha256: str
+    rows: int
+
+
+@dataclass
 class RunManifest:
     """One run, accumulated as it goes and written at its start and its end."""
 
@@ -176,6 +208,7 @@ class RunManifest:
     sources: list[str] = field(default_factory=list)
     files: list[FileEntry] = field(default_factory=list)
     series: list[SeriesEntry] = field(default_factory=list)
+    tables: list[TableEntry] = field(default_factory=list)
     qc_flags: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     gaps: list[str] = field(default_factory=list)
@@ -208,6 +241,12 @@ class RunManifest:
     def add_series(self, **fields) -> SeriesEntry:
         entry = SeriesEntry(**fields)
         self.series.append(entry)
+        return entry
+
+    def add_table(self, table: str, path: Path | str, *, sha256: str, rows: int) -> TableEntry:
+        """Record a table this run wrote, so the file can be traced back here."""
+        entry = TableEntry(table=table, path=str(path), sha256=sha256, rows=rows)
+        self.tables.append(entry)
         return entry
 
     def note_flags(self, counts: dict[str, int]) -> None:
