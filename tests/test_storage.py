@@ -14,6 +14,8 @@ import pytest
 
 from kelpcompare import storage
 from kelpcompare.storage import (
+    FLAG_NOT_EVALUATED,
+    FLAG_SUSPECT,
     OBSERVATION_COLUMNS,
     Zones,
     empty_observations,
@@ -25,7 +27,15 @@ RUN_A = "20260824T120000000Z-ingest"
 RUN_B = "20260824T130000000Z-ingest"
 
 
-def observations(timestamps, *, values=None, run_id=RUN_A, depth_m=None, site="PROJ:TIDBIT-1"):
+def observations(
+    timestamps,
+    *,
+    values=None,
+    run_id=RUN_A,
+    depth_m=None,
+    site="PROJ:TIDBIT-1",
+    qc_flag=FLAG_NOT_EVALUATED,
+):
     """A minimal docs/03 frame: UTC-aware timestamps in, everything else fixed."""
     index = pd.to_datetime(list(timestamps), utc=True)
     count = len(index)
@@ -36,7 +46,7 @@ def observations(timestamps, *, values=None, run_id=RUN_A, depth_m=None, site="P
             "parameter": "sea_water_temperature",
             "value": values if values is not None else [17.0] * count,
             "depth_m": depth_m,
-            "qc_flag": 2,
+            "qc_flag": qc_flag,
             "qc_tests": "deployment_window:pass",
             "source": "project",
             "fetch_run_id": run_id,
@@ -211,6 +221,132 @@ def test_a_boolean_value_is_refused(tmp_path):
     frame = observations(["2026-07-11 14:00"], values=[True])
     with pytest.raises(ValueError, match="'value'"):
         write_observations(frame, Zones.at(tmp_path), source="project", run_id=RUN_A)
+
+
+def test_a_fractional_qc_flag_is_refused(tmp_path):
+    """The headline of #59: `astype("int8")` truncated 3.7 into a valid-looking 3.
+
+    A flag is a verdict from a closed vocabulary, not a measurement, so an
+    ill-typed one has no honest reading -- and truncation produced the one
+    outcome nothing downstream could tell apart from a real "suspect".
+    """
+    zones = Zones.at(tmp_path)
+    with pytest.raises(ValueError, match="qc_flag"):
+        write_observations(
+            observations(["2026-07-11 14:00"], qc_flag=3.7), zones, source="project", run_id=RUN_A
+        )
+    assert not zones.observations.exists()
+
+
+def test_a_whole_number_float_qc_flag_is_refused(tmp_path):
+    """3.0 would cast losslessly, and is still refused.
+
+    A float flag column is the same "lost track of what it built" case the gate
+    already refuses for a boolean `value`: the caller that wrote 3.0 is the one
+    that could as easily write 3.7, and no path in this codebase produces a
+    float `qc_flag`, so nothing correct is turned away.
+    """
+    frame = observations(["2026-07-11 14:00"], qc_flag=float(FLAG_SUSPECT))
+    with pytest.raises(ValueError, match="qc_flag") as refused:
+        validate_frame(frame)
+    assert "float64" in str(refused.value)
+
+
+def test_a_qc_flag_outside_the_vocabulary_is_refused(tmp_path):
+    """300 was stored as 44: in the file, in no vocabulary, and under no filter.
+
+    Because analysis filters `qc_flag <= 2`, a wrapped 44 drops the row from
+    every feature without a word, and a value that happened to wrap to 1 or 2
+    would silently admit a failed one. The dtype is fine here and the value is
+    not, so the refusal names the value -- "got int64" would send a reader to
+    look at the one part of this frame that is correct.
+    """
+    zones = Zones.at(tmp_path)
+    with pytest.raises(ValueError, match="qc_flag") as refused:
+        write_observations(
+            observations(["2026-07-11 14:00"], qc_flag=300), zones, source="project", run_id=RUN_A
+        )
+    assert "300" in str(refused.value)
+    assert "int64" not in str(refused.value)
+    assert not zones.observations.exists()
+
+
+def test_a_qc_flag_carried_as_a_string_is_refused(tmp_path):
+    """`"4"` was coerced to 4 by a gate documented to refuse and never coerce."""
+    frame = observations(["2026-07-11 14:00"], qc_flag="4")
+    with pytest.raises(ValueError, match="qc_flag"):
+        validate_frame(frame)
+
+
+def test_a_boolean_qc_flag_is_refused(tmp_path):
+    """pandas counts `bool` as an integer dtype, and `True == 1` is "pass".
+
+    So a boolean column passes a membership test against the vocabulary as well
+    as a dtype test, and lands as a row that reads as having passed QC. It is
+    refused on the dtype, before its values are ever looked at.
+    """
+    frame = observations(["2026-07-11 14:00"], qc_flag=True)
+    with pytest.raises(ValueError, match="qc_flag") as refused:
+        validate_frame(frame)
+    assert "bool" in str(refused.value)
+
+
+def test_a_qc_flag_absent_on_a_row_is_refused(tmp_path):
+    """Ungated this aborted inside `_write_partition`'s cast, not at the gate.
+
+    Both shapes a missing verdict arrives in -- `pd.NA` in a nullable integer
+    column, `NaN` in a float one -- are the deep-abort failure #57 exists to
+    move back to the boundary that produced it. docs/03 has a flag for a row
+    with nothing to judge (`9` missing); a hole in the column is not it.
+    """
+    nullable = observations(["2026-07-11 14:00", "2026-07-11 14:10"])
+    nullable["qc_flag"] = pd.array([FLAG_NOT_EVALUATED, None], dtype="Int8")
+    with pytest.raises(ValueError, match="qc_flag"):
+        validate_frame(nullable)
+
+    floating = observations(["2026-07-11 14:00", "2026-07-11 14:10"])
+    floating["qc_flag"] = [float(FLAG_NOT_EVALUATED), float("nan")]
+    with pytest.raises(ValueError, match="qc_flag"):
+        validate_frame(floating)
+
+
+def test_an_integer_qc_flag_wider_than_int8_is_accepted(tmp_path):
+    """What scalar assignment builds, and what most of this suite carries.
+
+    Storage declares `int8`; equality with that would refuse the ordinary frame,
+    so the check is a predicate on the dtype family exactly as it is for `value`.
+    """
+    zones = Zones.at(tmp_path)
+    frame = observations(["2026-07-11 14:00"], qc_flag=FLAG_SUSPECT)
+    assert frame["qc_flag"].dtype == "int64"
+    validate_frame(frame)
+
+    write_observations(frame, zones, source="project", run_id=RUN_A)
+    assert storage.read_observations(zones)["qc_flag"].tolist() == [FLAG_SUSPECT]
+
+
+def test_a_nullable_integer_qc_flag_with_no_nulls_is_accepted(tmp_path):
+    """The nulls are what the gate refuses, not the dtype that can carry them."""
+    zones = Zones.at(tmp_path)
+    frame = observations(["2026-07-11 14:00"])
+    frame["qc_flag"] = pd.array([FLAG_NOT_EVALUATED], dtype="Int8")
+    validate_frame(frame)
+
+    write_observations(frame, zones, source="project", run_id=RUN_A)
+    assert storage.read_observations(zones)["qc_flag"].tolist() == [FLAG_NOT_EVALUATED]
+
+
+def test_a_qc_flag_carried_as_an_object_column_of_flags_is_accepted(tmp_path):
+    """The shape a concat of two frames can produce, judged on what it holds."""
+    zones = Zones.at(tmp_path)
+    frame = observations(["2026-07-11 14:00", "2026-07-11 14:10"])
+    frame["qc_flag"] = pd.Series([FLAG_NOT_EVALUATED, FLAG_SUSPECT], dtype=object)
+    validate_frame(frame)
+
+    write_observations(frame, zones, source="project", run_id=RUN_A)
+    stored = storage.read_observations(zones)
+    assert stored["qc_flag"].tolist() == [FLAG_NOT_EVALUATED, FLAG_SUSPECT]
+    assert stored["qc_flag"].dtype == "int8"
 
 
 def test_the_stored_empty_frame_passes_the_guard_too():

@@ -92,13 +92,21 @@ the key *before* it normalises types, so a `depth_m` carried as the string
 `"8.23"` would key differently from the `8.23` already on disk and leave both
 copies in the file — the duplication a raw glob reader would then count twice.
 `storage.validate_frame` therefore checks the dtype of `site_id`, `parameter` and
-`depth_m` — and of `value` — before a partition is read or written, so a depth
-that is not a number is refused at the boundary instead of aborting the run
-inside the writer's cast, after the fetch, parse, normalize and QC work is
-already done. It is types that are checked, not whether a field is populated: a
-`depth_m` null on every row is the documented shape for a met parameter and
-passes, and so does a column that is a depth for one parameter and null for
-another.
+`depth_m` — and of `value` and `qc_flag` — before a partition is read or written,
+so a depth that is not a number is refused at the boundary instead of aborting
+the run inside the writer's cast, after the fetch, parse, normalize and QC work
+is already done. It is types that are checked there, not whether a field is
+populated: a `depth_m` null on every row is the documented shape for a met
+parameter and passes, and so does a column that is a depth for one parameter and
+null for another.
+
+**`qc_flag` is checked by value as well**, the one column where a type is not
+the whole contract. A flag outside the five the `qc_flag` row below names is refused
+rather than cast, because the cast into `TINYINT` wraps `300` into `44` instead of
+raising: a flag that is in no vocabulary, that the default `qc_flag <= 2` filter
+then drops from every feature, and that nothing downstream can tell apart from a
+verdict a QC run actually reached. A float `3.7` truncating to a valid-looking
+`3` is the same failure with a better disguise.
 
 **A part file is never half-written.** The new file is written under a staging
 name that deliberately does not match `part-*.parquet` — so a leftover from a
@@ -188,6 +196,12 @@ Missing ranking highest is a deliberate divergence from
 `ioos_qc.qartod_compare`, which ranks it lowest. A verdict about where the
 instrument was must not turn a missing reading into a measurement that failed.
 Every other step matches QARTOD.
+
+Storage enforces that vocabulary rather than trusting it: a frame carrying a
+`qc_flag` other than one of these five, on any row, is refused before a partition
+is written — from `kelpcompare qc` and from ingest alike, since both write the
+column by hand. A verdict from a closed set is not a number to be brought into
+range.
 
 `kelpcompare qc` **re-derives** the flag rather than upgrading it: it reads the
 verdicts already stored, replaces only those of the tests it just ran, and rolls

@@ -91,16 +91,19 @@ WINDOW_TEST = "deployment_window"
 #: differently, and not `qc_flag`, which is a judgement about the row.
 OBSERVATION_KEY = ("site_id", "parameter", "timestamp", "depth_m")
 
-#: The columns `validate_frame` checks the dtype of, beyond `timestamp`, which has
-#: its own contract. Every `OBSERVATION_KEY` component, because a wrong dtype there
-#: splits the dedupe key rather than raising -- two writes of one reading leave two
-#: rows -- plus `value`, the one other column whose bad dtype aborts a run deep
-#: inside `_write_partition` instead of at the boundary that produced it (#57).
+#: The columns `validate_frame` checks, beyond `timestamp`, which has its own
+#: contract. Every `OBSERVATION_KEY` component, because a wrong dtype there splits
+#: the dedupe key rather than raising -- two writes of one reading leave two rows.
+#: Then two columns that are no part of the key and are here each for its own
+#: reason: `value`, whose bad dtype aborts a run deep inside `_write_partition`
+#: instead of at the boundary that produced it (#57), and `qc_flag`, the closed
+#: vocabulary every analysis query filters on, which the same cast truncates and
+#: wraps into a valid-looking verdict rather than refusing (#59).
 #:
-#: Derived from the key rather than restated, so a change to what makes an
-#: observation the same observation carries its type check with it.
+#: The key part is derived rather than restated, so a change to what makes an
+#: observation the same observation carries its check with it.
 GATED_COLUMNS = tuple(
-    column for column in (*OBSERVATION_KEY, "value") if column in OBSERVATION_DTYPES
+    column for column in (*OBSERVATION_KEY, "value", "qc_flag") if column in OBSERVATION_DTYPES
 )
 
 #: The docs/03 `features/` tables this project writes, each one file rewritten
@@ -248,6 +251,14 @@ def validate_frame(frame: pd.DataFrame) -> None:
     every row carries `object`. The check is therefore a predicate per declared
     dtype -- "a string dtype", "a numeric dtype" -- which accepts anything
     `_write_partition` can cast without inventing a value.
+
+    One column is then checked a second time, against a set of *values* rather
+    than a dtype. `qc_flag` is the QARTOD roll-up docs/03 gives five flags and no
+    sixth, and the column every analysis query filters on; an integer dtype alone
+    still admits `300`, which the cast wraps to `44` -- a flag that is not a flag,
+    in the file, and silently under the default `qc_flag <= 2` filter (#59). A
+    column with a closed vocabulary is the one place a type is not the whole
+    contract, so it is the one place this gate looks past one.
     """
     columns = tuple(frame.columns)
     if columns != OBSERVATION_COLUMNS:
@@ -277,6 +288,18 @@ def validate_frame(frame: pd.DataFrame) -> None:
                 f"{column!r} must be {wanted} before storage: docs/03 stores it as "
                 f"{declared}, got {frame[column].dtype}"
             )
+
+        # Values, only once the dtype check above says they can be read as they
+        # stand. The dtype is right in this refusal, so naming it -- "got int64"
+        # -- would point a reader at the part of the frame that is correct.
+        vocabulary = _CLOSED_VOCABULARY.get(column)
+        if vocabulary is not None:
+            unknown = sorted({int(v) for v in frame[column].unique()} - vocabulary)
+            if unknown:
+                raise ValueError(
+                    f"{column!r} must be a docs/03 flag before storage: "
+                    f"{sorted(vocabulary)} are the flags, got {unknown}"
+                )
 
 
 def write_observations(
@@ -555,6 +578,38 @@ def _is_storable_number(series: pd.Series) -> bool:
     return pd.api.types.is_numeric_dtype(series)
 
 
+_OBJECT_FLAGS = frozenset({"integer", "empty"})
+
+
+def _is_storable_flag(series: pd.Series) -> bool:
+    """Would `astype("int8")` keep this column's values, before asking what they mean?
+
+    Integers, on every row. A float flag is refused even where it would cast
+    losslessly -- `3.0` is a caller having lost track of what it built the same
+    way a boolean `value` is, and the instrumented suite says no path here
+    produces one -- and a null is refused so it raises at the boundary that
+    built it rather than deep inside the writer's cast (#57). docs/03 has a flag
+    for a row with nothing to judge; a hole in the column is not it.
+
+    `bool` is excluded explicitly. pandas counts it as an integer dtype, and
+    `True == 1` would carry it through the vocabulary check that follows as
+    well, landing a column of them in the file as "pass".
+    """
+    if series.isna().any():
+        return False
+    if series.dtype == object:
+        return pd.api.types.infer_dtype(series, skipna=True) in _OBJECT_FLAGS
+    if pd.api.types.is_bool_dtype(series):
+        return False
+    return pd.api.types.is_integer_dtype(series)
+
+
+#: The gated columns whose values are a closed set, checked after the dtype
+#: predicate has established the values can be read at all. `qc_flag` is the only
+#: one docs/03 gives such a vocabulary, and `STORABLE_FLAGS` is that vocabulary --
+#: not a second copy of it.
+_CLOSED_VOCABULARY = {"qc_flag": STORABLE_FLAGS}
+
 #: How each gated column is checked, keyed by the dtype docs/03 declares for it,
 #: with the phrase its refusal is worded in. A gated column whose declared dtype is
 #: not here raises `KeyError` on the first `validate_frame` call rather than going
@@ -562,6 +617,7 @@ def _is_storable_number(series: pd.Series) -> bool:
 _STORABLE_AS = {
     "string": (_is_storable_string, "a string dtype"),
     "float64": (_is_storable_number, "a numeric dtype"),
+    "int8": (_is_storable_flag, "an integer dtype with a value on every row"),
 }
 
 
