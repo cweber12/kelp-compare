@@ -41,6 +41,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from kelpcompare.features.deployment import deployment_window
 from kelpcompare.registry import Registry, find_station, neighbor_refs
 
 #: docs/03 `validation.parquet`. `reference_depth_m` is in the key because
@@ -117,7 +118,7 @@ def build_validation(
             warnings.append(f"{deployment.site_id}: no neighbor_refs declared, nothing to validate")
             continue
 
-        window = _window_utc(deployment.window_local, deployment.tz)
+        window = _window_utc(deployment)
         for parameter in sorted(set(deployment.series_map.values())):
             own = _deployment_series(kept, deployment, parameter, window)
             if own is None:
@@ -329,12 +330,18 @@ def _compare(
     }
 
 
-def _window_utc(window_local: tuple[str, str] | None, tz: str | None):
-    """The deployment window as naive UTC, matching the stored timestamps."""
-    if not window_local or not tz:
-        return None
-    return tuple(
-        pd.Timestamp(edge, tz=tz).tz_convert("UTC").tz_localize(None) for edge in window_local
+def _window_utc(deployment) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    """The deployment window as naive UTC, matching the stored timestamps.
+
+    The window itself is `deployment.deployment_window`'s to define, so that what
+    a deployment's window *is* -- in particular that it is closed at both ends --
+    has one definition rather than one per table. Only the timezone convention
+    differs: this module compares against the observations zone as stored, which
+    is naive UTC, where the feature builders localize first.
+    """
+    window = deployment_window(deployment)
+    return (
+        None if window is None else (window.start.tz_localize(None), window.end.tz_localize(None))
     )
 
 

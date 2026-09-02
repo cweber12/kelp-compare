@@ -189,6 +189,52 @@ null `depth_m` (doc 02). Against `PROJ:TIDBIT-1` at 8.23 m the
 not a gap this table may fill with a guess — the whole point of the rule is that
 an unstated depth must not become an assumed one.
 
+### Deployment features
+
+Before a deployment can be compared to anything it has to be described, and the
+quarterly table cannot do it. `quarterly_env` measures every series against the
+Kelp Watch calendar, which is right for the comparison this document is built
+toward and wrong for a logger that was in the water for three weeks: it reads
+0.228 coverage, falls out `usable = false`, and marks its longest warm spell as
+gap-interrupted because Q3 opens on 1 July and the instrument went in on the
+11th. The days between are not a hole in the record. Nobody was measuring.
+
+**Built** — `src/kelpcompare/features/deployment.py`, written by `kelpcompare
+deployments` into `features/deployment.parquet` (doc 03). One row per deployment
+× parameter × depth, carrying the same §2 features measured over the window the
+registry says the instrument was down. Its own command rather than part of
+`kelpcompare features`, for the same reason `validate` is: it needs the site
+registry, and the quarterly builder is written so it can never come to depend on
+one. Both tables are produced by one windowed implementation, so the two cannot
+drift apart in how they compute a mean or a spell.
+
+Its key is `validation.parquet`'s without the two reference columns, so the two
+join on the deployment: what the instrument recorded, beside how it compared to
+its neighbours. On the current record that join reads —
+
+| Site | Depth | *n* | Coverage | Longest spell >20 °C | *r* vs `NDBC:LJAC1` |
+|---|---|---|---|---|---|
+| `PROJ:TIDBIT-1` | 8.23 m | 3,022 | 1.000 | 22 days, not a floor | 0.643 |
+| `PROJ:TIDBIT-2` | 16.76 m | 6,194 | 0.999 | 5 days, not a floor | 0.641 |
+
+— against the same two rows in `quarterly_env`, which report 0.228 and 0.468
+coverage, `usable = false` for both, and TIDBIT-1's spell as a floor that may
+have been longer.
+
+**This table carries no anomalies, and will not.** §3's minimum is ten usable
+years and ADR-007 makes it non-overridable, so a project sensor cannot have a
+climatology for a decade. Rather than ship `_anom` columns that could only ever
+be null, the table omits them: a column that does not exist cannot be read as
+evidence that a thin baseline is a baseline. What this table supports is
+therefore description and instrument validation, not the anomaly-space
+comparison §4.5 asks for — which is deferred on sample size, not on this
+(https://github.com/cweber12/kelp-compare/issues/120).
+
+**Coverage means something different here, and something more useful.** Against
+a deployment's own window it is no longer a calendar artifact: a figure below the
+floor is the instrument stopping early, flooding, or failing QC. `usable` reads
+as instrument health.
+
 ## 2. Quarterly feature definitions
 
 Computed per QC series × quarter from QC-filtered observations, then

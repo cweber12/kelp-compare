@@ -2,8 +2,13 @@
 
 This is the stage that reconciles the timescale mismatch docs/01 says the system
 exists to solve: Kelp Watch publishes one number per polygon per quarter, and a
-TidbiT publishes about thirteen thousand. Everything here is the arithmetic of
-that reduction, plus the bookkeeping that makes a reduced number interpretable.
+TidbiT publishes about thirteen thousand.
+
+**The arithmetic of that reduction lives in `windowed.py`; what lives here is the
+choice of window.** A quarter is one window a series can be judged against and a
+deployment is another, and only the first belongs to this table. Everything below
+is therefore about which rows form a quarter, what a quarterly row is keyed on,
+and the dtypes the table promises -- not about how a mean or a spell is computed.
 
 Four decisions carry the weight.
 
@@ -13,14 +18,12 @@ shallow and a deep logger at one site are not one series, and averaging them
 across a thermocline would corrupt precisely the quarterly minimum and cold-day
 counts that docs/04 s2 makes the nitrate proxy.
 
-**Coverage is measured against the series' own cadence.** `expected_obs` is the
-quarter's duration divided by the median observed inter-sample interval, so an
-hourly station and a 10-minute logger are judged on the same scale. The median
-is robust to the thing being measured: gaps are the tail of the interval
-distribution, not its middle, so an hourly series missing half a quarter still
-has a median interval of an hour and correctly scores one half. `n_obs`,
-`cadence_s` and `expected_obs` are all stored, so the fraction is auditable
-rather than a bare number to be trusted.
+**Coverage is measured against the quarter's own duration**, divided by the
+series' median observed cadence, so an hourly station and a 10-minute logger are
+judged on the same scale. `n_obs`, `cadence_s` and `expected_obs` are all stored,
+so the fraction is auditable rather than a bare number to be trusted. Quarters
+differ in length -- 90 or 91 days for Q1, 91 for Q2, 92 for Q3 and Q4 -- which is
+why the denominator is computed from the bounds rather than nominal.
 
 **Quarters are enumerated from stored rows, and computed from QC-filtered ones.**
 A quarter that sampled perfectly and failed QC on every row scores zero
@@ -51,10 +54,34 @@ from kelpcompare.features.quarters import (
     quarter_bounds,
     quarter_label,
     quarter_of,
-    quarter_seconds,
     year_of,
 )
+from kelpcompare.features.windowed import (
+    STATISTICS,
+    WINDOW_BOOKKEEPING,
+    Window,
+    feature_columns,
+    marker_columns,
+    measured_columns,
+    reduce_window,
+    threshold_label,
+)
 from kelpcompare.storage import FLAG_NOT_EVALUATED, validate_frame
+
+__all__ = [
+    "BOOKKEEPING_COLUMNS",
+    "QUARTERLY_KEY",
+    "SERIES_KEY",
+    "STATISTICS",
+    "QuarterlyOutcome",
+    "SeriesQuarters",
+    "build_quarterly",
+    "feature_columns",
+    "marker_columns",
+    "measured_columns",
+    "quarterly_columns",
+    "threshold_label",
+]
 
 #: The docs/03 row key: the QC series key plus time. Every feature row therefore
 #: traces to exactly one QC series, which is a checkable statement rather than
@@ -65,22 +92,10 @@ QUARTERLY_KEY = ("source", "site_id", "parameter", "depth_m", "year", "quarter")
 SERIES_KEY = ("source", "site_id", "parameter", "depth_m")
 
 #: Columns that describe the row rather than measure the water. No `_anom` twin:
-#: the table must not offer the anomaly of a row count.
-BOOKKEEPING_COLUMNS = (
-    "feature_set",
-    "n_obs",
-    "n_days_observed",
-    "cadence_s",
-    "expected_obs",
-    "pct_coverage",
-    "usable",
-    "quarter_complete",
-    "qc_max_flag",
-)
-
-#: The universal distribution features, applicable to any parameter. Not just the
-#: centre: kelp responds to extremes that a quarterly mean erases (docs/01 s4).
-STATISTICS = ("mean", "min", "max", "p05", "p95", "variance")
+#: the table must not offer the anomaly of a row count. `quarter_complete` is
+#: this table's answer to "is this window over yet", which every windowed table
+#: needs and each names for its own window.
+BOOKKEEPING_COLUMNS = (*WINDOW_BOOKKEEPING, "quarter_complete", "qc_max_flag")
 
 _DTYPES = {
     "source": "string",
@@ -99,8 +114,6 @@ _DTYPES = {
     "quarter_complete": "bool",
     "qc_max_flag": "int8",
 }
-
-_ONE_DAY = pd.Timedelta(days=1)
 
 
 @dataclass(frozen=True)
@@ -139,46 +152,6 @@ class QuarterlyOutcome:
     @property
     def usable(self) -> int:
         return int(self.frame["usable"].sum()) if len(self.frame) else 0
-
-
-def threshold_label(threshold: float) -> str:
-    """`20.0` -> `20c`, `20.5` -> `20_5c`, `-1.0` -> `neg1c`.
-
-    Column names are derived from the configured threshold rather than fixed, so
-    retuning a threshold renames its column instead of silently changing what an
-    existing column means (docs/03). The `c` is the `temperature` feature set's,
-    whose thresholds are degrees Celsius by definition (docs/04 s2) -- it is not
-    read off the parameter's unit, which docs/03 forbids inferring anything from.
-    """
-    return f"{threshold:g}".replace(".", "_").replace("-", "neg") + "c"
-
-
-def measured_columns(entry: ParameterFeatures) -> tuple[str, ...]:
-    """The feature columns one parameter measures, in table order."""
-    return tuple(name for name, measured in _columns_for(entry) if measured)
-
-
-def marker_columns(entry: ParameterFeatures) -> tuple[str, ...]:
-    """The non-measured feature columns: today, the spell gap markers."""
-    return tuple(name for name, measured in _columns_for(entry) if not measured)
-
-
-def feature_columns(config: FeatureConfig) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Every measured column and every marker column the configuration can produce.
-
-    The union across parameters, so the table's schema is a function of the
-    configuration rather than of which sources a given run happened to build.
-    A `--source` rerun therefore writes the same columns as a full run, and the
-    two concatenate without alignment.
-    """
-    measured: list[str] = []
-    markers: list[str] = []
-    for name in sorted(config.parameters):
-        for column, is_measured in _columns_for(config.parameters[name]):
-            target = measured if is_measured else markers
-            if column not in target:
-                target.append(column)
-    return tuple(measured), tuple(markers)
 
 
 def quarterly_columns(config: FeatureConfig) -> tuple[str, ...]:
@@ -293,219 +266,35 @@ def _quarter_row(
     now: pd.Timestamp,
     warnings: list[str],
 ) -> dict:
-    kept = quarter_rows.loc[quarter_rows["_keep"]]
-    values = kept["value"].astype("float64")
-    timestamps = kept["timestamp"]
-    label = f"{site_id}/{entry.parameter} {quarter_label(year, quarter)}"
-
-    cadence = _cadence(timestamps, label=label, warnings=warnings)
-    expected = quarter_seconds(year, quarter) / cadence if cadence else None
-    coverage, clamped = _coverage(len(kept), expected)
-    if clamped:
-        warnings.append(
-            f"{label}: coverage clamped to 1.0 -- {len(kept)} observations against "
-            f"{expected:.0f} expected at a {cadence:.0f}s median cadence, so the series' "
-            "cadence changed mid-quarter"
-        )
-
-    row = {
+    """This table's key and completeness flag, around a windowed reduction."""
+    start, end = quarter_bounds(year, quarter)
+    reduced = reduce_window(
+        quarter_rows.loc[quarter_rows["_keep"]],
+        window=Window(start=start, end=end),
+        entry=entry,
+        coverage_floor=config.coverage_floor,
+        label=f"{site_id}/{entry.parameter} {quarter_label(year, quarter)}",
+        warnings=warnings,
+        noun="quarter",
+    )
+    return {
         "source": source,
         "site_id": site_id,
         "parameter": entry.parameter,
         "depth_m": depth_m,
         "year": year,
         "quarter": quarter,
-        "feature_set": entry.feature_set,
-        "n_obs": len(kept),
-        "n_days_observed": timestamps.dt.floor("D").nunique(),
-        "cadence_s": cadence,
-        "expected_obs": expected,
-        "pct_coverage": coverage,
-        # Fewer than two observations has no interval to take a median of, so
-        # there is no scale on which to judge the quarter at all. That is a
-        # verdict the row states rather than one a reader has to infer from a
-        # null cadence.
-        "usable": len(kept) >= 2 and coverage >= config.coverage_floor,
+        **reduced,
+        # Without this an in-progress quarter is indistinguishable from a station
+        # outage: both come out under-covered, for entirely different reasons.
         "quarter_complete": is_complete(year, quarter, now),
         "qc_max_flag": qc_max_flag,
     }
-    row.update(_statistics(values))
-    row.update(_temperature_features(values, timestamps, entry=entry, year=year, quarter=quarter))
-    return row
-
-
-def _cadence(timestamps: pd.Series, *, label: str, warnings: list[str]) -> float | None:
-    """The median observed inter-sample interval, in seconds, or None.
-
-    None means "no scale to judge this quarter on", which coverage reads as
-    zero. A non-positive median can only come from repeated timestamps, which
-    the storage key forbids -- so it is reported rather than divided by.
-    """
-    if len(timestamps) < 2:
-        return None
-    median = timestamps.diff().dropna().dt.total_seconds().median()
-    if not median > 0:
-        warnings.append(
-            f"{label}: median sample interval is {median}s, which cannot be a cadence; "
-            "coverage reported as zero"
-        )
-        return None
-    return float(median)
-
-
-def _coverage(n_obs: int, expected: float | None) -> tuple[float, bool]:
-    """The fraction of the quarter observed, clamped, and whether it was clamped.
-
-    A series whose cadence genuinely changed mid-quarter can compute above full
-    coverage -- the median interval is then wrong for part of the quarter. The
-    value is clamped so the column stays a fraction, and the clamp is reported
-    so a coverage number that had to be corrected is visible rather than quietly
-    plausible.
-    """
-    if not expected:
-        return 0.0, False
-    raw = n_obs / expected
-    return min(raw, 1.0), raw > 1.0
-
-
-def _statistics(values: pd.Series) -> dict:
-    """The distribution, not just its centre.
-
-    Percentiles interpolate linearly and the variance is the sample convention
-    (`ddof=1`), both stated so a reviewer can reproduce a number by hand. A
-    single-observation quarter therefore yields a null variance rather than a
-    zero, which would claim the water did not vary.
-    """
-    if values.empty:
-        return dict.fromkeys(STATISTICS)
-    return {
-        "mean": float(values.mean()),
-        "min": float(values.min()),
-        "max": float(values.max()),
-        "p05": float(values.quantile(0.05, interpolation="linear")),
-        "p95": float(values.quantile(0.95, interpolation="linear")),
-        "variance": float(values.var(ddof=1)) if len(values) > 1 else None,
-    }
-
-
-def _temperature_features(
-    values: pd.Series,
-    timestamps: pd.Series,
-    *,
-    entry: ParameterFeatures,
-    year: int,
-    quarter: int,
-) -> dict:
-    """The docs/04 s2 ecological features, all of them day-based.
-
-    Day-based because the ecology is: a day that reached 24 degC is a day of
-    heat stress whether it did so for one hour or six, and because aggregating
-    to days first is what makes the features robust to irregular sampling. Every
-    day with at least one observation counts, and `n_days_observed` records how
-    many that was -- so a count reads as a floor rather than as a census. The
-    bias direction is documented (docs/04): a day observed only overnight cannot
-    show its daytime maximum, so these counts run low under partial coverage.
-    """
-    features: dict = {}
-    if not entry.thresholds:
-        return features
-
-    # A quarter whose every row failed QC still gets its row and its columns;
-    # what it does not get is a zero, which would read as "no day was warm".
-    if values.empty:
-        return {name: None for name, _ in _columns_for(entry) if name not in STATISTICS}
-
-    days = timestamps.dt.floor("D")
-    daily_max = values.groupby(days).max()
-    daily_min = values.groupby(days).min()
-    daily_mean = values.groupby(days).mean()
-    observed = pd.DatetimeIndex(daily_max.index)
-    bounds = quarter_bounds(year, quarter)
-
-    for threshold in entry.of("days_above"):
-        features[f"days_above_{threshold_label(threshold)}"] = float((daily_max > threshold).sum())
-    for threshold in entry.of("days_below"):
-        features[f"days_below_{threshold_label(threshold)}"] = float((daily_min < threshold).sum())
-    for threshold in entry.of("degree_days_above"):
-        excess = (daily_mean - threshold).clip(lower=0.0)
-        features[f"degree_days_above_{threshold_label(threshold)}"] = float(excess.sum())
-    for threshold in entry.of("max_spell_above"):
-        label = threshold_label(threshold)
-        spell, interrupted = _longest_spell(
-            pd.DatetimeIndex(daily_max.index[daily_max > threshold]), observed, bounds
-        )
-        features[f"max_spell_above_{label}_days"] = float(spell)
-        features[f"max_spell_above_{label}_gap_interrupted"] = interrupted
-    return features
-
-
-def _longest_spell(
-    qualifying: pd.DatetimeIndex,
-    observed: pd.DatetimeIndex,
-    bounds: tuple[pd.Timestamp, pd.Timestamp],
-) -> tuple[int, bool]:
-    """The longest run of consecutive qualifying days, and whether a gap ended it.
-
-    **A spell is broken by an unobserved day, never bridged across one.** Two
-    qualifying days either side of a day nobody measured are two spells, because
-    joining them would assert something about a day with no data -- the
-    imputation hard rule 3 forbids, wearing a feature's clothes.
-
-    Breaking silently would be its own defect: it reports a floor as though it
-    were a measurement. So the return says whether the longest run ended at a
-    gap, meaning the true spell may have been longer. A run ended by an observed
-    day that simply did not qualify is a measurement, not a floor, and is not
-    marked. Neither is one ended by the quarter boundary, which is a limitation
-    of quarterly features rather than a hole in the record.
-
-    Where several runs tie for longest, the marker is set if *any* of them
-    touched a gap -- the honest reading, since the reported number is then a
-    floor whichever of them the true longest spell was.
-    """
-    if qualifying.empty:
-        return 0, False
-
-    days = qualifying.sort_values()
-    starts = [0, *(i for i in range(1, len(days)) if days[i] - days[i - 1] != _ONE_DAY)]
-    runs = [
-        (days[a], days[b - 1], b - a) for a, b in zip(starts, [*starts[1:], len(days)], strict=True)
-    ]
-
-    longest = max(length for _, _, length in runs)
-    quarter_start, quarter_end = bounds
-    seen = set(observed)
-    interrupted = any(
-        (start - _ONE_DAY >= quarter_start and start - _ONE_DAY not in seen)
-        or (end + _ONE_DAY < quarter_end and end + _ONE_DAY not in seen)
-        for start, end, length in runs
-        if length == longest
-    )
-    return longest, interrupted
 
 
 # --------------------------------------------------------------------------
 # Frame shape
 # --------------------------------------------------------------------------
-
-
-def _columns_for(entry: ParameterFeatures) -> tuple[tuple[str, bool], ...]:
-    """One parameter's feature columns, each with whether it is *measured*.
-
-    Measured columns get an `_anom` twin; markers do not. A boolean saying a
-    spell touched a gap has no meaningful climatology.
-    """
-    columns: list[tuple[str, bool]] = [(name, True) for name in STATISTICS]
-    for threshold in entry.of("days_above"):
-        columns.append((f"days_above_{threshold_label(threshold)}", True))
-    for threshold in entry.of("days_below"):
-        columns.append((f"days_below_{threshold_label(threshold)}", True))
-    for threshold in entry.of("degree_days_above"):
-        columns.append((f"degree_days_above_{threshold_label(threshold)}", True))
-    for threshold in entry.of("max_spell_above"):
-        label = threshold_label(threshold)
-        columns.append((f"max_spell_above_{label}_days", True))
-        columns.append((f"max_spell_above_{label}_gap_interrupted", False))
-    return tuple(columns)
 
 
 def _frame(rows: list[dict], columns: tuple[str, ...], config: FeatureConfig) -> pd.DataFrame:

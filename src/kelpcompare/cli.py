@@ -30,6 +30,7 @@ from kelpcompare.features.build import BuildOutcome, build_features
 from kelpcompare.features.climatology import CLIMATOLOGY_KEY, anomaly_columns
 from kelpcompare.features.comparison import COMPARISON_KEY, build_comparison
 from kelpcompare.features.config import load_feature_config
+from kelpcompare.features.deployment import DEPLOYMENT_KEY, build_deployment
 from kelpcompare.features.kelp import (
     CLIMATOLOGY_KELP_KEY,
     MEASURED,
@@ -977,6 +978,99 @@ def validate(
 
         path = replace_features(frame, zones, table="validation", key=VALIDATION_KEY)
         run.add_series(source="validation", rows=len(frame))
+        # Also a table in the features zone, and so also a table that could not
+        # be traced to the run that wrote it (docs/03 run manifests).
+        _record_tables(run, (path,))
+        click.echo(f"wrote {path}")
+        click.echo(f"manifest: {run.write(zones)}")
+
+
+@main.command()
+@click.option(
+    "--data-root",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Root of the docs/03 data zones. Defaults to ./data.",
+)
+@click.option(
+    "--registry",
+    "registry_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Site registry. Defaults to {data-root}/registry/sites.json.",
+)
+@click.option(
+    "--qc-max-flag",
+    type=click.IntRange(FLAG_PASS, FLAG_MISSING),
+    default=FLAG_NOT_EVALUATED,
+    show_default=True,
+    help="Keep rows at or below this QC flag when reducing each deployment.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Report what would be built; write no files, not even the manifest.",
+)
+def deployments(
+    data_root: Path | None, registry_path: Path | None, qc_max_flag: int, dry_run: bool
+) -> None:
+    """Reduce each project deployment over its in-water window (docs/04 s1).
+
+    Writes `features/deployment.parquet`: one row per deployment x parameter x
+    depth, carrying the same docs/04 s2 features `kelpcompare features` computes
+    quarterly, measured against the window the instrument was actually down
+    rather than against the Kelp Watch calendar. A three-week deployment is a
+    complete record here and 23% of a quarter there, and only one of those is a
+    statement about the logger.
+
+    Its own command rather than part of `kelpcompare features`, for the reason
+    `validate` gives: it needs the site registry, and the quarterly builder is
+    written so it can never come to depend on one.
+
+    Regenerated wholesale, so a deployment the registry no longer declares loses
+    its row rather than keeping it forever.
+    """
+    zones = Zones.at(data_root)
+    registry = load_registry(registry_path or zones.sites_json)
+    config = load_feature_config(zones.features_json)
+
+    run = RunManifest.start(
+        "deployments", argv=[f"--qc-max-flag={qc_max_flag}"], sources=list(stored_sources(zones))
+    )
+    with _manifested(run, zones, dry_run=dry_run):
+        try:
+            frame = read_observations(zones)
+            frame["timestamp"] = frame["timestamp"].dt.tz_localize("UTC")
+            frame, warnings = build_deployment(frame, registry, config, qc_max_flag=qc_max_flag)
+        except Exception as error:  # noqa: BLE001 -- report it, keep the manifest
+            run.note_warning(f"deployments: {type(error).__name__}: {error}")
+            frame, warnings = None, ()
+
+        for warning in warnings:
+            run.note_warning(warning)
+
+        if frame is None or frame.empty:
+            for warning in run.warnings:
+                click.echo(f"     warning  {warning}")
+            click.echo("no deployment produced a row")
+            return
+
+        for row in frame.to_dict("records"):
+            verdict = "usable" if row["usable"] else "UNUSABLE"
+            click.echo(
+                f"{row['site_id']:>16} #{row['deployment_number']} {row['depth_m']:>6.2f} m  "
+                f"{row['n_obs']:>6} obs over {row['n_days_observed']:>3} days  "
+                f"coverage {row['pct_coverage']:.3f}  {verdict}"
+            )
+        for warning in run.warnings:
+            click.echo(f"     warning  {warning}")
+
+        if dry_run:
+            click.echo("dry run: nothing written, no manifest")
+            return
+
+        path = replace_features(frame, zones, table="deployment", key=DEPLOYMENT_KEY)
+        run.add_series(source="deployment", rows=len(frame))
         # Also a table in the features zone, and so also a table that could not
         # be traced to the run that wrote it (docs/03 run manifests).
         _record_tables(run, (path,))
