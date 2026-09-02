@@ -10,6 +10,12 @@ The manifest is also where a run says what it did *not* do. A quarantined file, 
 source that was down, an unmapped series -- all are recorded and the run
 continues (docs/02 cross-cutting rules: fail soft, never fatal). Silence about a
 skipped input would be the actual failure.
+
+A run that stopped early says so too. The manifest is written twice: once when the
+run starts work, marked `running`, and once when it stops, marked `completed` or
+`interrupted`. Writing only at the end would mean an interrupted run left rows in
+`observations/` under a `fetch_run_id` no manifest described -- traceable bytes and
+an untraceable run, which is the one thing hard rule 7 exists to prevent.
 """
 
 from __future__ import annotations
@@ -30,6 +36,18 @@ from kelpcompare.storage import Zones
 #: system working at zero cost. `skipped` is neither of those -- it is an outage
 #: or a file nothing recognised, and it is the only one that also notes a gap.
 Outcome = Literal["ingested", "quarantined", "skipped", "unchanged", "failed"]
+
+#: How a run ended, as opposed to how one input fared. `running` is the record
+#: written before the work starts; a manifest still saying it when no process is
+#: alive is a run that was killed without unwinding -- closing a console window on
+#: Windows terminates the process without running `finally`, so this record is the
+#: only trace such a run leaves. `interrupted` is what an unwinding run writes on
+#: its way out, describing the work that did complete.
+#:
+#: A manifest carrying no `status` at all predates this field and describes a
+#: completed run: before it existed, the only manifest a run could write was the
+#: one at the end.
+Status = Literal["running", "completed", "interrupted"]
 
 _RUN_ID_FORMAT = "%Y%m%dT%H%M%S"
 
@@ -145,7 +163,7 @@ class SeriesEntry:
 
 @dataclass
 class RunManifest:
-    """One run, accumulated as it goes and written once at the end."""
+    """One run, accumulated as it goes and written at its start and its end."""
 
     run_id: str
     command: str
@@ -154,6 +172,7 @@ class RunManifest:
     code_dirty: bool = False
     started_at: str = ""
     finished_at: str | None = None
+    status: Status = "running"
     sources: list[str] = field(default_factory=list)
     files: list[FileEntry] = field(default_factory=list)
     series: list[SeriesEntry] = field(default_factory=list)
@@ -217,6 +236,17 @@ class RunManifest:
 
     def finish(self) -> RunManifest:
         self.finished_at = _now()
+        self.status = "completed"
+        return self
+
+    def interrupt(self) -> RunManifest:
+        """The run is unwinding and will not reach its report.
+
+        Stamped with a finish time like a completed run, because it did stop
+        then -- `status` is what says the stopping was not the end of the work.
+        """
+        self.finished_at = _now()
+        self.status = "interrupted"
         return self
 
     def to_dict(self) -> dict:
@@ -225,13 +255,31 @@ class RunManifest:
         return payload
 
     def write(self, zones: Zones) -> Path:
-        """Write to `raw/_manifests/{run_id}.json`.
+        """Write the run's terminal record to `raw/_manifests/{run_id}.json`.
 
         The one sanctioned write into `raw/` besides a landing (hard rule 1): a
         manifest describes the landings, so it lives beside them.
+
+        Finishes a run that has not been given a terminal state yet, which is
+        what the report functions rely on. A run already marked `interrupted`
+        keeps that: this is the call its unwind path uses to record itself, and
+        silently promoting it to `completed` would put back into the audit trail
+        the exact lie the field exists to prevent.
         """
-        if self.finished_at is None:
+        if self.status == "running":
             self.finish()
+        return self._write(zones)
+
+    def write_start(self, zones: Zones) -> Path:
+        """Write the `running` record, before the run does any work.
+
+        Overwritten by `write` when the run stops. The pair is what survives a
+        process killed without unwinding, where no `finally` runs and this file
+        is the only evidence the run existed.
+        """
+        return self._write(zones)
+
+    def _write(self, zones: Zones) -> Path:
         zones.manifests.mkdir(parents=True, exist_ok=True)
         target = zones.manifests / f"{self.run_id}.json"
         target.write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")

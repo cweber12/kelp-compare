@@ -1067,6 +1067,32 @@ pulled station-window has no adapter to name. Manifests are how any number in a 
 traces back to specific fetches — required for publication-grade
 reproducibility.
 
+A run records **how it ended** in a top-level `status`: `completed`, or
+`interrupted` where it stopped before its report, or `running` where it has not
+stopped yet. This is a property of the run, not of any one input — an input's
+`outcome` says whether that window was ingested, and `status` says whether the
+run that ingested it reached the end. A manifest carrying no `status` predates
+the field and describes a completed run.
+
+The manifest is written **twice**, both times to the same path so a run still
+has exactly one: a `running` record before the run does any work, replaced when
+it stops. That pair is what makes an interrupted run traceable. A run stopped
+partway has already written rows, and a single terminal write left those rows
+stamped with a `fetch_run_id` no manifest described — traceable bytes and an
+untraceable run, which is the failure hard rule 7 exists to prevent. A run that
+unwinds (Ctrl+C) records `interrupted` on its way out, describing the work that
+did complete; a run killed without unwinding — closing a console window on
+Windows terminates the process without running `finally` — leaves the `running`
+record, which an operator who finds it beside no live process can read for what
+it is. Both writes belong to the CLI boundary rather than to any one command, so
+every command that starts a run gets them.
+
+A run that finds nothing to do — `qc` over an empty zone, `features` with
+nothing to build — is recorded too, as a run that completed having done nothing.
+It previously left no manifest at all, which was a side effect of writing only
+at the end rather than a decision: the same side effect that lost an interrupted
+run's record entirely.
+
 The per-series entry is shared between the stages that read a zone rather than
 recorded as files, because such a run has no input files. Each fills the fields
 it has: `qc` the flag histogram and the tests it ran, `features` the quarters

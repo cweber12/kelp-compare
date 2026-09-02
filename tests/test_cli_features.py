@@ -307,7 +307,11 @@ def test_a_pass_only_run_differs_from_the_default_and_records_that_it_did(data_r
 def test_a_zone_with_nothing_in_it_is_not_an_error(data_root):
     result = run(data_root, "features")
     assert "nothing to build" in result.output
-    assert not (data_root / "raw" / "_manifests").exists()
+
+    # Recorded even so -- see the same case in tests/test_cli_qc.py.
+    record = features_manifest(data_root)
+    assert record["status"] == "completed"
+    assert record["series"] == []
 
 
 def test_naming_a_source_with_no_stored_rows_is_not_an_error(data_root):

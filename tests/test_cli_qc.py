@@ -232,7 +232,14 @@ def test_a_zone_with_nothing_in_it_is_not_an_error(data_root):
     result = run(data_root, "qc")
     assert result.exit_code == 0
     assert "nothing to evaluate" in result.output
-    assert not (data_root / "raw" / "_manifests").exists()
+
+    # Recorded even so (hard rule 7): a run that found nothing is still a run,
+    # and the manifest is where a run says what it did *not* do. It used to
+    # leave no file, which was a side effect of writing the manifest only at the
+    # end -- the same side effect that lost an interrupted run's record entirely.
+    record = qc_manifest(data_root)
+    assert record["status"] == "completed"
+    assert record["series"] == []
 
 
 def test_one_source_can_be_named(data_root):
