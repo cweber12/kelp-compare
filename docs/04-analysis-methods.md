@@ -506,10 +506,21 @@ parameter — thirteen usable years in 2007–2019 for `sea_water_temperature`,
 eleven for `air_temperature` and `wind_speed` — so 178 of its 231 quarterly rows
 carry at least one anomaly, against baselines of ten to thirteen years. The
 exception is Q2 for the two met parameters, whose Q2 baseline holds nine years
-against the ten-year minimum and therefore produces nothing. The project sensor
-is the half still empty, and doubly so: its only deployment is three weeks long,
-which is roughly a quarter of one quarter and unusable by the coverage rule, and
-it has not been ingested at all.
+against the ten-year minimum and therefore produces nothing. The project sensors
+are the half still empty, and the reason is no longer ingest: both are landed,
+QC'd and present in `quarterly_env`, with 3,022 and 6,194 observations. What they
+hold is one partial quarter each — 2026 Q3, at 0.228 and 0.468 coverage against a
+quarter, so unusable by the coverage rule — and one quarter cannot clear a
+ten-year minimum. Nor will waiting fix it: ten years of record puts the first
+project-sensor anomaly past 2035, and the baseline window it would have to clear
+is in the past. The consequence for §4.5 is a decision rather than a defect, and
+is being taken separately
+(https://github.com/cweber12/kelp-compare/issues/120).
+
+**Where a project sensor is described instead** is `deployment.parquet` (§1),
+which reduces the same features over the window the logger was in the water and
+needs no climatology to do it. That table carries no anomaly columns at all, for
+the reason this section has just given.
 
 The columns shipped before any of this was true, rather than being deferred, and
 that decision paid: the schema did not change under downstream readers when the
