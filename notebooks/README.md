@@ -89,6 +89,11 @@ number, and all three are reported whatever they come out as — a registered
 relationship that fails is a result, and dropping it is the thing registration
 exists to prevent.
 
+*This block and the table under it are frozen as registered, digest and
+coefficients included, and are not edited when the table is rebuilt. What the
+current screen says goes in the re-measurement below, so the two can be read
+against each other rather than one replacing the other.*
+
 **Only predictors are eligible.** docs/04 §5 makes `air_temperature` and
 `wind_speed` **controls**: screened and reported, never pre-registered. The
 reasons are mechanistic and prior to any coefficient — air temperature
@@ -117,7 +122,7 @@ least 30 with Pearson and Spearman agreeing to within 0.05, collapse what
 survives into **signals** — one per (feature, lag, polygon), the strongest cell
 standing for each — and take the **three strongest by |r|**.
 
-That last step is a cut, not a criterion. 629 eligible cells collapse to 253
+That last step is a cut, not a criterion. 634 eligible cells collapse to 253
 signals, and 250 of those are cut, so what makes these three the list is that
 they are the top of a ranking — which is exactly the kind of choice this section
 exists to make visible. The ranking is on |r|, and so on effect size, which
@@ -150,6 +155,50 @@ checked against how closely they actually agree — and the La Jolla signal is t
 one to check, since −0.353 against −0.242 and −0.220 is a wider spread than the
 word "agree" comfortably covers.
 
+### Re-measured 2026-09-02, against `sha256:dbbed1264b9ee1d8`
+
+**The registration above is unchanged and was not re-made.** The screen was
+re-run because its input was corrected, not because anything was re-chosen, and
+it returned **the same three `(polygon, feature, lag)` signals**. That is the
+useful part: the list survived a correction to the data underneath it, which is
+a stronger statement than a fresh registration could have made — a registration
+written after seeing a screen is weaker than one written before it, whatever it
+says.
+
+What moved is which cell stands for each signal, and how strongly:
+
+| Signal | As registered | Re-measured |
+|---|---|---|
+| `KELP:ENCINITAS` `days_below_14c` lag 4 | `NDBC:LJAC1` 3.4 m, +0.424, n_eff 50.6, 1 cell | `SIO:LAJOLLA-PIER` 5 m, **+0.465**, n_eff 115.8, 2 cells |
+| `KELP:SOLANA-BEACH` `days_below_14c` lag 4 | `SIO:LAJOLLA-PIER` 5 m, +0.406, n_eff 117.3, 2 cells | `SIO:LAJOLLA-PIER` 0.5 m, **+0.443**, n_eff 125.3, 3 cells |
+| `KELP:LA-JOLLA` `degree_days_above_18c` lag 1 | `SST:LA-JOLLA`, −0.353, n_eff 61.3, 3 cells | `SST:LA-JOLLA`, −0.353, n_eff 61.3, **2 cells** |
+
+**Where the movement came from, and why that ordering matters.** ADR-008 let a
+source be declared exempt from a named QARTOD test; `spike`, tuned on a
+ten-minute logger, had been removing one Scripps Pier bottom reading in five in
+Q3, and stopped. So the 110-year pier record now carries the strongest cell in
+two of the three groups as well as the longest one, where before it was beaten
+in one group by a 71-quarter buoy series.
+
+That correction was found and argued entirely on QC flag counts and their
+seasonality
+([#68](https://github.com/cweber12/kelp-compare/issues/68),
+[#139](https://github.com/cweber12/kelp-compare/pull/139)), never mentioning
+this screen, and its own evidence says the anomalies barely move — the
+climatology absorbs almost all of the level shift. That the correction happened
+to strengthen two registered signals is therefore a consequence and not a
+motive, and this paragraph exists so that is checkable rather than asserted.
+
+**Nothing here revises the registration.** Both changed references are the
+ranking artefact the third bullet below already warned about: which series
+stands for a signal is the strongest cell in its group, not the best instrument.
+The signals are the same three; only their spokesmen changed.
+
+**The La Jolla spread the note above flags is still worth checking**, and is now
+between two cells rather than three: −0.353 through `SST:LA-JOLLA` against
+−0.252 through the pier at 0.5 m, the 5 m cell having dropped out of the
+eligible set. Wider than "agree" comfortably covers, as it was.
+
 What to weigh before registering any of them:
 
 - **Two hypotheses, not three.** Two of the three are the cold-water
@@ -159,55 +208,78 @@ What to weigh before registering any of them:
   not make two *adjacent* beds independent evidence, and it is not meant to.
   Encinitas and Solana Beach agreeing is mild reassurance that the association
   is not one bed's noise — nothing stronger.
-- **The list is ranked on |r|, and both standardised alternatives change it.**
-  |r| is an effect size and carries no sample size, while the signals it ranks
-  span `n_eff` 30.2 to 161.0. Ranking instead on Fisher *z*, or on the 95% lower
-  confidence bound of |ρ|, drops `KELP:LA-JOLLA` `degree_days_above_18c` at lag 1
-  and admits `KELP:LA-JOLLA` `days_below_14c` at lag 4 — the same substitution
-  either way, so it is not an artefact of one scale.
+- **The list is ranked on |r|, and both standardised alternatives still change
+  it — but no longer at the top.** |r| is an effect size and carries no sample
+  size, while the signals it ranks span `n_eff` 30.2 to 161.0. Ranking instead on
+  Fisher *z*, or on the 95% lower confidence bound of |ρ|, drops
+  `KELP:LA-JOLLA` `degree_days_above_18c` at lag 1 and admits `KELP:LA-JOLLA`
+  `days_below_14c` at lag 4 — the same substitution either way, so it is not an
+  artefact of one scale.
 
   | Signal | r | n_eff | \|z\| | LCB | Rank by \|r\| |
   |---|---|---|---|---|---|
-  | `KELP:SOLANA-BEACH` pier 5 m `days_below_14c` lag 4 | +0.406 | 117.3 | 4.61 | 0.243 | 2 |
-  | `KELP:ENCINITAS` `NDBC:LJAC1` `days_below_14c` lag 4 | +0.424 | 50.6 | 3.12 | 0.167 | 1 |
-  | `KELP:LA-JOLLA` pier 5 m `days_below_14c` lag 4 | +0.287 | 123.1 | 3.24 | 0.116 | 10 |
+  | `KELP:ENCINITAS` pier 5 m `days_below_14c` lag 4 | +0.465 | 115.8 | 5.35 | 0.309 | 1 |
+  | `KELP:SOLANA-BEACH` pier 0.5 m `days_below_14c` lag 4 | +0.443 | 125.3 | 5.26 | 0.290 | 2 |
+  | `KELP:LA-JOLLA` pier 0.5 m `days_below_14c` lag 4 | +0.296 | 130.0 | 3.44 | 0.130 | 8 |
   | `KELP:LA-JOLLA` `SST:LA-JOLLA` `degree_days_above_18c` lag 1 | −0.353 | 61.3 | 2.82 | 0.112 | 3 |
 
   Read that beside the bullet above rather than as a correction to it. The
   substitution would make the list one association read three times instead of
   two hypotheses, so the tilted rule is returning the *better* list — which is
   the point, because nobody had written down why. Across the whole pool the tilt
-  is mild, Spearman of |r| against `n_eff` being −0.097; it is decisive only
+  is mild, Spearman of |r| against `n_eff` being −0.140; it is decisive only
   here, at the cut. docs/04 §5 keeps |r| and states the reason; §7 prints all
   three rankings so the choice stays visible instead of being settled once.
+
+  **What the re-measurement changed, and did not.** The disagreement used to
+  reach the top of the list: |r| ranked the 71-quarter Encinitas cell first and
+  the standardised scales ranked it third. It now does not — the first two
+  signals hold rank 1 and 2 on all three scales, because the cells standing for
+  them are the long pier record rather than the short buoy one. The scales
+  still part company at the cut, on the third signal, exactly as before. So the
+  sensitivity is unchanged in kind and narrower in reach, and the reason to
+  print all three is the same.
 - **The reference behind each signal is not the evidence for it.** Which series
   stands for a signal is a ranking artefact: it is the strongest cell in the
-  group, not the best instrument. Solana Beach would read almost the same
-  through `NDBC:LJAC1` at +0.347, and La Jolla noticeably weaker through either
-  pier depth. Report the signal, and the spread inside it, rather than the
+  group, not the best instrument — and the re-measurement demonstrated it, two of
+  the three changing spokesman without changing signal. Encinitas now reads
+  +0.465 through the pier at 5 m and +0.424 through `NDBC:LJAC1`; Solana Beach
+  +0.443 through the pier at 0.5 m, +0.406 at 5 m and +0.347 through
+  `NDBC:LJAC1`; La Jolla −0.353 through `SST:LA-JOLLA` and −0.252 through the
+  pier at 0.5 m. Report the signal, and the spread inside it, rather than the
   series name as though it had been chosen.
-- **The controls still rank alongside the predictors, and that is the warning
-  they exist for.** On the cells the candidate rule keeps, the strongest control
-  coefficient is |r| = 0.38 against the strongest predictor's 0.42. The medians
-  now separate slightly — 0.095 for sea water temperature against 0.068 and
-  0.070 for the two controls — where they were indistinguishable on the smaller
-  grid. That is a thin margin to rest anything on. A screen in which a variable
-  withheld on mechanistic grounds performs about as well as the one under test
-  may be recovering shared seasonality rather than mechanism; that does not
-  revive the controls, it discounts the predictors.
+- **The controls rank close behind the predictors, and that is the warning they
+  exist for.** On the cells the candidate rule keeps, the strongest control
+  coefficient is |r| = 0.38 against the strongest predictor's 0.47. The medians
+  separate — 0.095 for sea water temperature against 0.068 and 0.070 for the two
+  controls — where they were indistinguishable on the smaller grid. A screen in
+  which a variable withheld on mechanistic grounds performs about as well as the
+  one under test may be recovering shared seasonality rather than mechanism;
+  that does not revive the controls, it discounts the predictors.
+
+  **This margin has moved, in the predictors' favour, and it is stated here
+  rather than quietly absorbed.** It read 0.38 against 0.42 until the screen was
+  re-measured on 2026-09-02, at which point the strongest predictor cell gained
+  0.04 and the strongest control did not move at all — the correction was to a
+  sea water temperature series, and neither met parameter comes from one. So the
+  caution is weaker than it was and has not gone: 0.38 against 0.47 is still one
+  withheld variable reaching four fifths of the best cell the screen can offer.
+  A warning that vanished the moment the data improved would have been a warning
+  written to be discarded, and this one is load-bearing for how much §4.1 is
+  allowed to claim.
 
   That comparison is between pools of unequal record length, and the direction
   is not the obvious one. Both met parameters sit on the one station, so every
   eligible control signal stops at `n_eff` ≤ 50.0 while predictors reach 161.0 —
-  the 0.38-against-0.42 line is a short-record maximum set against a
+  the 0.38-against-0.47 line is a short-record maximum set against a
   mixed-record one. Restated over the same 65 control and 253 predictor signals
   on the scales `01-lag-screen.ipynb` §7 prints:
 
   | Scale | Control max | Predictor max | Controls reaching the weakest registered signal |
   |---|---|---|---|
-  | \|r\| | 0.380 | 0.424 | 1 of 65 |
-  | \|z\| | 2.74 | 4.61 | 0 of 65 |
-  | LCB | 0.114 | 0.243 | 1 of 65 |
+  | \|r\| | 0.380 | 0.465 | 1 of 65 |
+  | \|z\| | 2.74 | 5.35 | 0 of 65 |
+  | LCB | 0.114 | 0.309 | 1 of 65 |
 
   The caution survives standardisation rather than dissolving in it: it clears
   on Fisher *z* and returns on the confidence bound, where a control still edges
@@ -217,13 +289,25 @@ What to weigh before registering any of them:
   ranking agrees with it.
 - **The satellite series enters the pool crippled on exactly the features it
   was wanted for.** All six `SST:*` beds are flagged `low_resolution` on
-  `days_above_23c` and four of six on `days_below_14c`, because a daily L4
-  analysis inherits QC and threshold settings sized for a 10-minute logger
-  ([#113](https://github.com/cweber12/kelp-compare/issues/113)). So the SST leg
-  reaches this list through the continuous features rather than the ecological
-  count features, and `SST:ENCINITAS` `days_below_14c` at lag 4 — r = +0.391,
-  which would otherwise rank eighth in the whole screen — is dropped by the
-  audit rather than by the rule.
+  `days_above_23c` and five of six on `days_below_14c`: over 470 bed-quarters
+  those counts take only 15 to 23 distinct values, because a smoothed L4
+  analysis area-averaged over a bed seldom crosses a threshold chosen against
+  the in-situ record. So the SST leg reaches this list through the continuous
+  features rather than the ecological count features, and `SST:ENCINITAS`
+  `days_below_14c` at lag 4 — r = +0.391, which would otherwise rank seventh in
+  the whole screen — is dropped by the audit rather than by the rule.
+
+  **This is the feature thresholds, and not the QC settings, and the
+  re-measurement is what separates them.** This paragraph used to lay the
+  flagging at the door of
+  [#113](https://github.com/cweber12/kelp-compare/issues/113) — a daily source
+  inheriting QARTOD thresholds sized for a ten-minute logger. That was fixed on
+  2026-09-02, `mur_sst` now running gross range alone, and **every one of these
+  eleven audit rows came back byte-identical**: same 470 present, same distinct
+  counts, same flags. A cause that can be removed without moving the effect was
+  not the cause. What is left is `features.json`'s 23 °C and 14 °C, which are
+  ecological thresholds rather than instrument ones and are not wrong — the
+  satellite simply resolves them coarsely, and no QC change will alter that.
 - **docs/04 §4.5 still cannot be attempted, and not only for want of data.**
   No project-sensor cell can enter this list: `PROJ:TIDBIT-1` holds 22 observed
   days and `PROJ:TIDBIT-2` holds 44, both in 2026 Q3, so neither clears the

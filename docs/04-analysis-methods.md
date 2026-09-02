@@ -641,10 +641,13 @@ so ranking on *z* is the significance tally forbidden below, under another name.
 **What the tilt costs is measured rather than assumed.** `01-lag-screen.ipynb`
 §7 ranks the same signals three ways — |r|, Fisher *z*, and the 95% lower
 confidence bound on |ρ|, the last being the one scale that discounts imprecision
-without becoming a p-value ranking. On the screen at `sha256:4cde6f9d95207dc1`
-the tilt is mild across the pool (Spearman of |r| against `n_eff` = −0.097) and
+without becoming a p-value ranking. On the screen at `sha256:dbbed1264b9ee1d8`
+the tilt is mild across the pool (Spearman of |r| against `n_eff` = −0.140) and
 decisive at the cut: *both* standardised scales drop the same registered signal
-and admit the same replacement. What they buy is a third reading of the
+and admit the same replacement. It reaches only the cut: on this screen the top
+two signals hold rank 1 and 2 on all three scales, where on the screen the list
+was registered against, `sha256:4cde6f9d95207dc1`, |r| and the standardised
+scales disagreed about which came first. What they buy is a third reading of the
 cold-water association in place of the list's only independent mechanism, so the
 fairer ranking here returns the worse list. §7 also restates the control check
 on all three scales, where it clears on *z* and survives on the confidence

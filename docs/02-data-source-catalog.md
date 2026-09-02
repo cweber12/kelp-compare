@@ -755,7 +755,10 @@ when South Bay landed, again when the Point Loma backfill did, and again when
 that backfill was re-ingested to restore its missing-markers
 (`sha256:4cde6f9d95207dc1`, 51,000 rows, re-measured 2026-09-01 — the digest
 moves with unrelated work on the feature tables, so what is load-bearing is that
-it did not move across *this*). Two independent reasons, and both should be
+it did not move across *this*). It has moved since, to
+`sha256:dbbed1264b9ee1d8`, when the ADR-008 QC exceptions changed the Scripps
+and MUR series and the tables were rebuilt: unrelated work, exactly as this
+parenthesis anticipated, and still 51,000 rows. Two independent reasons, and both should be
 understood before anyone expects a lag screen to change: no polygon lists these
 sites in `site_ids`, and the climatology baseline is fixed at 2007-2019 while
 these records begin in 2020, so every series lands with `baseline_years = 0` and
