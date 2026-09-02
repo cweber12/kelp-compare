@@ -1420,8 +1420,8 @@ than the whole record.
   `parameters.json` decision about evidence, as it always was, rather than a
   parsing one. Gross range still applies, and is knowingly all this source gets:
   there is no instrument here to have an error, and reading the product's own
-  `mask` and `analysis_error` fields is the right control instead, filed
-  separately.
+  `mask` and `analysis_error` fields is the right control instead
+  (https://github.com/cweber12/kelp-compare/issues/137).
 
 ## CDFW / marineBIOS
 

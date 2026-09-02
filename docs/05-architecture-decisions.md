@@ -367,8 +367,9 @@ the distinction is the reviewable part. At Scripps no threshold separates
 upwelling from instrument error. On MUR there is no instrument to have an
 error: it is an L4 analysis, smoothed in space and time and area-averaged
 again by our own reduction, and reading its own `mask` and
-`analysis_error` fields is the right control instead — filed separately,
-so this change knowingly leaves `mur_sst` with `gross_range` alone.
+`analysis_error` fields is the right control instead
+(https://github.com/cweber12/kelp-compare/issues/137), so this change
+knowingly leaves `mur_sst` with `gross_range` alone.
 
 Easier: a daily series stops being scored with a handicap, by a
 reviewable `data(registry)` edit that never touches code. Harder: "which
