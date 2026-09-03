@@ -19,6 +19,13 @@ move the lightness" construction run the other way round. The arms are then mirr
 images by construction rather than by eye, and `arm_lightness` exposes the profile
 so a test can hold it to the lightness monotonicity that is the documented check
 for a diverging ramp.
+
+Panels are grouped into `Block`s, each drawn against the feature axis its family
+of parameters actually produces, because docs/04 s2 gives the ecological features
+to `sea_water_temperature` alone. One axis for all of them made every wave and met
+panel about 45% hatching -- a page of holes to protect an alignment between rows
+that do not exist in both panels. Rows still line up *within* a block, which is
+where a reader compares, and the label carries what the hatching used to say.
 """
 
 from __future__ import annotations
@@ -30,6 +37,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 
 # --- the reference palette, by role ------------------------------------------
@@ -133,7 +141,26 @@ def _ink_for(rgba: tuple[float, ...]) -> str:
     return INK if on_ink >= on_white else INK_ON_DARK
 
 
-# --- the figure ---------------------------------------------------------------
+# --- the geometry, in inches ---------------------------------------------------
+#
+# Laid out explicitly rather than by `tight_layout`, which solves for the tight
+# bounding boxes of the axes and their titles and so has nowhere to put a band
+# that belongs to neither: a block rule needs room *above* a panel title, and a
+# layout engine that has already packed the title against the row above it has
+# none to give. Every number below is a measured allowance, and the figure size is
+# their sum, so what the page contains is decided here rather than negotiated.
+
+CELL_W = 0.62  #: one lag column
+CELL_H = 0.36  #: one feature row
+TITLE_H = 0.76  #: the lag axis and the two-line panel title above each row
+BLOCK_LABEL_H = 0.44  #: the rule and label heading each block
+TOP_H = 0.78  #: the figure title
+BOTTOM_H = 1.32  #: the colour key, the legend and the caption
+LEFT_W = 0.10  #: the page margin outside the feature labels
+RIGHT_W = 0.20
+COLUMN_GAP = 0.50  #: a panel's right edge to the next column's feature labels
+LABEL_PT = 7.5  #: feature and lag tick labels
+TITLE_PAD = 24  #: points, panel title clear of the lag axis above the grid
 
 
 @dataclass(frozen=True)
@@ -142,9 +169,8 @@ class Panel:
 
     `matrix` is `feature x lag`, as `matrix()` in notebooks/01-lag-screen.ipynb
     returns it. `low_resolution` and `n_eff` are aligned frames of the same shape.
-    A feature absent from `matrix` is *not applicable* to this parameter -- docs/04
-    s2's feature sets are wide and sparse by design -- which the renderer draws as
-    an empty hatched cell rather than as a coefficient of zero.
+    A feature absent from `matrix` is *not applicable* to this parameter, which the
+    renderer draws as an empty hatched cell rather than as a coefficient of zero.
     """
 
     title: str
@@ -154,10 +180,35 @@ class Panel:
     n_eff: pd.DataFrame | None = None
 
 
-def plot_panels(
-    panels: list[Panel],
+@dataclass(frozen=True)
+class Block:
+    """The panels that share one feature axis, and the label naming why they do.
+
+    docs/04 s2 defines the ecological features -- the threshold counts, the degree
+    days, the spell length -- for `sea_water_temperature` alone, so a wave or met
+    panel drawn against the union of every feature is around 45% hatching. A block
+    draws each family against the axis its `feature_set` actually produces
+    (`features.windowed.measured_columns`), so rows line up wherever a comparison
+    is made -- between panels measuring the same family -- and the "not applicable,
+    not zero" distinction is stated once in the label instead of being spelled out
+    five empty rows at a time in every panel that cannot carry them.
+
+    Alignment across *blocks* is given up deliberately, and it is the weaker of the
+    two properties: two panels on different feature sets share no row below the six
+    general statistics, so lining them up buys a reader nothing they can read
+    across. Within a block the union axis still holds and still does its original
+    job -- a sparse panel keeps the rows it has no values for, hatched, because a
+    parameter can decline a feature its own family defines.
+    """
+
+    label: str
+    features: list[str]
+    panels: list[Panel]
+
+
+def plot_screen(
+    blocks: list[Block],
     *,
-    features: list[str],
     lags: list[int],
     title: str,
     caption: str,
@@ -165,37 +216,79 @@ def plot_panels(
     ncols: int = 3,
     dpi: int = 200,
 ) -> mpl.figure.Figure:
-    """A panel grid of lag x feature matrices sharing one scale and one feature axis.
+    """A stack of blocks of lag x feature matrices, all on one colour scale.
 
-    `features` is the union axis every panel is drawn against, so rows line up
-    across panels and a feature not applicable to a parameter reads as a hole
-    rather than as a shorter axis. `limit` sets the symmetric colour scale for
-    *every* panel and is meant to be shared across a whole set of figures: a
-    per-panel scale would repaint a weak bed to look exactly like a strong one.
+    `limit` sets the symmetric colour scale for *every* panel in *every* block, and
+    is meant to be shared across a whole set of figures: a per-panel or per-figure
+    scale would repaint a weak bed to look exactly like a strong one.
     """
-    if not panels:
+    drawn = [block for block in blocks if block.panels]
+    if not drawn:
         raise ValueError("no panels to draw")
     colormap = diverging_colormap()
     norm = mpl.colors.Normalize(vmin=-limit, vmax=limit)
+    ncols = min(ncols, max(len(block.panels) for block in drawn))
 
-    ncols = min(ncols, len(panels))
-    nrows = -(-len(panels) // ncols)
-    fig_w = ncols * (len(lags) * 0.62 + 1.95) + 0.6
-    fig_h = nrows * (len(features) * 0.36 + 1.25) + 1.5
+    # Room for the longest feature label in the figure, taken once and applied to
+    # every column, so a temperature block and a met block start their grids at the
+    # same x and a cell keeps its width down the page.
+    longest = max(len(feature) for block in drawn for feature in block.features)
+    label_w = 0.0075 * LABEL_PT * longest + 0.16
+    panel_w = len(lags) * CELL_W
+    column_w = label_w + panel_w + COLUMN_GAP
+
+    fig_w = LEFT_W + ncols * column_w - COLUMN_GAP + RIGHT_W
+    fig_h = TOP_H + BOTTOM_H + sum(_block_height(block, ncols) for block in drawn)
     fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor=SURFACE)
-    axes = fig.subplots(nrows, ncols, squeeze=False)
 
-    for index, ax in enumerate(axes.flat):
-        if index >= len(panels):
-            ax.set_visible(False)
-            continue
-        _draw_panel(ax, panels[index], features, lags, colormap, norm)
+    # Inches from the bottom, walking down the page: the reading order, and the
+    # only order in which "this block starts here" is a statement about a page
+    # whose height nothing has yet decided.
+    cursor = fig_h - TOP_H
+    for block in drawn:
+        cursor -= BLOCK_LABEL_H
+        _draw_block_label(fig, block, cursor / fig_h)
+        rows = [block.panels[start : start + ncols] for start in range(0, len(block.panels), ncols)]
+        grid_h = len(block.features) * CELL_H
+        for row in rows:
+            cursor -= TITLE_H + grid_h
+            for column, panel in enumerate(row):
+                left = LEFT_W + column * column_w + label_w
+                ax = fig.add_axes((left / fig_w, cursor / fig_h, panel_w / fig_w, grid_h / fig_h))
+                _draw_panel(ax, panel, block.features, lags, colormap, norm)
 
-    fig.suptitle(title, x=0.008, y=0.988, ha="left", fontsize=15, color=INK, weight="bold")
-    fig.tight_layout(rect=(0.0, 0.075, 1.0, 0.945))
-    _draw_key(fig, colormap, norm, limit)
-    fig.text(0.008, 0.008, caption, ha="left", va="bottom", fontsize=7.5, color=SECONDARY)
+    fig.suptitle(
+        title, x=0.008, y=1 - 0.34 / fig_h, ha="left", fontsize=15, color=INK, weight="bold"
+    )
+    _draw_key(fig, colormap, norm, limit, fig_h)
+    fig.text(0.008, 0.14 / fig_h, caption, ha="left", va="bottom", fontsize=7.5, color=SECONDARY)
     return fig
+
+
+def _block_height(block: Block, ncols: int) -> float:
+    """Inches: the block's rule and label, then a title and a grid per row."""
+    rows = -(-len(block.panels) // ncols)
+    return BLOCK_LABEL_H + rows * (TITLE_H + len(block.features) * CELL_H)
+
+
+def _draw_block_label(fig, block: Block, y: float) -> None:
+    """The rule and label heading one block.
+
+    The rule runs the full width rather than sitting over the first panel: it is a
+    statement about every panel below it -- that these are the features this family
+    of parameters produces -- and a short rule would read as a heading for one.
+    """
+    fig.add_artist(Line2D([0.008, 0.992], [y, y], color=GRIDLINE, linewidth=0.9, zorder=0))
+    fig.text(
+        0.008,
+        y + 4 / 72 / fig.get_figheight(),
+        block.label,
+        ha="left",
+        va="bottom",
+        fontsize=8.5,
+        color=SECONDARY,
+        weight="bold",
+    )
 
 
 def _draw_panel(ax, panel: Panel, features, lags, colormap, norm) -> None:
@@ -215,7 +308,7 @@ def _draw_panel(ax, panel: Panel, features, lags, colormap, norm) -> None:
         fontsize=8.5,
         color=INK,
         loc="left",
-        pad=24,
+        pad=TITLE_PAD,
         linespacing=1.6,
     )
 
@@ -280,8 +373,14 @@ def _at(frame: pd.DataFrame | None, row, column):
     return frame.loc[row, column]
 
 
-def _draw_key(fig, colormap, norm, limit: float) -> None:
-    bar = fig.add_axes((0.008, 0.042, 0.26, 0.011))
+def _draw_key(fig, colormap, norm, limit: float, fig_h: float) -> None:
+    """The colourbar, and the two marks that are not coefficients.
+
+    Placed in inches off the bottom rather than at a figure fraction, so the key
+    sits the same distance from the caption whether the figure is three rows tall
+    or seven. A fraction would slide it up the page as blocks are added.
+    """
+    bar = fig.add_axes((0.008, 0.72 / fig_h, 0.26, 0.19 / fig_h))
     colorbar = fig.colorbar(
         mpl.cm.ScalarMappable(norm=norm, cmap=colormap), cax=bar, orientation="horizontal"
     )
@@ -307,7 +406,7 @@ def _draw_key(fig, colormap, norm, limit: float) -> None:
             ),
         ],
         loc="lower right",
-        bbox_to_anchor=(0.992, 0.026),
+        bbox_to_anchor=(0.992, 0.45 / fig_h),
         ncols=2,
         frameon=False,
         fontsize=7.5,
