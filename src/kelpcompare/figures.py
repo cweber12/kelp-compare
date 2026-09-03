@@ -37,8 +37,10 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.font_manager import FontProperties
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
+from matplotlib.textpath import TextPath
 
 # --- the reference palette, by role ------------------------------------------
 
@@ -414,3 +416,356 @@ def _draw_key(fig, colormap, norm, limit: float, fig_h: float) -> None:
         handlelength=1.7,
         handleheight=1.2,
     )
+
+
+# --- the ranked signal plot ----------------------------------------------------
+#
+# The screen's own output is a ranking, and until now nothing drew it. The grid
+# above answers "what did every cell come out at"; this answers "which of them is
+# worth a second look" -- the question docs/04 s4.1 exists to answer, and the one
+# a 2,145-cell grid answers worst.
+
+ROW_H = 0.30  #: one signal row
+RANK_AXIS_W = 4.40  #: the signed r axis
+SPARK_W = 0.95  #: the lag profile beside each row
+NEFF_W = 0.66  #: the effective sample size, printed as well as sized
+GUTTER = 0.26
+LABEL_PT_RANK = 8.0
+DETAIL_PT = 7.2
+DOT_MIN = 14.0  #: point^2, at the smallest n_eff in the figure
+DOT_MAX = 108.0
+
+
+@dataclass(frozen=True)
+class SignalRow:
+    """One row of the ranked plot, and everything that qualifies it.
+
+    `r` places the dot and `n_eff` sizes it -- the two numbers the grid crowds into
+    one cell, separated onto position and area so the ranking reads down the page
+    without anyone reading a number.
+
+    `members` are the r of the other eligible cells this signal merged, drawn as
+    ticks on the same row. docs/04 s5 collapses cells agreeing on polygon, feature
+    and lag into one claim measured more than once; drawn, that claim can be
+    checked against how closely they actually agree rather than taken on trust --
+    which is what `notebooks/README.md` asks a reader to do by hand for the La
+    Jolla signal, and what nothing in the repo drew.
+
+    `profile` is r at every lag for the same series and feature, `profile_at` this
+    row's lag. A signal flat across all five lags is one whose lag won a lottery
+    rather than found a peak, and no ranking can tell those apart by itself.
+    """
+
+    label: str
+    detail: str
+    r: float
+    n_eff: float
+    members: tuple[float, ...] = ()
+    profile: tuple[float, ...] = ()
+    profile_at: int | None = None
+    role: str = "predictor"
+    registered: bool = False
+
+
+def _text_width(text: str, size: float, weight: str = "normal") -> float:
+    """Inches this string occupies, measured rather than estimated per character.
+
+    A per-character estimate is what put `degree_days_above_18c` through the column
+    beside it: proportional glyphs, and a bold row is wider than the same string
+    unbold. `TextPath` reports the real advance width without needing a renderer,
+    so the column can be sized before the figure it belongs to exists.
+    """
+    path = TextPath((0, 0), text, size=size, prop=FontProperties(size=size, weight=weight))
+    return float(path.get_extents().width) / 72.0
+
+
+def plot_ranked(
+    rows: list[SignalRow],
+    excluded: list[SignalRow] | None = None,
+    *,
+    title: str,
+    caption: str,
+    limit: float,
+    subtitle: str = "",
+    excluded_label: str = "withheld by the gate -- shown to be audited, not ranked",
+    dpi: int = 200,
+) -> mpl.figure.Figure:
+    """Signals down the page, |r| descending, controls interleaved and marked.
+
+    `excluded` rows are drawn under their own rule, below everything ranked and
+    never among it. They are the cells the candidate gate withheld: worth seeing,
+    so the gate can be audited, and not worth ranking -- ranking a withheld cell is
+    the exact invitation the gate exists to remove.
+    """
+    excluded = list(excluded or [])
+    if not rows and not excluded:
+        raise ValueError("no rows to draw")
+
+    every = [*rows, *excluded]
+    label_w = (
+        max(_text_width(_label_of(row), LABEL_PT_RANK, _weight_of(row)) for row in every) + 0.22
+    )
+    detail_w = max(_text_width(row.detail, DETAIL_PT) for row in every) + 0.26
+
+    gap_rows = BLOCK_LABEL_H / ROW_H if excluded else 0.0
+    total_rows = len(rows) + len(excluded) + gap_rows
+
+    fig_w = LEFT_W + label_w + detail_w + RANK_AXIS_W + GUTTER + NEFF_W + SPARK_W + RIGHT_W
+    body_h = total_rows * ROW_H
+    head_h = TOP_H + (0.28 if subtitle else 0.0) + 0.44
+    fig_h = head_h + body_h + BOTTOM_H
+    fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor=SURFACE)
+
+    axis_left = LEFT_W + label_w + detail_w
+    top = fig_h - head_h
+
+    dots = fig.add_axes(
+        (axis_left / fig_w, (top - body_h) / fig_h, RANK_AXIS_W / fig_w, body_h / fig_h)
+    )
+    _prepare_rank_axis(dots, limit, total_rows)
+
+    # Headers for the two columns that are numbers rather than an axis. The key
+    # below says what they mean; these say which is which without a trip to it.
+    neff_x = axis_left + RANK_AXIS_W + GUTTER + NEFF_W
+    for x, text, align in (
+        (neff_x, "n_eff", "right"),
+        (neff_x + 0.08 + (SPARK_W - 0.14) / 2, "lags 0-4", "center"),
+    ):
+        fig.text(
+            x / fig_w,
+            (top + 0.10) / fig_h,
+            text,
+            ha=align,
+            va="bottom",
+            fontsize=7.5,
+            color=SECONDARY,
+        )
+
+    sizes = _dot_sizes([row.n_eff for row in every])
+    for index, row in enumerate(every):
+        # One row-unit coordinate for both halves of a row. Keeping the gap in
+        # inches for the labels and in rows for the dots is what slid every
+        # withheld row off its own dot the first time this was drawn.
+        centre = index + 0.5 + (gap_rows if index >= len(rows) else 0.0)
+        _draw_rank_row(
+            fig,
+            dots,
+            row,
+            centre=centre,
+            size=sizes[index],
+            limit=limit,
+            withheld=index >= len(rows),
+            geometry=(fig_w, fig_h, top, axis_left, label_w),
+        )
+
+    if excluded:
+        y = (top - (len(rows) + gap_rows / 2) * ROW_H) / fig_h
+        fig.add_artist(
+            Line2D([LEFT_W / fig_w, 1 - RIGHT_W / fig_w], [y, y], color=GRIDLINE, linewidth=0.9)
+        )
+        fig.text(
+            LEFT_W / fig_w,
+            y + 4 / 72 / fig_h,
+            excluded_label,
+            ha="left",
+            va="bottom",
+            fontsize=7.5,
+            color=MUTED,
+            weight="bold",
+        )
+
+    fig.suptitle(
+        title, x=0.008, y=1 - 0.34 / fig_h, ha="left", fontsize=15, color=INK, weight="bold"
+    )
+    if subtitle:
+        fig.text(
+            0.008, 1 - 0.64 / fig_h, subtitle, ha="left", va="top", fontsize=9, color=SECONDARY
+        )
+    _draw_rank_key(fig, fig_h)
+    fig.text(0.008, 0.14 / fig_h, caption, ha="left", va="bottom", fontsize=7.5, color=SECONDARY)
+    return fig
+
+
+def _label_of(row: SignalRow) -> str:
+    return f"* {row.label}" if row.registered else row.label
+
+
+def _weight_of(row: SignalRow) -> str:
+    return "bold" if row.registered else "normal"
+
+
+def _dot_sizes(n_eff: list[float]) -> list[float]:
+    """Area proportional to `n_eff`, over the range this figure actually spans.
+
+    Area rather than radius, because area is what a reader compares. Over the
+    figure's own range rather than an absolute one, because the question is which
+    of *these* coefficients rests on more evidence: a fixed scale would put a pool
+    running from 30 to 160 into one indistinguishable size.
+    """
+    low, high = min(n_eff), max(n_eff)
+    if high - low < 1e-9:
+        return [0.5 * (DOT_MIN + DOT_MAX)] * len(n_eff)
+    return [DOT_MIN + (DOT_MAX - DOT_MIN) * (value - low) / (high - low) for value in n_eff]
+
+
+def _prepare_rank_axis(ax, limit: float, total_rows: float) -> None:
+    ax.set_facecolor(SURFACE)
+    ax.set_xlim(-limit, limit)
+    ax.set_ylim(total_rows, 0)
+    ax.set_yticks([])
+    ticks = [-limit, -limit / 2, 0, limit / 2, limit]
+    ax.set_xticks(ticks, ["0" if value == 0 else f"{value:+.2f}" for value in ticks])
+    ax.xaxis.set_ticks_position("top")
+    ax.tick_params(length=0, labelsize=7.5, colors=SECONDARY, pad=3)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    for value in ticks:
+        ax.axvline(
+            value,
+            color=INK if value == 0 else GRIDLINE,
+            linewidth=0.9 if value == 0 else 0.6,
+            zorder=0,
+        )
+
+
+def _draw_rank_row(fig, dots, row: SignalRow, *, centre, size, limit, withheld, geometry) -> None:
+    """One row: its two labels, the cells it merged, its dot, its n_eff, its profile."""
+    fig_w, fig_h, top, axis_left, label_w = geometry
+    ink = MUTED if withheld else (SECONDARY if row.role == "control" else INK)
+
+    # Members first, so the dot standing for the signal is drawn over them.
+    if row.members:
+        reach = (*row.members, row.r)
+        dots.plot(
+            [max(min(reach), -limit), min(max(reach), limit)],
+            [centre, centre],
+            color=ink,
+            linewidth=0.8,
+            alpha=0.35,
+            zorder=1,
+        )
+    for member in row.members:
+        if abs(member) <= limit:
+            dots.plot(
+                [member],
+                [centre],
+                marker="|",
+                markersize=7,
+                markeredgewidth=1.1,
+                color=ink,
+                alpha=0.6,
+                zorder=2,
+            )
+
+    # A coefficient past the end of the scale is drawn as a caret at the edge, not
+    # dropped. The strongest |r| in this screen belongs to a withheld cell resting
+    # on an n_eff of 9, and a scale that silently swallowed it would hide the one
+    # row that shows what the gate is for.
+    if abs(row.r) > limit:
+        dots.plot(
+            [limit * 0.985 * np.sign(row.r)],
+            [centre],
+            marker=">" if row.r > 0 else "<",
+            markersize=6.5,
+            color=ink,
+            zorder=3,
+        )
+    else:
+        dots.scatter(
+            [row.r],
+            [centre],
+            s=size,
+            facecolor=SURFACE if withheld else ink,
+            edgecolor=ink,
+            linewidth=1.0,
+            zorder=3,
+        )
+
+    baseline = (top - centre * ROW_H) / fig_h
+    fig.text(
+        LEFT_W / fig_w,
+        baseline,
+        _label_of(row),
+        ha="left",
+        va="center",
+        fontsize=LABEL_PT_RANK,
+        color=ink,
+        weight=_weight_of(row),
+    )
+    fig.text(
+        (LEFT_W + label_w) / fig_w,
+        baseline,
+        row.detail,
+        ha="left",
+        va="center",
+        fontsize=DETAIL_PT,
+        color=MUTED,
+    )
+    reading = f"{row.r:+.2f}" if abs(row.r) > limit else f"{row.n_eff:.0f}"
+    fig.text(
+        (axis_left + RANK_AXIS_W + GUTTER + NEFF_W) / fig_w,
+        baseline,
+        reading,
+        ha="right",
+        va="center",
+        fontsize=DETAIL_PT,
+        color=SECONDARY,
+    )
+    if len(row.profile) > 1:
+        _draw_sparkline(fig, row, fig_w, fig_h, axis_left, baseline, ink)
+
+
+def _draw_sparkline(fig, row: SignalRow, fig_w, fig_h, axis_left, baseline, ink) -> None:
+    """r across every lag, on the profile's own scale, with this row's lag marked.
+
+    Scaled to its own extent rather than to the figure's `limit`: a sparkline
+    answers a question about shape -- peak or plateau -- and a shared scale would
+    flatten every profile on a weak series into the same straight line and answer
+    it wrongly.
+    """
+    left = axis_left + RANK_AXIS_W + GUTTER + NEFF_W + 0.08
+    height = ROW_H * 0.62
+    ax = fig.add_axes(
+        (left / fig_w, baseline - height / 2 / fig_h, (SPARK_W - 0.14) / fig_w, height / fig_h)
+    )
+    values = [value for value in row.profile if not pd.isna(value)]
+    span = max(abs(min(values)), abs(max(values))) if values else 1.0
+    ax.set_facecolor(SURFACE)
+    ax.set_ylim(-span * 1.3, span * 1.3)
+    ax.set_xlim(-0.4, len(row.profile) - 0.6)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.axhline(0, color=GRIDLINE, linewidth=0.6)
+    ax.plot(range(len(row.profile)), row.profile, color=ink, linewidth=1.0, alpha=0.85)
+    if row.profile_at is not None:
+        ax.plot(
+            [row.profile_at],
+            [row.profile[row.profile_at]],
+            marker="o",
+            markersize=3.0,
+            color=ink,
+        )
+
+
+def _draw_rank_key(fig, fig_h: float) -> None:
+    """What the dot, the tick, the caret and the star mean."""
+    for offset, text in (
+        (
+            0.86,
+            (
+                "dot: Pearson r of the cell standing for the signal, sized by n_eff   |   "
+                "tick: an eligible cell the signal merged   |   * pre-registered"
+            ),
+        ),
+        (
+            0.62,
+            (
+                "grey rows are docs/04 s5 controls, screened on the same gate and never "
+                "registered   |   a caret is an r past the end of the scale, printed "
+                "instead of n_eff   |   right-hand column: n_eff, then r across lags 0-4"
+            ),
+        ),
+    ):
+        fig.text(0.008, offset / fig_h, text, ha="left", va="bottom", fontsize=7.5, color=SECONDARY)
