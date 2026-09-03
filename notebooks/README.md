@@ -72,8 +72,12 @@ its own still says what it came from.
 *Rendering is a package module, not notebook code.* `kelpcompare.figures` draws a
 matrix it is handed and computes nothing, which keeps around figures the split
 hard rule 6 draws around the dashboard: a change to a colour ramp cannot move a
-number in an analysis of record. What to draw, over which series, and on what
-scale stays in the notebook, where the science is.
+number in an analysis of record. What to draw, over which series, on what feature
+axis and on what scale stays in the notebook, where the science is. The axis is
+itself read from `features.json` rather than restated, because the feature
+columns are named after the thresholds (docs/03): a threshold retuned in the
+registry renames its column, and a figure holding its own copy of the axis would
+go on drawing a feature set the table no longer has.
 
 **Nothing stochastic without a seed.** Nothing in these notebooks is stochastic
 yet; when something is, seed it in the first cell.
