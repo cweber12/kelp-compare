@@ -810,3 +810,41 @@ are comparable. Sensor deployments are short relative to the kelp record;
 early analyses will lean on public stations for the historical period and
 use project sensors for the recent overlap, with the spatial signal test
 (4.5) confined to the overlap window.
+
+### Regional oceanography that bounds what any of this can resolve
+
+Four published results about this shelf, added 2026-09-02. None changes a method
+above; each bounds how a result from it should be read, and all four were
+previously carried on recall rather than cited.
+
+- **Remote forcing dominates local forcing.** Hickey, Dobbins & Allen 2003
+  (*JGR Oceans* 108:3081) find poleward-propagating disturbances explain **≥40 %**
+  of subtidal velocity variance in the Southern California Bight, exceeding local
+  wind. So a large share of what any two nearshore records here share is regional
+  and arrives at both regardless of separation. That is a ceiling on §4.5: a
+  project sensor and a public station 8 km away are not two independent views of
+  local conditions, and the fraction of agreement that is regional is not small.
+
+- **Depth differences are largely a phase lag, and quarters absorb it.** Gelpi &
+  Norris 2008 (*JGR Oceans* 113:C04034) find the seasonal cycle at 30 m peaks
+  about **six weeks** after 5 m, with vertical eddy diffusivity ~10⁻⁴ m² s⁻¹. A
+  quarter is thirteen weeks, so a quarterly mean absorbs most of that. §1 predicts
+  correlation should degrade with a depth gap; at this cadence it largely should
+  not, which is the finding reported at
+  `https://github.com/cweber12/kelp-compare/issues/74` and bears on the 5.0 m
+  neighbour tolerance at
+  `https://github.com/cweber12/kelp-compare/issues/73`.
+
+- **There is a published regional climatology to frame ours against.** Kim &
+  Cornuelle 2015 (*Prog. Oceanogr.* 138:136) give a multivariate-regression T/S
+  climatology for this coast with seasonal cycles, climate-index correlations and
+  trends. The 2007–2019 baseline in §3 is currently justified only against this
+  project's own records; an external one is what would show whether its
+  heatwave-inflated warm season is unusual as a baseline or ordinary.
+
+- **The century-scale record needs a correction before it is a trend.**
+  Rasmussen et al. 2020 (*JGR Oceans* 125:e2019JC015673) correct the Scripps Pier
+  series for sampling-time drift: adjusted **+1.24 °C/century surface, +1.67 at
+  depth**, with raw trends overstating by ~0.2 °C/century. Immaterial to a 13-year
+  anomaly baseline, and decisive for any warming rate quoted from that record.
+  docs/02 carries the detail.
