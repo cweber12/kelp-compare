@@ -585,20 +585,34 @@ result off this series.
 
 ### Distances, measured against the recorded outlines
 
-Geodesic, from 32.93 / −117.32 to each polygon centroid:
+Nearest-point distance in EPSG:32611, which is the convention the pairing rule
+and `tests/test_polygons.py` use — not centroid distance, which is longer and
+would have read as pairable for a bed that is not:
 
 | Polygon | Distance | Paired |
 |---|---|---|
-| `KELP:DEL-MAR` | 4.91 km | yes |
-| `KELP:SOLANA-BEACH` | 7.58 km | yes |
-| `KELP:ENCINITAS` | 10.74 km | **no** — outside the 8 km rule |
-| `KELP:LA-JOLLA` | 11.77 km | no |
-| `KELP:SAN-DIEGO` | 26.71 km | no |
-| `KELP:IMPERIAL-BEACH` | 42.91 km | no |
+| `KELP:DEL-MAR` | 4,546 m | yes |
+| `KELP:SOLANA-BEACH` | 6,453 m | yes |
+| `KELP:LA-JOLLA` | 8,756 m | no |
+| `KELP:ENCINITAS` | 8,998 m | **no** — 998 m past the 8 km rule |
+| `KELP:SAN-DIEGO` | 21,127 m | no |
+| `KELP:IMPERIAL-BEACH` | 40,913 m | no |
 
 Encinitas is the one that stings: it is the third of the three beds
-`NDBC:46266` serves, and it is 2.7 km past the rule. It is left unpaired rather
-than have the rule bent for the bed that would most like an exception.
+`NDBC:46266` serves, and it misses by 998 m. It is left unpaired rather than
+have the rule bent for the bed that would most like an exception.
+
+**Landing this station narrowed the gap the 8 km radius sits in**, which
+`tests/test_polygons.py` asserts on. At 6,453 m to Solana Beach it is now the
+nearest station inside the radius, cutting the clearance below the boundary
+from 2,375 m to 1,547 m. The radius still sits in a gap and no pairing changes.
+
+That test previously required the *total* gap to exceed 2,000 m, and was
+satisfied by 2,744 m — of which only 369 m lay above the boundary, at
+`NDBC:46254` → `KELP:DEL-MAR`. Summing the two sides hid the thin one. The
+assertion is now made on each side separately, so the 369 m clearance is
+visible rather than averaged away; it predates this station and is tracked at
+`https://github.com/cweber12/kelp-compare/issues/148`.
 
 ### Other quirks
 
