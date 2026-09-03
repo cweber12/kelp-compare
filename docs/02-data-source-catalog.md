@@ -18,6 +18,7 @@ implementation, since public endpoints and formats drift.
 | NOAA CO-OPS | Water level, coastal water temp | REST API (JSON/CSV) | 6 min / hourly | JSON, CSV |
 | SCCOOS / CalOOS | Shore stations, HABs, currents | ERDDAP (tabledap/griddap) | Varies | CSV, NetCDF, JSON |
 | City of San Diego RTOMS | Depth-resolved reference temperature | CeNCOOS ERDDAP (tabledap) | 10 min | CSV |
+| Del Mar shelf mooring | Reference temperature for the North County beds | SCCOOS ERDDAP (tabledap) | 20 min | CSV |
 | SIO Shore Stations | Century-scale reference temperature | Hand-downloaded CSV, dropped in `raw/sio_shore_stations/incoming/` | Daily | CSV |
 | CDIP | Wave climate | THREDDS/ERDDAP NetCDF | 30 min | NetCDF |
 | CDFW / marineBIOS | GIS context, historical kelp surveys | Downloaded shapefiles/services | Static / annual | Shapefile, GeoJSON |
@@ -466,6 +467,167 @@ into our flag scheme rather than discard; HAB counts are discrete sampling
 (roughly weekly), not continuous, and are treated as event/covariate data;
 HF-radar surface currents are gridded and only pulled if the analysis
 reaches transport questions (deferred).
+
+## Del Mar shelf mooring — SIO/SCCOOS
+
+The first SCCOOS dataset this project ingests, and the reason it is worth the
+module is a hole docs/04 §4.5 names in its own words: `NDBC:46266` sits inside
+`KELP:DEL-MAR` and is the nearest station to three beds, "but its record begins
+2019-12 and clears no baseline under §3, so it enters the §4.1 screen with a
+null environmental side." The three North County beds have had no local series
+carrying an anomaly. This mooring's 1 m record runs from 2006 and does.
+
+Run by the Send/Nam group at SIO (`mooring.ucsd.edu/delmar1/`), on the ~90 m
+shelf off Del Mar. It reached this project through an external source bundle
+(the triage section below); every number here was measured from the served
+record on 2026-09-02, because three of the bundle's claims about it are wrong.
+
+### It is two datasets, not one, and it carries less than advertised
+
+The bundle names one ERDDAP dataset `delmar` carrying "temperature, salinity,
+dissolved oxygen, chlorophyll, currents". Checked on 2026-09-02:
+`erddap.sccoos.org/erddap/info/delmar/index.json` returns **404**. What exists
+is `delmar_temperature` and `delmar_salinity`, and **there is no oxygen or
+chlorophyll dataset on this server at all** — a search of the SCCOOS ERDDAP for
+Del Mar returns those two and nothing else. The dissolved-oxygen record behind
+Nam et al. 2011 is not served here, and anyone reaching for a carbonate or
+hypoxia covariate on the strength of the bundle's description will not find one.
+
+Only `delmar_temperature` is read. Salinity would need a `parameters.json` entry
+whose QC bounds nothing in this repo has evidence for, and docs/03 is explicit
+that a missing threshold never becomes a default guess.
+
+### The depths are columns, and the string grew over the record
+
+`tabledap` serves this as one row per timestamp with a **column per depth** —
+`T_1m, T_6m, T_15m, T_21m, T_32m, T_45m, T_57m, T_72m, T_90m` — not as RTOMS's
+`z`-per-row profile. So the parse is a melt, and the registry's declared depth
+set is checkable against the *header* rather than per row: a column that is not
+declared is a sensor nobody has reviewed, and it is visible before a single
+value is read.
+
+The nine depths are not nine series. Measured over all 371,657 served rows
+(2006-02-28T09:20Z to 2021-05-05T21:00Z, median interval 1200 s):
+
+| Column | First reading | Last | What it is |
+|---|---|---|---|
+| `T_1m` | 2006-02-28 | 2021-05-05 | the whole record |
+| `T_15m` | 2006-02-28 | 2021-05-05 | continuous to 2015, **nothing in 2016–2018**, resumes 2019 |
+| `T_90m` | 2016-05-06 | 2021-05-05 | added mid-record |
+| `T_6m`, `T_21m`, `T_32m`, `T_45m`, `T_57m`, `T_72m` | 2018-11-16 | 2021-05-05 | the full string, only from the 2018 refit |
+
+Six of the nine begin **later than `NDBC:46266`**, which is the station whose
+short record created the problem this source was adopted to solve. They are
+landed anyway — the observations zone stores series and the features layer
+decides usability — but nothing should be built on them.
+
+### One depth clears the baseline, and it is the shallow one
+
+Computed under this project's own rule (`features.json`: 2007–2019,
+`min_years` 10, `coverage_floor` 0.6, `expected_obs` from each series' own
+median interval), usable complete years inside the canonical window:
+
+| Series | Q1 | Q2 | Q3 | Q4 | Clears? |
+|---|---|---|---|---|---|
+| `T_1m` | 13 | 12 | 12 | 12 | **yes** |
+| `T_15m` | 9 | 8 | 10 | 8 | no |
+| `T_90m` | 2 | 2 | 2 | 2 | no |
+| the six 2018 depths | 1 | ≤1 | 1 | ≤1 | no |
+
+So the anomaly-carrying series this source contributes is **1 m water
+temperature**, and that is a weaker claim than "a depth-resolved mooring".
+It is still the thing the North County beds did not have: an in-water
+instrument on a fixed mooring at 20-minute cadence from 2006, as against a
+satellite L4 analysis and a wave buoy that starts in 2019.
+
+**`T_15m` misses, and a declared window would rescue it — that is not done
+here.** Over 2006–2020 it holds Q1=10, Q2=10, Q3=12, Q4=10, exactly at the
+minimum in three quarters. ADR-007 allows a declared baseline override, but its
+stated rationale is a record that *post-dates* the canonical window, and this is
+a record with a three-year hole in the middle of it. Whether that shape earns an
+override is a policy question rather than an ingest one, and 15 m is the depth
+kelp actually lives at, so it is worth deciding deliberately:
+`https://github.com/cweber12/kelp-compare/issues/147`.
+
+### The longitude is served in the wrong hemisphere
+
+Every row reports `longitude = 117.32` under `units = degrees_east`. The mooring
+is at **−117.32**; +117.32 is in western China. This is not a metadata typo to
+note and move past — it is on all 371,657 data rows, and a spatial join that
+took it at face value would silently pair these readings with no bed at all.
+
+Handled the way the RTOMS module handles the `z` sign flip: asserted at the
+boundary. The parse **refuses a positive longitude** rather than negating it
+quietly, and the site's position comes from `sites.json` regardless. If the
+provider ever corrects the sign, the parse fails loudly and this entry gets
+revisited — which is the outcome to want, because a silent correction upstream
+would otherwise flip every landed row's meaning with nothing on the file to say
+so.
+
+Latitude (`32.93`, `degrees_north`) is correct and consistent with
+`mooring.ucsd.edu/delmar1/`.
+
+### There are no provider QC flags, and that is a first here
+
+Both datasets are titled `*** PRELIMINARY, No QA/QC info ***`, and they mean it:
+there is no `_qc_agg`, no `_qc_tests`, no flag column of any kind. Every other
+pulled source in this catalogue arrives with at least some provider verdict —
+RTOMS hands over a QARTOD roll-up already in the docs/03 vocabulary, NDBC ships
+its own screening.
+
+The consequence is worth stating plainly: for this source `kelpcompare qc` is
+not a second opinion, it is the only opinion. Rows land flagged
+`2 / not evaluated` and the `parameters.json` bounds are the whole of the
+quality control. That is the same position the project's own TidbiT loggers are
+in, so the machinery exists — but a `PRELIMINARY` label from the provider plus
+no independent check is a combination that belongs in front of anyone reading a
+result off this series.
+
+### Distances, measured against the recorded outlines
+
+Nearest-point distance in EPSG:32611, which is the convention the pairing rule
+and `tests/test_polygons.py` use — not centroid distance, which is longer and
+would have read as pairable for a bed that is not:
+
+| Polygon | Distance | Paired |
+|---|---|---|
+| `KELP:DEL-MAR` | 4,546 m | yes |
+| `KELP:SOLANA-BEACH` | 6,453 m | yes |
+| `KELP:LA-JOLLA` | 8,756 m | no |
+| `KELP:ENCINITAS` | 8,998 m | **no** — 998 m past the 8 km rule |
+| `KELP:SAN-DIEGO` | 21,127 m | no |
+| `KELP:IMPERIAL-BEACH` | 40,913 m | no |
+
+Encinitas is the one that stings: it is the third of the three beds
+`NDBC:46266` serves, and it misses by 998 m. It is left unpaired rather than
+have the rule bent for the bed that would most like an exception.
+
+**Landing this station narrowed the gap the 8 km radius sits in**, which
+`tests/test_polygons.py` asserts on. At 6,453 m to Solana Beach it is now the
+nearest station inside the radius, cutting the clearance below the boundary
+from 2,375 m to 1,547 m. The radius still sits in a gap and no pairing changes.
+
+That test previously required the *total* gap to exceed 2,000 m, and was
+satisfied by 2,744 m — of which only 369 m lay above the boundary, at
+`NDBC:46254` → `KELP:DEL-MAR`. Summing the two sides hid the thin one. The
+assertion is now made on each side separately, so the 369 m clearance is
+visible rather than averaged away; it predates this station and is tracked at
+`https://github.com/cweber12/kelp-compare/issues/148`.
+
+### Other quirks
+
+- **The record is closed.** It ends 2021-05-05 and the mooring is not currently
+  reporting, so a realtime window matches nothing and is recorded as a gap on
+  every run. That is a true statement about the record rather than a defect, and
+  the fetcher's message says so instead of leaving a bare "no rows".
+- **Servicing gaps are real and large.** The longest is 59.3 days; June 2013 and
+  June 2015 return no rows at all. `pct_coverage` sees them, which is the point.
+- **ERDDAP answers `If-Modified-Since` with `200` and the whole body**, verified
+  for RTOMS on 2026-08-28 and unchanged here. `validators` is accepted and
+  ignored; this module never raises `NotModified`. A re-run is made cheap by
+  asking for a narrower window instead.
+- The whole 15-year record is 30.6 MB and served in about 4 s, so a backfill is
+  one request per year and no volume concern.
 
 ## City of San Diego RTOMS
 
@@ -1763,6 +1925,80 @@ Two of the bundle's own gaps bear on any later use of it: it is missing
 `san_diego_kelp_monitoring_site_tables.md`, the `site_code` legend everything in
 it joins through, and its Wirewalker `chla` / `par` / `backscatter` channels
 carry no units and are blocked behind an unanswered question to the authors.
+
+**Passes 11–20 reviewed 2026-09-02, and they are mostly not sources.** The
+bundle's own `CHANGELOG.md` carries an ingestion ledger; the triage above covers
+passes 1–10, which that ledger marks `INGESTED`. Ten further passes have since
+been appended. Between them they add **two source sections and roughly thirty
+literature rows**, and the literature is nearly all transect ecology for the
+other project — urchin size-frequency, fish checklists, patch-dynamics history —
+with no `timestamp / site_id / parameter / value / qc_flag` shape and nothing
+keyed to a `polygon_id`. The general reason is the one already given above for
+§1b/§1c/§1f. What follows is only what departs from it.
+
+**Adopted: §8f, the Del Mar shelf mooring**, which has its own entry above. Its
+description in the bundle is wrong in three ways that the entry records with
+measurements, the worst being a dissolved-oxygen and chlorophyll record that
+does not exist on the server.
+
+**Not adopted, and it needs a decision rather than a fetcher: §9e**, CDFW
+commercial landings via CALFISH (Dryad `10.25349/D9M907`, also the `wcfish` R
+package), with the Administrative Kelp Beds polygons `[ds3135]` and Commercial
+Fishing Blocks `[ds3204]` needed to map a landings block onto a bed. This is
+worth having and the CDFW entry above already says why in its own table: Point
+Loma was commercially harvested for decades, harvest is direct canopy removal,
+and on `KELP:SAN-DIEGO` it would read as environmental decline in an anomaly
+series. The bundle supplies the access route that entry calls "implementation's
+first job", so what was missing is now known.
+
+It is still not a fetcher. The payload is **annual tonnage keyed to an
+administrative bed** — no timestamp grain, no `site_id`, no QC vocabulary — so
+landing it in `observations/` would mean deciding what a non-time-series is,
+which is exactly the question PRD
+`https://github.com/cweber12/kelp-compare/issues/93` owns. Recorded there rather
+than built here.
+
+**Four literature rows bear on open questions and are cited rather than filed.**
+Unlike the rest of §10 these are about records this project already holds:
+
+- **Rasmussen et al. 2020**, *JGR Oceans* 125:e2019JC015673 — the QA paper for
+  the SIO Shore Stations record ingested above. Sampling-time bias corrections
+  give adjusted trends of +1.24 °C/century at the surface and +1.67 at depth,
+  against raw trends that overstate by roughly 0.2 °C/century. The SIO entry
+  above documents that record's flags, its PST convention and its two depths,
+  and carries no sampling-time caveat; it should.
+- **Gelpi & Norris 2008**, *JGR Oceans* 113:C04034 — in the Southern California
+  Bight, 30 m temperature peaks about six weeks after 5 m, with vertical eddy
+  diffusivity around 10⁻⁴ m² s⁻¹. That is published evidence bearing on
+  `https://github.com/cweber12/kelp-compare/issues/74` (correlation did not
+  degrade with the depth gap, which docs/04 §1 predicts it should) and on the
+  5.0 m neighbour depth tolerance set on one summer,
+  `https://github.com/cweber12/kelp-compare/issues/73`.
+- **Hickey, Dobbins & Allen 2003**, *JGR Oceans* 108:3081 — poleward-propagating
+  remote disturbances explain at least 40 % of subtidal velocity variance on
+  this shelf, exceeding local wind forcing. The interpretive frame for why a
+  distant reference can track a bed well, which is the same finding #74 reports.
+- **Kim & Cornuelle 2015**, *Prog. Oceanogr.* 138:136 — a published regional T/S
+  climatology for the SCB coast, with seasonal cycles and trends. An external
+  frame for the 2007–2019 baseline, which is currently justified only against
+  this project's own records.
+
+**Two access facts confirmed, changing nothing.** HFRnet/SCCOOS HF-radar surface
+currents are live on THREDDS, so the deferral of transport analysis in the
+SCCOOS entry above and in docs/04 §4.5 is a choice and not a dead end. CUTI and
+BEUTI are public at `oceanview.pfeg.noaa.gov` and through ERDDAP, which is what
+`https://github.com/cweber12/kelp-compare/issues/108` needs when it is picked up.
+
+**Everything else in these passes is set aside**, on the grounds already stated:
+Tegner & Dayton 1991, Ebert et al. 1994, Limbaugh 1955, Dayton et al. 1984 and
+1998, Gunnill 1980 and 1985, Butler et al. 2021, Pondella et al. 2015, Hastings
+2009 and 2014, Quast 2004, North 1961/1976/1993, and about twenty more. §9b (the
+MBC Region Nine annual-maximum canopy series by bed, 1983–) gained archive URLs
+at `kelp.sccwrp.org` in pass 15 and remains what it was: annual maxima locked
+inside PDF tables, at bed rather than polygon grain. It would be an independent
+check on the response variable, which is worth something — but not enough to
+build a PDF table scraper for while `polygons.geojson` disagrees with its bed
+definitions anyway.
 
 ## Cross-cutting fetcher rules
 

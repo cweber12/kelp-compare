@@ -122,6 +122,31 @@
       "notes": "Position 32.53171, -117.18631, verified on the same basis as SDRTOMS:PLOO on 2026-08-28 - attributes and row columns agree, and the 26 m string depth matches the shallower South Bay outfall. Its 2020-01 to 2022-11 history is NOT ingested: that window lives only in south-bay-ocean-outfall-historic, which claims Point Loma's coordinates in its metadata, La Jolla's in its own latitude/longitude columns, and South Bay's in its depth range. The depths are the only one of the three matching the title, so the data is probably this mooring's and both positions are wrong - but that is a guess, and position is a reviewed fact here, so the window is left out until the provider fixes it (docs/02). Coverage therefore starts 2021-11-03 and runs to 2025-06-04. sensor_depths_m lists the 6 depths carrying sea_water_temperature, read from the non-null rows; 25 m and 26 m, and 18 m and 20 m, are deployment-to-deployment drift on the same positions and land as separate series. The ~15 km to KELP:IMPERIAL-BEACH this note used to claim was an estimate made when every polygon carried a null geometry. Measured in UTM 11N against the recorded outline it is 2968 m, geodesic 2969 m - the closest any public station comes to any bed except La Jolla. The next site of any kind is SDRTOMS:PLOO at 17629 m, nearly six times further, and the nearest reference this bed is actually paired with, SIO:LAJOLLA-PIER, is 32313 m - eleven times further. It is 13024 m from KELP:SAN-DIEGO and 30813 m from KELP:LA-JOLLA. NOT a neighbor_ref, and the record decides that rather than the range: coverage ends 2025-06-04 and both project deployments begin July 2026, so there is nothing to compare. Its absence from KELP:IMPERIAL-BEACH's site_ids now rests on the diffuser alone - the mooring sits on a wastewater outfall, so whether it measures the bed's water is a real question about representativeness rather than about range - and unlike the neighbor_ref question the date gap does not dispose of it, because docs/04 s4.5 compares a station against the kelp record rather than against a logger. That pairing is https://github.com/cweber12/kelp-compare/issues/86; what constrains it today is that on the current 2007-2019 climatology baseline every anomaly from this record is null (docs/02)."
     },
     {
+    "site_id": "SCCOOS:DELMAR",
+    "name": "Del Mar shelf mooring (SIO/SCCOOS)",
+    "operator": "delmar_mooring",
+    "station_code": "delmar_temperature",
+    "lat": 32.93,
+    "lon": -117.32,
+    "sensor_depths_m": {
+      "sea_water_temperature": [
+        1.0,
+        6.0,
+        15.0,
+        21.0,
+        32.0,
+        45.0,
+        57.0,
+        72.0,
+        90.0
+      ]
+    },
+    "measured_parameters": [
+      "sea_water_temperature"
+    ],
+    "notes": "SIO shelf mooring off Del Mar (Send/Nam group, mooring.ucsd.edu/delmar1/), served by SCCOOS ERDDAP as delmar_temperature. Adopted for the hole docs/04 s4.5 names: NDBC:46266 is the nearest station to three North County beds but begins 2019-12 and clears no baseline, so those beds had no local series carrying an anomaly. Position 32.93, -117.32. The LONGITUDE SIGN IS NOT THE PROVIDER'S: every one of the 371,657 served rows reports longitude +117.32 under units degrees_east, which is western China; the parse refuses a positive longitude rather than negating it quietly, and this record is where the correct position lives (docs/02). Record 2006-02-28T09:20Z to 2021-05-05T21:00Z, median interval 1200 s, longest gap 59.3 days; it is CLOSED - the mooring is not currently reporting, so a realtime window matches nothing and is recorded as a gap on every run. sensor_depths_m lists the 9 depths that carry sea_water_temperature, which are served as COLUMNS (T_1m .. T_90m) rather than as a z-per-row profile, so the declared set is checked against the header before any value is read. Nine columns are not nine series: T_1m spans the whole record, T_15m runs to 2015 and resumes 2019 with nothing in 2016-2018, T_90m starts 2016-05, and the other six start 2018-11-16 - later than NDBC:46266, whose short record is the problem this source was adopted to solve. Only T_1m clears the 2007-2019 baseline (13/12/12/12 usable years against min_years 10); T_15m holds 9/8/10/8 and is null until https://github.com/cweber12/kelp-compare/issues/147 decides whether a mid-record hole earns a declared window. NO PROVIDER QC: both datasets are titled 'PRELIMINARY, No QA/QC info' and carry no flag column at all, so unlike every other pulled source kelpcompare qc is the only opinion on these rows. Nearest-point distances in EPSG:32611, the convention the pairing rule uses: KELP:DEL-MAR 4546 m, KELP:SOLANA-BEACH 6453 m, KELP:LA-JOLLA 8756 m, KELP:ENCINITAS 8998 m, KELP:SAN-DIEGO 21127 m, KELP:IMPERIAL-BEACH 40913 m. Paired into the first two in polygons.geojson; Encinitas misses by 998 m and is left unpaired rather than have the rule bent for the bed that would most like an exception. At 6453 m this is now the nearest station inside the 8 km radius, which narrows the clearance below that boundary from 2375 m to 1547 m (docs/02). Salinity is served as delmar_salinity and is NOT read: it would need a parameters.json entry whose QC bounds nothing here has evidence for. There is no oxygen or chlorophyll dataset on this server, despite the source bundle advertising both."
+  },
+  {
       "site_id": "NDBC:46254",
       "name": "Scripps Nearshore (NDBC 46254)",
       "operator": "ndbc",

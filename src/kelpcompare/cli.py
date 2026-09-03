@@ -40,7 +40,15 @@ from kelpcompare.features.kelp import (
 )
 from kelpcompare.features.quarterly import QUARTERLY_KEY, feature_columns
 from kelpcompare.features.validation import VALIDATION_KEY, build_validation
-from kelpcompare.fetchers import cache, kelpwatch, mur_sst, ndbc, sd_rtoms, sio_shore_stations
+from kelpcompare.fetchers import (
+    cache,
+    delmar_mooring,
+    kelpwatch,
+    mur_sst,
+    ndbc,
+    sd_rtoms,
+    sio_shore_stations,
+)
 from kelpcompare.fetchers.base import NotModified, SourceUnavailable, land
 from kelpcompare.manifest import RunManifest
 from kelpcompare.normalize import to_observations
@@ -122,6 +130,7 @@ SOURCES = (
     Source(sio_shore_stations.SOURCE, raw_directory=sio_shore_stations.SOURCE),
     Source(ndbc.SOURCE, fetcher=ndbc),
     Source(sd_rtoms.SOURCE, fetcher=sd_rtoms),
+    Source(delmar_mooring.SOURCE, fetcher=delmar_mooring),
     Source(mur_sst.SOURCE, fetcher=mur_sst),
 )
 

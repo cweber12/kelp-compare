@@ -155,10 +155,10 @@
         "polygon_id": "KELP:DEL-MAR",
         "name": "Del Mar kelp bed",
         "purpose": "control",
-        "site_ids": ["NDBC:46266", "NDBC:LJAC1", "SIO:LAJOLLA-PIER", "PROJ:TIDBIT-1", "PROJ:TIDBIT-2", "SST:DEL-MAR"],
+        "site_ids": ["NDBC:46266", "SCCOOS:DELMAR", "NDBC:LJAC1", "SIO:LAJOLLA-PIER", "PROJ:TIDBIT-1", "PROJ:TIDBIT-2", "SST:DEL-MAR"],
         "source_file": "kelp_delmar.csv",
         "_verified": "Reconstructed outline, verified 2026-08-30: encloses all 130 cells of this bed's historic footprint and no cell of any other bed, whose nearest is 1950 m away. Queried against kelpwatch.org's /aggregate endpoint it returns count_cells_historic_footprint = 130, matching kelp_delmar.csv, and all 213 lines of the response are identical to that landed file.",
-        "notes": "The smallest bed exported. Genuinely empty for most of the record, which makes it the bed where a fabricated cloud-gap zero would be least visible (docs/02)."
+        "notes": "The smallest bed exported. Genuinely empty for most of the record, which makes it the bed where a fabricated cloud-gap zero would be least visible (docs/02). SCCOOS:DELMAR paired 2026-09-02 under leg (b) at 4546 m: NDBC:46266 is nearer but begins 2019-12 and clears no baseline, so until now this bed had no local series that could carry an anomaly at all (docs/04 s4.5). Only the mooring's 1 m series clears the 2007-2019 window; its 15 m series is null pending https://github.com/cweber12/kelp-compare/issues/147."
       },
       "geometry": {
         "type": "MultiPolygon",
@@ -207,7 +207,7 @@
         "polygon_id": "KELP:SOLANA-BEACH",
         "name": "Solana Beach kelp bed",
         "purpose": "control",
-        "site_ids": ["NDBC:46266", "NDBC:LJAC1", "SIO:LAJOLLA-PIER", "PROJ:TIDBIT-1", "PROJ:TIDBIT-2", "SST:SOLANA-BEACH"],
+        "site_ids": ["NDBC:46266", "SCCOOS:DELMAR", "NDBC:LJAC1", "SIO:LAJOLLA-PIER", "PROJ:TIDBIT-1", "PROJ:TIDBIT-2", "SST:SOLANA-BEACH"],
         "source_file": "kelp_solanabeach.csv",
         "_verified": "Reconstructed outline, verified 2026-08-30: encloses all 1040 cells of this bed's historic footprint and no cell of any other bed, whose nearest is 537 m away. Queried against kelpwatch.org's /aggregate endpoint it returns count_cells_historic_footprint = 1040, matching kelp_solanabeach.csv, and all 213 lines of the response are identical to that landed file."
       },
@@ -282,7 +282,7 @@
         "site_ids": ["NDBC:46266", "NDBC:LJAC1", "SIO:LAJOLLA-PIER", "PROJ:TIDBIT-1", "PROJ:TIDBIT-2", "SST:ENCINITAS"],
         "source_file": "kelp_encinitas.csv",
         "_verified": "Reconstructed outline, verified 2026-08-30: encloses all 1239 cells of this bed's historic footprint and no cell of any other bed, whose nearest is 541 m away. Queried against kelpwatch.org's /aggregate endpoint it returns count_cells_historic_footprint = 1239, matching kelp_encinitas.csv, and all 213 lines of the response are identical to that landed file.",
-        "notes": "The northern end of the exported range."
+        "notes": "The northern end of the exported range. NOT paired with SCCOOS:DELMAR, deliberately: at 8998 m it misses the 8 km rule by 998 m, and it is the one bed that would most like the exception - the third of the three NDBC:46266 serves, and like them left with no local series carrying an anomaly. The rule is not bent for it (docs/02)."
       },
       "geometry": {
         "type": "MultiPolygon",
