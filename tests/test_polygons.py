@@ -777,7 +777,22 @@ def test_the_pairing_radius_sits_in_a_gap_rather_than_on_a_boundary():
     ]
 
     assert max(inside) < NEAR_STATION_RADIUS_M < min(outside)
-    assert min(outside) - max(inside) > 2000, "the gap the radius sits in has closed"
+
+    # The two sides of that gap are asserted separately, because summing them
+    # hides which one is thin. The previous form required the total to exceed
+    # 2000 m and was satisfied by 2744 m -- 2375 m of it below the radius and
+    # 369 m above, at NDBC:46254 -> KELP:DEL-MAR. A single number cannot say
+    # that the boundary was already within 369 m of a real station, so it did
+    # not, and that clearance is the one a redrawn outline actually threatens.
+    #
+    # Landing SCCOOS:DELMAR narrowed the lower side to 1547 m
+    # (SCCOOS:DELMAR -> KELP:SOLANA-BEACH at 6453 m) and left the upper side
+    # untouched. Both floors below are the measured clearances rounded down, so
+    # either one narrowing further fails here and names itself.
+    below = NEAR_STATION_RADIUS_M - max(inside)
+    above = min(outside) - NEAR_STATION_RADIUS_M
+    assert below > 1500, f"the radius is now {below:.0f} m above the nearest station inside it"
+    assert above > 350, f"the radius is now {above:.0f} m below the nearest station outside it"
 
 
 def test_every_paired_public_station_satisfies_the_rule():
