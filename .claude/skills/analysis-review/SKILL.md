@@ -39,9 +39,10 @@ constraint: ~100–150 usable quarterly kelp observations per polygon.
 
 ## Reproducibility requirements
 
-Notebooks run top-to-bottom from `features/comparison.parquet` only — no
-side reads of observations or raw. Figures for sharing carry the run
-manifest ID in the caption. Seed anything stochastic.
+Notebooks run top-to-bottom from tables of record in `features/` — more
+than one is fine, and which ones is the notebook's business — with no side
+reads of observations or raw. Figures for sharing carry the run manifest ID
+in the caption. Seed anything stochastic.
 
 ## Interpretation limits (state them in write-ups)
 
