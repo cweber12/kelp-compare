@@ -62,6 +62,19 @@ same digest, so more than one manifest may name it; that is the reproducibility
 property holding, not an ambiguity. Runs from before the field carry no `tables`
 and a digest older than it will not be found.
 
+**Figures go in `notebooks/figures/`, written by the notebook that owns them.**
+They are regenerated on every run and committed with the executed notebook, so a
+figure in the repo is always the one the current outputs describe rather than a
+survivor of an older table. Each carries in its own caption the digest of the
+table it was drawn from, per the rule above — a figure that leaves the repo on
+its own still says what it came from.
+
+*Rendering is a package module, not notebook code.* `kelpcompare.figures` draws a
+matrix it is handed and computes nothing, which keeps around figures the split
+hard rule 6 draws around the dashboard: a change to a colour ramp cannot move a
+number in an analysis of record. What to draw, over which series, and on what
+scale stays in the notebook, where the science is.
+
 **Nothing stochastic without a seed.** Nothing in these notebooks is stochastic
 yet; when something is, seed it in the first cell.
 
@@ -100,7 +113,7 @@ not pick up the rebuilt table.
 
 | Notebook | docs/04 | What it does |
 |---|---|---|
-| `01-lag-screen.ipynb` | §4.1 | Kelp anomaly at *t* against every environmental feature anomaly at *t−0…4*, per polygon × series. Ranks candidates; claims nothing |
+| `01-lag-screen.ipynb` | §4.1 | Kelp anomaly at *t* against every environmental feature anomaly at *t−0…4*, per polygon × series. Ranks candidates; claims nothing. Writes the six per-bed figures in `figures/` |
 | `02-deployment-profile.ipynb` | §1 | What each project-sensor deployment recorded over its own in-water window, and how it compared to its neighbour. Describes; tests nothing |
 
 ## Pre-registration

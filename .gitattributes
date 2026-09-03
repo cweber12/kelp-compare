@@ -8,3 +8,8 @@ tests/fixtures/** -text
 # CRLF -- which is how a corrupted markdown cell hides in plain sight.
 # See https://github.com/cweber12/kelp-compare/issues/83
 *.ipynb text eol=lf
+
+# Rendered figures are binary evidence of a run, and a text filter on Windows
+# would corrupt them exactly as it corrupts a notebook. Pin them, for the same
+# reason the rule above pins fixtures.
+notebooks/figures/*.png binary
