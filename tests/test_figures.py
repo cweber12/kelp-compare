@@ -16,10 +16,19 @@ import pytest
 
 matplotlib.use("Agg")
 
+from matplotlib import pyplot as plt
 from matplotlib.colors import Normalize
 from matplotlib.patches import Rectangle
 
 from kelpcompare import figures
+
+
+@pytest.fixture(autouse=True)
+def close_figures():
+    """Every test here draws; pyplot keeps figures alive until told otherwise."""
+    yield
+    plt.close("all")
+
 
 FEATURES = ["mean", "min", "max", "days_above_20c"]
 
@@ -436,3 +445,122 @@ def test_a_registered_signal_is_starred():
 def test_the_ranking_refuses_to_draw_nothing():
     with pytest.raises(ValueError, match="no rows"):
         rank([])
+
+
+# --- the diagnostics -----------------------------------------------------------
+#
+# The one figure that draws observations rather than coefficients, so its failure
+# modes are about the record it claims to show: a quarter quietly dropped, a line
+# drawn across a hole, or a fitted line that turns a screen into a model.
+
+
+def pairing(**overrides):
+    year = tuple(y for y in (2000, 2000, 2000, 2000, 2002, 2002, 2002) for _ in (0,))
+    return figures.Pairing(
+        **{
+            "title": "KELP:ENCINITAS x days_below_14c lag 4",
+            "subtitle": "SIO:LAJOLLA-PIER 5 m",
+            "year": year,
+            "quarter": (1, 2, 3, 4, 1, 2, 3),
+            "kelp": (1.0, -2.0, 0.5, 3.0, -1.0, 2.0, -0.5),
+            "feature": (0.5, -1.0, 1.5, 2.0, -2.0, 1.0, 0.0),
+            "r": 0.465,
+            "n_eff": 112.0,
+            **overrides,
+        }
+    )
+
+
+def signals(rows=None, **overrides):
+    # `is None` rather than `or`, so passing [] reaches the renderer and its
+    # refusal can be tested instead of being swallowed by the default.
+    return figures.plot_signals(
+        [pairing()] if rows is None else rows,
+        **{"title": "test", "caption": "test", **overrides},
+    )
+
+
+def line_named(ax, label):
+    for line in ax.lines:
+        if line.get_label() == label:
+            return line
+    raise AssertionError(f"no line labelled {label!r}")
+
+
+def test_a_gap_breaks_the_line_without_dropping_a_quarter():
+    """The record skips 2001 entirely, so the line must break -- and every quarter
+    the coefficient was computed on must still be drawn.
+
+    Nulling the observation after a gap breaks the line too, and silently deletes a
+    quarter, which would make the figure describe a shorter record than its own
+    caption claims. docs/04 s2 breaks a threshold spell at a gap for the same
+    reason it does not bridge one.
+    """
+    fig = signals()
+    kelp = line_named(fig.axes[0], "kelp area anomaly")
+    drawn = kelp.get_ydata()
+
+    assert np.count_nonzero(~np.isnan(drawn)) == 7
+    assert np.count_nonzero(np.isnan(drawn)) == 1
+
+
+def test_both_series_are_standardised_rather_than_put_on_twin_axes():
+    """Pearson r is invariant under this rescaling, so it is what r sees. Twin axes
+    can be slid until any two series appear to track, which draws a correlation
+    instead of showing one."""
+    fig = signals()
+    for label in ("kelp area anomaly", "feature anomaly, lagged"):
+        values = line_named(fig.axes[0], label).get_ydata()
+        kept = values[~np.isnan(values)]
+        assert kept.mean() == pytest.approx(0.0, abs=1e-9)
+        assert kept.std(ddof=1) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_the_scatter_carries_no_fitted_line():
+    """docs/04 s4.1 screens and does not model. A line through these points is
+    s4.3's, and drawn here it would read as a model that has not been fitted."""
+    scatter = signals().axes[1]
+
+    sloped = [
+        line
+        for line in scatter.lines
+        if len(set(line.get_xdata())) > 1 and len(set(line.get_ydata())) > 1
+    ]
+    assert sloped == []
+
+
+def test_the_scatter_draws_every_pair():
+    (collection,) = signals().axes[1].collections
+
+    assert len(collection.get_offsets()) == 7
+
+
+def test_the_year_axis_is_whole_years():
+    """A short record left to the default locator gets 2.5-year ticks, and a
+    quarter is not a fraction of a year anyone reads."""
+    fig = signals()
+    labels = [label.get_text() for label in fig.axes[0].get_xticklabels()]
+
+    assert labels and all(label.lstrip("-").isdigit() for label in labels if label)
+
+
+def test_large_anomalies_get_a_tick_a_reader_can_hold():
+    """Kelp area anomalies run to six figures in m^2."""
+    assert figures._compact(100000) == "100k"
+    assert figures._compact(-2_500_000) == "-2.5M"
+    assert figures._compact(7.5) == "7.5"
+
+
+def test_a_control_pairing_is_drawn_in_a_different_ink():
+    predictor = signals([pairing()]).axes[0]
+    control = signals([pairing(role="control")]).axes[0]
+
+    assert (
+        line_named(predictor, "kelp area anomaly").get_color()
+        != line_named(control, "kelp area anomaly").get_color()
+    )
+
+
+def test_the_diagnostics_refuse_to_draw_nothing():
+    with pytest.raises(ValueError, match="no pairings"):
+        signals([])

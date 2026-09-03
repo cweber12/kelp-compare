@@ -41,6 +41,7 @@ from matplotlib.font_manager import FontProperties
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 from matplotlib.textpath import TextPath
+from matplotlib.ticker import FuncFormatter, MaxNLocator
 
 # --- the reference palette, by role ------------------------------------------
 
@@ -769,3 +770,258 @@ def _draw_rank_key(fig, fig_h: float) -> None:
         ),
     ):
         fig.text(0.008, offset / fig_h, text, ha="left", va="bottom", fontsize=7.5, color=SECONDARY)
+
+
+# --- the signal diagnostics ----------------------------------------------------
+#
+# Everything above draws coefficients. Nothing in this repo drew an observation,
+# and r hides the two failure modes docs/01 s7 names for a short autocorrelated
+# series identically: one event carrying the whole association, and one quarter of
+# leverage carrying it. A time series answers the first and a scatter the second.
+
+PAIR_SERIES_W = 5.20
+PAIR_SCATTER_W = 2.60
+PAIR_H = 1.50
+PAIR_LABEL_W = 0.52  #: numeric y tick labels
+PAIR_TITLE_H = 0.58  #: the two-line panel title above each row
+PAIR_XTICK_H = 0.32  #: the year axis below it, which the next title must clear
+PAIR_GAP = 0.62
+
+#: The feature line and the year ramp. Kelp stays on the primary ink so the two
+#: are told apart by lightness as well as hue.
+FEATURE_INK = BLUE_ARM[3]
+
+
+@dataclass(frozen=True)
+class Pairing:
+    """The quarters behind one coefficient: kelp at t, and the feature at t - lag.
+
+    The arrays are the pairs the screen actually correlated, in quarter order, so a
+    figure drawn from them cannot describe a different selection than the number it
+    is captioned with.
+
+    Both series are drawn standardised, each by its own standard deviation, rather
+    than on twin axes. Pearson r is invariant under that rescaling -- it is exactly
+    what r sees -- whereas two independently scaled axes can be slid until any two
+    series appear to track, which is a way of drawing a correlation rather than
+    showing one.
+    """
+
+    title: str
+    subtitle: str
+    year: tuple[int, ...]
+    quarter: tuple[int, ...]
+    kelp: tuple[float, ...]
+    feature: tuple[float, ...]
+    r: float
+    n_eff: float
+    role: str = "predictor"
+    kelp_label: str = "kelp area anomaly"
+    feature_label: str = "feature anomaly"
+
+
+def plot_signals(
+    pairings: list[Pairing],
+    *,
+    title: str,
+    caption: str,
+    subtitle: str = "",
+    shade: tuple[int, int] | None = None,
+    shade_label: str = "",
+    dpi: int = 200,
+) -> mpl.figure.Figure:
+    """One row per signal: the paired quarters over time, and against each other.
+
+    `shade` marks a period as context only -- docs/04 s4.2 owns event studies, and
+    a composite drawn here would be that rung's work done on this rung's page.
+    """
+    if not pairings:
+        raise ValueError("no pairings to draw")
+
+    fig_w = (
+        LEFT_W + PAIR_LABEL_W + PAIR_SERIES_W + PAIR_GAP + PAIR_LABEL_W + PAIR_SCATTER_W + RIGHT_W
+    )
+    head_h = TOP_H + (0.28 if subtitle else 0.0) + 0.20
+    fig_h = head_h + len(pairings) * (PAIR_TITLE_H + PAIR_H + PAIR_XTICK_H) + BOTTOM_H
+    fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor=SURFACE)
+
+    cursor = fig_h - head_h
+    for pairing in pairings:
+        cursor -= PAIR_TITLE_H + PAIR_H + PAIR_XTICK_H
+        series = fig.add_axes(
+            (
+                (LEFT_W + PAIR_LABEL_W) / fig_w,
+                (cursor + PAIR_XTICK_H) / fig_h,
+                PAIR_SERIES_W / fig_w,
+                PAIR_H / fig_h,
+            )
+        )
+        scatter = fig.add_axes(
+            (
+                (LEFT_W + PAIR_LABEL_W + PAIR_SERIES_W + PAIR_GAP + PAIR_LABEL_W) / fig_w,
+                (cursor + PAIR_XTICK_H) / fig_h,
+                PAIR_SCATTER_W / fig_w,
+                PAIR_H / fig_h,
+            )
+        )
+        _draw_pair_series(series, pairing, shade, shade_label)
+        _draw_pair_scatter(scatter, pairing)
+
+    fig.suptitle(
+        title, x=0.008, y=1 - 0.34 / fig_h, ha="left", fontsize=15, color=INK, weight="bold"
+    )
+    if subtitle:
+        fig.text(
+            0.008, 1 - 0.64 / fig_h, subtitle, ha="left", va="top", fontsize=9, color=SECONDARY
+        )
+    _draw_pair_key(fig, fig_h, shade_label)
+    fig.text(0.008, 0.14 / fig_h, caption, ha="left", va="bottom", fontsize=7.5, color=SECONDARY)
+    return fig
+
+
+def _broken(when: np.ndarray, values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The same series with a break inserted wherever the record skips a quarter.
+
+    Every observation survives; only the segment spanning the hole is removed. The
+    obvious alternative -- nulling the point after a gap -- silently deletes a
+    quarter the coefficient was computed on, which makes the figure describe a
+    smaller record than its own caption.
+    """
+    x: list[float] = []
+    y: list[float] = []
+    for index, moment in enumerate(when):
+        if index and moment - when[index - 1] > 0.30:
+            x.append(np.nan)
+            y.append(np.nan)
+        x.append(float(moment))
+        y.append(float(values[index]))
+    return np.asarray(x), np.asarray(y)
+
+
+def _standardised(values: tuple[float, ...]) -> np.ndarray:
+    array = np.asarray(values, dtype=float)
+    spread = float(array.std(ddof=1))
+    return (array - array.mean()) / spread if spread > 0 else array - array.mean()
+
+
+def _compact(value: float, _position=None) -> str:
+    """A tick a reader can hold: 100k rather than 100000.
+
+    Kelp area anomalies run to six figures in m^2, and a column of those is a
+    column nobody reads. The unit itself stays with the caller, which is what
+    keeps this module from knowing what it is drawing.
+    """
+    for divisor, suffix in ((1e6, "M"), (1e3, "k")):
+        if abs(value) >= divisor:
+            return f"{value / divisor:g}{suffix}"
+    return f"{value:g}"
+
+
+def _bare(ax) -> None:
+    ax.set_facecolor(SURFACE)
+    ax.tick_params(length=0, labelsize=7, colors=SECONDARY, pad=2)
+    for side, spine in ax.spines.items():
+        spine.set_visible(side in {"left", "bottom"})
+        spine.set_color(GRIDLINE)
+        spine.set_linewidth(0.8)
+
+
+def _draw_pair_series(ax, pairing: Pairing, shade, shade_label: str) -> None:
+    """Both halves of the pair down the record, standardised, gaps left as gaps."""
+    _bare(ax)
+    ink = SECONDARY if pairing.role == "control" else INK
+    when = np.asarray(pairing.year, dtype=float) + (np.asarray(pairing.quarter) - 1) / 4
+
+    if shade:
+        ax.axvspan(shade[0], shade[1] + 1, color=NEUTRAL, zorder=0, label=shade_label)
+    ax.axhline(0, color=GRIDLINE, linewidth=0.8, zorder=1)
+    # A quarter the pair does not carry is a hole, and a line drawn straight across
+    # one asserts a value nothing measured -- the same reason docs/04 s2 breaks a
+    # threshold spell at a gap rather than bridging it. The break goes *between*
+    # the two observations either side, never on one of them: blanking the point
+    # would drop a quarter the screen counted.
+    kelp_x, kelp_y = _broken(when, _standardised(pairing.kelp))
+    feature_x, feature_y = _broken(when, _standardised(pairing.feature))
+    ax.plot(kelp_x, kelp_y, color=ink, linewidth=1.2, zorder=3, label="kelp area anomaly")
+    ax.plot(
+        feature_x,
+        feature_y,
+        color=FEATURE_INK,
+        linewidth=1.2,
+        linestyle=(0, (3.2, 1.6)),
+        zorder=2,
+        label="feature anomaly, lagged",
+    )
+    # Whole years. A short record left to the default locator gets 2.5-year
+    # ticks, and a quarter is not a fraction of a year anyone reads.
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=8))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.0f}"))
+    ax.set_ylabel("SD", fontsize=7, color=MUTED, labelpad=2)
+    ax.set_title(
+        f"{pairing.title}\n{pairing.subtitle}",
+        fontsize=8.5,
+        color=ink,
+        loc="left",
+        pad=10,
+        linespacing=1.6,
+    )
+
+
+def _draw_pair_scatter(ax, pairing: Pairing) -> None:
+    """The pairs themselves, coloured by year -- what the coefficient is made of.
+
+    No fitted line and no band. docs/04 s4.1 is a screen, and a line through these
+    points is the thing s4.3 is for; drawn here it would read as the model rather
+    than as the data the model has not yet been fitted to.
+    """
+    _bare(ax)
+    ramp = LinearSegmentedColormap.from_list("kelpcompare_years", BLUE_ARM)
+    years = np.asarray(pairing.year, dtype=float)
+    ax.axhline(0, color=GRIDLINE, linewidth=0.8, zorder=0)
+    ax.axvline(0, color=GRIDLINE, linewidth=0.8, zorder=0)
+    ax.scatter(
+        pairing.feature,
+        pairing.kelp,
+        c=years,
+        cmap=ramp,
+        s=13,
+        linewidth=0.4,
+        edgecolor=SURFACE,
+        zorder=2,
+    )
+    ax.xaxis.set_major_formatter(FuncFormatter(_compact))
+    ax.yaxis.set_major_formatter(FuncFormatter(_compact))
+    ax.set_xlabel(pairing.feature_label, fontsize=7, color=MUTED, labelpad=2)
+    ax.set_ylabel(pairing.kelp_label, fontsize=7, color=MUTED, labelpad=2)
+    ax.set_title(
+        f"r = {pairing.r:+.3f}   n = {len(pairing.kelp)}   n_eff = {pairing.n_eff:.0f}",
+        fontsize=8,
+        color=SECONDARY,
+        loc="left",
+        pad=10,
+    )
+
+
+def _draw_pair_key(fig, fig_h: float, shade_label: str) -> None:
+    lines = [
+        (
+            "solid: kelp area anomaly at quarter t   |   dashed: the feature anomaly at "
+            "t - lag   |   both standardised, each by its own SD, which is what r sees"
+        ),
+        (
+            "scatter coloured by year, light to dark   |   no fitted line: docs/04 s4.1 "
+            "screens and does not model"
+        ),
+    ]
+    if shade_label:
+        lines.append(f"shaded: {shade_label} -- context only; docs/04 s4.2 owns event studies")
+    for index, text in enumerate(lines):
+        fig.text(
+            0.008,
+            (0.86 - 0.24 * index) / fig_h,
+            text,
+            ha="left",
+            va="bottom",
+            fontsize=7.5,
+            color=SECONDARY,
+        )
