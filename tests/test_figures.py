@@ -17,6 +17,10 @@ from matplotlib.patches import Rectangle
 from kelpcompare import figures
 
 FEATURES = ["mean", "min", "max", "days_above_20c"]
+
+#: The axis a `statistics` family draws against -- `days_above_20c` is docs/04 s2's
+#: and belongs to `sea_water_temperature` alone, so a met block never carries it.
+STATISTICS = ["mean", "min", "max"]
 LAGS = [0, 1, 2, 3, 4]
 
 
@@ -40,17 +44,15 @@ def cells(fig) -> list[Rectangle]:
     return [patch for ax in panel_axes(fig) for patch in ax.patches if isinstance(patch, Rectangle)]
 
 
-def render(panels, **overrides):
-    return figures.plot_panels(
-        panels,
-        **{
-            "features": FEATURES,
-            "lags": LAGS,
-            "title": "test",
-            "caption": "test",
-            "limit": 0.5,
-            **overrides,
-        },
+def render(panels, features=None, **overrides):
+    """One block of panels -- the single-family case most of these tests are about."""
+    return render_blocks([figures.Block("test", features or FEATURES, panels)], **overrides)
+
+
+def render_blocks(blocks, **overrides):
+    return figures.plot_screen(
+        blocks,
+        **{"lags": LAGS, "title": "test", "caption": "test", "limit": 0.5, **overrides},
     )
 
 
@@ -138,12 +140,67 @@ def test_a_feature_the_parameter_does_not_carry_is_hatched_not_coloured():
         assert np.allclose(patch.get_facecolor()[:3], surface, atol=0.004)
 
 
-def test_every_panel_is_drawn_against_the_full_feature_axis():
-    """Panels line up only if a sparse one keeps the rows it has no values for."""
+def test_every_panel_is_drawn_against_its_block_feature_axis():
+    """Panels line up only if a sparse one keeps the rows it has no values for.
+
+    This was `test_every_panel_is_drawn_against_the_full_feature_axis`, and the
+    "full" axis meant the union of every feature in the figure. docs/04 s2 gives
+    the ecological features to `sea_water_temperature` alone, so that union bought
+    alignment between panels sharing no such row, and paid for it with five
+    permanently empty rows in every wave and met panel -- around 45% of each. The
+    block is the scope where the property is worth its cost; inside one, it is
+    unchanged, and a parameter declining a feature its own family defines still
+    keeps the row.
+    """
     fig = render([figures.Panel("46254", "wave_peak_period", wave_matrix())])
     (ax,) = panel_axes(fig)
 
     assert [label.get_text() for label in ax.get_yticklabels()] == FEATURES
+
+
+def test_a_block_is_not_padded_out_to_another_blocks_axis():
+    """The split's whole point: each family draws against the axis it produces."""
+    fig = render_blocks(
+        [
+            figures.Block(
+                "sea_water_temperature",
+                FEATURES,
+                [figures.Panel("LJAC1", "sea_water_temperature", temperature_matrix())],
+            ),
+            figures.Block(
+                "wave / met",
+                STATISTICS,
+                [figures.Panel("LJAC1", "air_temperature", wave_matrix())],
+            ),
+        ]
+    )
+    temperature, met = panel_axes(fig)
+
+    assert [label.get_text() for label in temperature.get_yticklabels()] == FEATURES
+    assert [label.get_text() for label in met.get_yticklabels()] == STATISTICS
+    assert not [patch for patch in cells(fig) if patch.get_hatch()]
+
+
+def test_each_block_is_labelled():
+    """A block boundary carries the distinction the hatching used to carry, so it
+    has to be drawn -- an unlabelled split is two axes and no reason given."""
+    fig = render_blocks(
+        [
+            figures.Block(
+                "sea_water_temperature",
+                FEATURES,
+                [figures.Panel("LJAC1", "sea_water_temperature", temperature_matrix())],
+            ),
+            figures.Block(
+                "wave / met",
+                STATISTICS,
+                [figures.Panel("LJAC1", "air_temperature", wave_matrix())],
+            ),
+        ]
+    )
+    drawn = {text.get_text() for text in fig.texts}
+
+    assert {"sea_water_temperature", "wave / met"} <= drawn
 
 
 def test_a_low_resolution_cell_is_marked_without_changing_its_colour():
@@ -181,3 +238,24 @@ def test_the_scale_is_the_one_passed_not_one_fitted_per_panel():
 def test_it_refuses_to_draw_nothing():
     with pytest.raises(ValueError, match="no panels"):
         render([])
+    with pytest.raises(ValueError, match="no panels"):
+        render_blocks([])
+
+
+def test_a_family_nothing_measures_draws_no_labelled_rule_over_blank_space():
+    """An empty block is a feature set with no series on it -- for a bed with no
+    met station, say. It is dropped rather than drawn, so a rule and a label never
+    head a band of nothing."""
+    fig = render_blocks(
+        [
+            figures.Block(
+                "sea_water_temperature",
+                FEATURES,
+                [figures.Panel("LJAC1", "sea_water_temperature", temperature_matrix())],
+            ),
+            figures.Block("wave / met", STATISTICS, []),
+        ]
+    )
+
+    assert len(panel_axes(fig)) == 1
+    assert "wave / met" not in {text.get_text() for text in fig.texts}
