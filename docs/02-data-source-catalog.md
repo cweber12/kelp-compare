@@ -1198,6 +1198,36 @@ measured times do exactly that, legitimately, and an assigned one must not.
 with no `TIME_PST` carry `TIME_FLAG = 0`, "good data", about a time that is not
 there. The `TIME_PST` column is the only evidence.
 
+**Sampling time drifts over the century, and it biases the trend.** Rasmussen
+et al. 2020 (*JGR Oceans* 125:e2019JC015673) is the QA study of this exact
+record, and it is worth knowing before anyone reads a trend off it. The
+time-of-day a sample was taken has not been constant across 110 years, and
+because the pier warms through the morning, a drift in collection time aliases
+into the long-term signal. Correcting for it lowers the century trend: their
+adjusted figures are **+1.24 °C/century at the surface and +1.67 at depth**,
+against raw trends that overstate by roughly **0.2 °C/century**.
+
+Two consequences, and they point in different directions.
+
+**It barely touches what this project computes.** The analysis works in
+quarterly anomalies against a fixed 2007-2019 baseline (docs/04 §3), and a
+0.2 °C/century bias over a 13-year window is about 0.026 °C — far below the
+anomalies being studied, and largely absorbed by the baseline subtraction
+anyway. Nothing here needs adjusting.
+
+**It matters the moment this record is used as a trend.** This is the only
+century-scale series in the catalogue, which is exactly why someone will
+eventually quote a warming rate from it. The raw series does not support one
+without this correction, and the correction is not applied at ingest — the
+landed rows are the program's own values, as docs/03 requires. Cite Rasmussen,
+or use their adjusted series; the paper notes the authors' adjusted output, and
+whether it is retrievable from the UCSD Library collections has not been checked
+here.
+
+The 10:38 PST convention above is unaffected: it is an estimate of *when* an
+untimed sample was taken, not a correction for the fact that the answer has
+moved over time.
+
 ### Flag mapping — the program's own vocabulary, not QARTOD
 
 Declared in the preamble of every snapshot, and read from it: a snapshot whose
