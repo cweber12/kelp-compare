@@ -765,7 +765,8 @@ def _draw_rank_key(fig, fig_h: float) -> None:
             (
                 "grey rows are docs/04 s5 controls, screened on the same gate and never "
                 "registered   |   a caret is an r past the end of the scale, printed "
-                "instead of n_eff   |   right-hand column: n_eff, then r across lags 0-4"
+                "instead of n_eff   |   right-hand column: n_eff, then r across lags 0-4, "
+                "each sparkline on its own scale -- read them for shape, not amplitude"
             ),
         ),
     ):
