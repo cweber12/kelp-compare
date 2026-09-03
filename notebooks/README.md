@@ -69,6 +69,19 @@ survivor of an older table. Each carries in its own caption the digest of the
 table it was drawn from, per the rule above — a figure that leaves the repo on
 its own still says what it came from.
 
+*What is in there, and which question each one answers.* The set divides into the
+record of what the screen did and the two figures for reading it:
+
+| Figure | Written by | Answers |
+|---|---|---|
+| `KELP-<bed>.png` (six) | `01` §4.1 | What did every cell come out at? The completeness record — dense on purpose, and not the place to start |
+| `SCREEN-RANKED.png` | `01` §8 | Which associations deserve a second look? Signals by \|r\|, sized by `n_eff`, merged cells as ticks, lag profile as a sparkline, controls interleaved, gate-withheld cells below a rule |
+| `SCREEN-SIGNALS.png` | `01` §8 | What are the coefficients made of? The paired quarters behind each registered signal and the strongest control, as a time series and a scatter |
+
+**Read `SCREEN-RANKED.png` first.** The grids are an audit artifact: 2,145 cells at
+uniform visual weight answer "was everything screened" well and "what should I
+look at" badly, which is the split the two `SCREEN-` figures exist to fix.
+
 *Rendering is a package module, not notebook code.* `kelpcompare.figures` draws a
 matrix it is handed and computes nothing, which keeps around figures the split
 hard rule 6 draws around the dashboard: a change to a colour ramp cannot move a

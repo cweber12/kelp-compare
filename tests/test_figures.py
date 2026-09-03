@@ -1,4 +1,9 @@
-"""The renderer's two jobs: a ramp that reads the sign, and a hole that is not a zero."""
+"""What the renderers must not lose.
+
+The grid: a ramp that reads the sign, and a hole that is not a zero.
+The ranking: the caller's order, a merged cell, and a coefficient that runs
+off the end of the scale.
+"""
 
 from __future__ import annotations
 
@@ -11,10 +16,19 @@ import pytest
 
 matplotlib.use("Agg")
 
+from matplotlib import pyplot as plt
 from matplotlib.colors import Normalize
 from matplotlib.patches import Rectangle
 
 from kelpcompare import figures
+
+
+@pytest.fixture(autouse=True)
+def close_figures():
+    """Every test here draws; pyplot keeps figures alive until told otherwise."""
+    yield
+    plt.close("all")
+
 
 FEATURES = ["mean", "min", "max", "days_above_20c"]
 
@@ -259,3 +273,294 @@ def test_a_family_nothing_measures_draws_no_labelled_rule_over_blank_space():
 
     assert len(panel_axes(fig)) == 1
     assert "wave / met" not in {text.get_text() for text in fig.texts}
+
+
+# --- the ranking ---------------------------------------------------------------
+#
+# A different figure with a different job: the grid says what every cell came out
+# at, this says which of them is worth a second look. Its failure modes are about
+# what it can silently lose -- a coefficient off the end of the scale, a merged
+# cell, the order the caller ranked in.
+
+
+def signal(label="KELP:ENCINITAS  days_below_14c  lag 4", **overrides):
+    return figures.SignalRow(
+        **{
+            "label": label,
+            "detail": "SIO:LAJOLLA-PIER 5 m",
+            "r": 0.40,
+            "n_eff": 100.0,
+            **overrides,
+        }
+    )
+
+
+def rank(rows, excluded=None, **overrides):
+    return figures.plot_ranked(
+        rows,
+        excluded,
+        **{"title": "test", "caption": "test", "limit": 0.5, **overrides},
+    )
+
+
+def rank_axis(fig):
+    """The dot axes: the first added, and the only one carrying x tick labels."""
+    return fig.axes[0]
+
+
+def dots(ax) -> list[tuple[float, float]]:
+    return [tuple(offset) for collection in ax.collections for offset in collection.get_offsets()]
+
+
+def dot_sizes(ax) -> list[float]:
+    return [size for collection in ax.collections for size in collection.get_sizes()]
+
+
+def text_at(fig, needle):
+    for text in fig.texts:
+        if text.get_text() == needle:
+            return text
+    raise AssertionError(f"{needle!r} was not drawn")
+
+
+def test_rows_are_drawn_in_the_order_they_were_given():
+    """The caller ranks; the renderer must not re-sort.
+
+    docs/04 s5 ranks on |r| today and s7 prints what two other scales would have
+    chosen. A renderer that sorted by its own rule would silently overrule
+    whichever the notebook applied, and the figure would stop matching the table
+    beside it.
+    """
+    fig = rank([signal("first", r=0.1), signal("second", r=0.45), signal("third", r=-0.3)])
+
+    ys = [text_at(fig, label).get_position()[1] for label in ("first", "second", "third")]
+    assert ys == sorted(ys, reverse=True)
+
+
+def test_a_coefficient_past_the_end_of_the_scale_is_marked_not_swallowed():
+    """The strongest |r| in this screen sits on an n_eff of 9 and is withheld.
+
+    A fixed scale that quietly dropped it would hide the single row that shows what
+    the gate is for, so it is drawn as a caret at the edge and its r is printed
+    where n_eff would otherwise go.
+    """
+    fig = rank([signal(r=0.74, n_eff=9.0)], limit=0.5)
+    ax = rank_axis(fig)
+
+    assert dots(ax) == []
+    carets = [line for line in ax.lines if line.get_marker() in {">", "<"}]
+    assert len(carets) == 1
+    assert carets[0].get_xdata()[0] == pytest.approx(0.5, abs=0.02)
+    text_at(fig, "+0.74")
+
+
+def test_a_dot_is_sized_by_its_effective_sample():
+    """Position carries r and area carries n_eff -- the two numbers the grid
+    crowds into one cell, so the ranking reads without anyone reading a number."""
+    fig = rank([signal("weak evidence", n_eff=31.0), signal("strong evidence", n_eff=160.0)])
+
+    small, large = dot_sizes(rank_axis(fig))
+    assert small < large
+
+
+def test_every_merged_cell_is_drawn_on_the_row():
+    """docs/04 s5 collapses cells agreeing on polygon, feature and lag into one
+    claim. Drawn, "they agree" can be checked instead of taken on trust."""
+    fig = rank([signal(r=-0.353, members=(-0.242, -0.220))])
+    ax = rank_axis(fig)
+
+    ticks = [line for line in ax.lines if line.get_marker() == "|"]
+    assert [line.get_xdata()[0] for line in ticks] == [-0.242, -0.220]
+
+
+def test_a_member_past_the_end_of_the_scale_does_not_move_the_row():
+    """The connector spans what the scale can show; it must not run off the axis
+    and take the row's dot with it."""
+    fig = rank([signal(r=0.30, members=(0.9,))], limit=0.5)
+    ax = rank_axis(fig)
+
+    # The gridlines are Line2Ds too, and vertical: a connector is the horizontal
+    # one, spanning two x values on a single row.
+    (connector,) = [
+        line for line in ax.lines if line.get_marker() == "None" and len(set(line.get_xdata())) == 2
+    ]
+    assert max(connector.get_xdata()) <= 0.5
+
+
+def test_withheld_rows_sit_below_every_ranked_row_under_their_own_rule():
+    """Withheld cells are worth seeing so the gate can be audited, and are never
+    ranked -- ranking one is the invitation the gate exists to remove."""
+    fig = rank([signal("ranked")], [signal("withheld", r=0.2)], excluded_label="withheld here")
+
+    ranked_y = text_at(fig, "ranked").get_position()[1]
+    withheld_y = text_at(fig, "withheld").get_position()[1]
+    rule_y = text_at(fig, "withheld here").get_position()[1]
+    assert withheld_y < rule_y < ranked_y
+
+
+def test_a_withheld_row_lines_up_with_its_own_dot():
+    """The label and the dot are placed by two different coordinate systems, and
+    an earlier draft kept the block gap in inches for one and rows for the other,
+    which slid every withheld row off the dot it belonged to."""
+    fig = rank([signal("ranked")], [signal("withheld", r=0.2, n_eff=40.0)])
+    ax = rank_axis(fig)
+
+    label_y = text_at(fig, "withheld").get_position()[1]
+    ((_, row),) = [(x, y) for x, y in dots(ax) if x == pytest.approx(0.2)]
+    position = ax.get_position()
+    drawn = position.y1 - (row / ax.get_ylim()[0]) * position.height
+    assert label_y == pytest.approx(drawn, abs=0.004)
+
+
+def test_the_label_column_is_wide_enough_for_its_longest_label():
+    """Columns are sized from measured text, not from a per-character estimate.
+
+    The estimate is what put `degree_days_above_18c` through the series name beside
+    it: glyphs are proportional and a registered row is bold, so a character count
+    understates exactly the rows that matter most.
+    """
+    long = "KELP:SOLANA-BEACH  degree_days_above_18c  lag 3"
+    fig = rank([signal(long, registered=True), signal("short")])
+
+    label = text_at(fig, f"* {long}")
+    detail = fig.texts[fig.texts.index(label) + 1]
+    width = figures._text_width(f"* {long}", figures.LABEL_PT_RANK, "bold") / fig.get_figwidth()
+    assert detail.get_position()[0] >= label.get_position()[0] + width
+
+
+def test_a_control_is_drawn_in_a_different_ink_from_a_predictor():
+    """docs/04 s5 controls are screened and reported, never registered. The figure
+    interleaves them so the s5 check can be read off the same ranking."""
+    fig = rank([signal("predictor row"), signal("control row", role="control")])
+
+    assert text_at(fig, "predictor row").get_color() != text_at(fig, "control row").get_color()
+
+
+def test_a_registered_signal_is_starred():
+    fig = rank([signal("a bed  a feature  lag 0", registered=True)])
+
+    assert text_at(fig, "* a bed  a feature  lag 0").get_fontweight() == "bold"
+
+
+def test_the_ranking_refuses_to_draw_nothing():
+    with pytest.raises(ValueError, match="no rows"):
+        rank([])
+
+
+# --- the diagnostics -----------------------------------------------------------
+#
+# The one figure that draws observations rather than coefficients, so its failure
+# modes are about the record it claims to show: a quarter quietly dropped, a line
+# drawn across a hole, or a fitted line that turns a screen into a model.
+
+
+def pairing(**overrides):
+    year = tuple(y for y in (2000, 2000, 2000, 2000, 2002, 2002, 2002) for _ in (0,))
+    return figures.Pairing(
+        **{
+            "title": "KELP:ENCINITAS x days_below_14c lag 4",
+            "subtitle": "SIO:LAJOLLA-PIER 5 m",
+            "year": year,
+            "quarter": (1, 2, 3, 4, 1, 2, 3),
+            "kelp": (1.0, -2.0, 0.5, 3.0, -1.0, 2.0, -0.5),
+            "feature": (0.5, -1.0, 1.5, 2.0, -2.0, 1.0, 0.0),
+            "r": 0.465,
+            "n_eff": 112.0,
+            **overrides,
+        }
+    )
+
+
+def signals(rows=None, **overrides):
+    # `is None` rather than `or`, so passing [] reaches the renderer and its
+    # refusal can be tested instead of being swallowed by the default.
+    return figures.plot_signals(
+        [pairing()] if rows is None else rows,
+        **{"title": "test", "caption": "test", **overrides},
+    )
+
+
+def line_named(ax, label):
+    for line in ax.lines:
+        if line.get_label() == label:
+            return line
+    raise AssertionError(f"no line labelled {label!r}")
+
+
+def test_a_gap_breaks_the_line_without_dropping_a_quarter():
+    """The record skips 2001 entirely, so the line must break -- and every quarter
+    the coefficient was computed on must still be drawn.
+
+    Nulling the observation after a gap breaks the line too, and silently deletes a
+    quarter, which would make the figure describe a shorter record than its own
+    caption claims. docs/04 s2 breaks a threshold spell at a gap for the same
+    reason it does not bridge one.
+    """
+    fig = signals()
+    kelp = line_named(fig.axes[0], "kelp area anomaly")
+    drawn = kelp.get_ydata()
+
+    assert np.count_nonzero(~np.isnan(drawn)) == 7
+    assert np.count_nonzero(np.isnan(drawn)) == 1
+
+
+def test_both_series_are_standardised_rather_than_put_on_twin_axes():
+    """Pearson r is invariant under this rescaling, so it is what r sees. Twin axes
+    can be slid until any two series appear to track, which draws a correlation
+    instead of showing one."""
+    fig = signals()
+    for label in ("kelp area anomaly", "feature anomaly, lagged"):
+        values = line_named(fig.axes[0], label).get_ydata()
+        kept = values[~np.isnan(values)]
+        assert kept.mean() == pytest.approx(0.0, abs=1e-9)
+        assert kept.std(ddof=1) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_the_scatter_carries_no_fitted_line():
+    """docs/04 s4.1 screens and does not model. A line through these points is
+    s4.3's, and drawn here it would read as a model that has not been fitted."""
+    scatter = signals().axes[1]
+
+    sloped = [
+        line
+        for line in scatter.lines
+        if len(set(line.get_xdata())) > 1 and len(set(line.get_ydata())) > 1
+    ]
+    assert sloped == []
+
+
+def test_the_scatter_draws_every_pair():
+    (collection,) = signals().axes[1].collections
+
+    assert len(collection.get_offsets()) == 7
+
+
+def test_the_year_axis_is_whole_years():
+    """A short record left to the default locator gets 2.5-year ticks, and a
+    quarter is not a fraction of a year anyone reads."""
+    fig = signals()
+    labels = [label.get_text() for label in fig.axes[0].get_xticklabels()]
+
+    assert labels and all(label.lstrip("-").isdigit() for label in labels if label)
+
+
+def test_large_anomalies_get_a_tick_a_reader_can_hold():
+    """Kelp area anomalies run to six figures in m^2."""
+    assert figures._compact(100000) == "100k"
+    assert figures._compact(-2_500_000) == "-2.5M"
+    assert figures._compact(7.5) == "7.5"
+
+
+def test_a_control_pairing_is_drawn_in_a_different_ink():
+    predictor = signals([pairing()]).axes[0]
+    control = signals([pairing(role="control")]).axes[0]
+
+    assert (
+        line_named(predictor, "kelp area anomaly").get_color()
+        != line_named(control, "kelp area anomaly").get_color()
+    )
+
+
+def test_the_diagnostics_refuse_to_draw_nothing():
+    with pytest.raises(ValueError, match="no pairings"):
+        signals([])
