@@ -265,7 +265,9 @@ work needs design decisions before it can start.
 **Two standing signals** mean this section should be edited, not just that one
 report redone. **"too long"** — the one-screen rule broke. **"why did you
 stop"** — a stop fired on something that was not really a schema, storage,
-feature or dependency change.
+feature or dependency change. When either fires, fix the report *and* write the
+entry in `docs/agents/friction-log.md`: the signal says a rule misfired once,
+and the log is what makes the third time visible.
 
 ## Project skills
 
@@ -290,3 +292,12 @@ The five canonical triage roles use their default label strings
 
 Single-context repo. ADRs live in `docs/05-architecture-decisions.md`, not in a
 `docs/adr/` directory. See `docs/agents/domain.md`.
+
+### Friction log
+
+When a rule in this file, in `docs/agents/`, or in `.claude/` fires on a case it
+was not written for — or should have fired and did not, or was read two ways —
+write an entry in `docs/agents/friction-log.md` in the session it happens. Log
+the near-misses too, where a rule was inconvenient and right. Entries record the
+incident and never propose the fix; a rule is edited by its own PR, on three
+entries against one sentence or one whose cost shipped. See that file.
