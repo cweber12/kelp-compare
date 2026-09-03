@@ -34,7 +34,7 @@ doc in the same PR. Docs and code must not drift.
 - `src/kelpcompare/figures.py` — draws notebook figures, computes nothing; hard rule 6 applied to plots
 - `src/kelpcompare/cli.py` — `kelpcompare ingest|qc|features|validate|deployments|rebuild`
 - `data/` — gitignored except `data/registry/`; zones per docs/03
-- `notebooks/` — analyses of record; must run top-to-bottom from `comparison.parquet`
+- `notebooks/` — analyses of record; must run top-to-bottom from tables in `features/`, and nothing else
 - `dashboard/` — Streamlit; reads Layer-2 Parquet only, computes no statistics of record
 - `scripts/` — operator tooling, never pipeline: `run-notebook.py` re-executes an
   analysis of record without the encoding and line-ending damage `jupyter execute`
