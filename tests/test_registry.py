@@ -812,3 +812,197 @@ def test_south_bay_still_spans_one_dataset():
     it stays out until the provider fixes that -- the missing thing is a
     reviewed position, not the mechanism to name a second dataset (docs/02)."""
     assert committed_station("SDRTOMS:SBOO").predecessors == ()
+
+
+# --------------------------------------------------------------------------
+# Two deployments that would write one series between them
+# --------------------------------------------------------------------------
+
+
+def logger(
+    *,
+    serial: str,
+    window: tuple[str, str],
+    depth_m: float | None = 16.76,
+    parameter: str = "sea_water_temperature",
+    series: str = "Temperature",
+    tz: str = "America/Los_Angeles",
+    number: int = 1,
+) -> dict:
+    record = {
+        "serial": serial,
+        "deployment_number": number,
+        "tz": tz,
+        "window_local": list(window),
+        "series_map": {series: parameter},
+    }
+    if depth_m is not None:
+        record["depth_m"] = depth_m
+    return record
+
+
+def site(*loggers: dict, site_id: str = "PROJ:STRING") -> dict:
+    return {"site_id": site_id, "operator": "project", "deployments": list(loggers)}
+
+
+def refuses(tmp_path: Path, *sites: dict) -> str:
+    with pytest.raises(ValueError) as raised:
+        registry(tmp_path, *sites)
+    return str(raised.value)
+
+
+def test_two_loggers_at_one_depth_recording_one_parameter_are_refused(tmp_path):
+    """They are not two series. The storage key is (source, site_id, parameter,
+    depth_m, timestamp), so their rows land in one series and the deduper drops
+    one of every pair sharing a timestamp -- by ingest order, which says nothing
+    about which logger was right."""
+    message = refuses(
+        tmp_path,
+        site(
+            logger(serial="AAA", window=("2026-09-01 08:00", "2026-09-30 08:00")),
+            logger(serial="BBB", window=("2026-09-15 08:00", "2026-10-15 08:00")),
+        ),
+    )
+
+    assert "PROJ:STRING" in message
+    assert "16.76 m" in message
+    assert "sea_water_temperature" in message
+    assert "serial AAA" in message and "serial BBB" in message
+    assert "2026-09-15 15:00Z" in message
+
+
+def test_a_par_logger_beside_a_tidbit_at_one_depth_is_allowed(tmp_path):
+    """The case #71 Decision 2 requires: 55 fsw carries both, and they are two
+    series because they carry different parameters. One site and one depth is not
+    itself the collision -- a shared parameter is."""
+    loaded = registry(
+        tmp_path,
+        site(
+            logger(serial="AAA", window=("2026-09-01 08:00", "2026-09-30 08:00")),
+            logger(
+                serial="BBB",
+                window=("2026-09-01 08:00", "2026-09-30 08:00"),
+                parameter="downwelling_photosynthetic_photon_flux_in_sea_water",
+                series="PAR",
+            ),
+        ),
+    )
+
+    assert len(loaded.deployments) == 2
+
+
+def test_the_same_logger_redeployed_is_allowed(tmp_path):
+    """Sequential deployments of one instrument are the ordinary case -- the
+    reviewed TidbiT is on its third. Only an overlap is refused."""
+    loaded = registry(
+        tmp_path,
+        site(
+            logger(serial="AAA", window=("2026-07-01 08:00", "2026-08-01 08:00"), number=1),
+            logger(serial="AAA", window=("2026-08-01 08:01", "2026-09-01 08:00"), number=2),
+        ),
+    )
+
+    assert len(loaded.deployments) == 2
+
+
+def test_windows_that_meet_at_an_instant_do_overlap(tmp_path):
+    """A deployment window is closed at both ends, so the shared instant is a
+    sample slot both loggers claim. Refused rather than left to storage."""
+    message = refuses(
+        tmp_path,
+        site(
+            logger(serial="AAA", window=("2026-07-01 08:00", "2026-08-01 08:00")),
+            logger(serial="BBB", window=("2026-08-01 08:00", "2026-09-01 08:00")),
+        ),
+    )
+
+    assert "overlap from 2026-08-01 15:00Z to 2026-08-01 15:00Z" in message
+
+
+def test_two_depths_at_one_site_are_two_series(tmp_path):
+    loaded = registry(
+        tmp_path,
+        site(
+            logger(serial="AAA", window=("2026-09-01 08:00", "2026-09-30 08:00"), depth_m=8.23),
+            logger(serial="BBB", window=("2026-09-01 08:00", "2026-09-30 08:00"), depth_m=16.76),
+        ),
+    )
+
+    assert len(loaded.deployments) == 2
+
+
+def test_one_depth_at_two_sites_is_two_series(tmp_path):
+    """Position forks a site record (#48), and two site records are two series
+    however deep each one is."""
+    loaded = registry(
+        tmp_path,
+        site(logger(serial="AAA", window=("2026-09-01 08:00", "2026-09-30 08:00")), site_id="P:1"),
+        site(logger(serial="BBB", window=("2026-09-01 08:00", "2026-09-30 08:00")), site_id="P:2"),
+    )
+
+    assert len(loaded.deployments) == 2
+
+
+def test_two_unrecorded_depths_collide_like_any_other_repeated_value(tmp_path):
+    """An unrecorded depth is one value of the storage key, not an unknown that
+    excuses the pair from the check."""
+    message = refuses(
+        tmp_path,
+        site(
+            logger(serial="AAA", window=("2026-09-01 08:00", "2026-09-30 08:00"), depth_m=None),
+            logger(serial="BBB", window=("2026-09-15 08:00", "2026-10-15 08:00"), depth_m=None),
+        ),
+    )
+
+    assert "an unrecorded depth" in message
+
+
+def test_a_deployment_that_cannot_be_placed_in_time_is_left_to_the_ingest_gate(tmp_path):
+    """A missing timezone or window is the docs/06 s5 check-4 gate's business,
+    which reports it against the file that needs it. Raising here would fail every
+    command that merely loads the registry, over a record no file has arrived for."""
+    incomplete = logger(serial="BBB", window=("2026-09-15 08:00", "2026-10-15 08:00"))
+    del incomplete["tz"]
+
+    loaded = registry(
+        tmp_path,
+        site(logger(serial="AAA", window=("2026-09-01 08:00", "2026-09-30 08:00")), incomplete),
+    )
+
+    assert len(loaded.deployments) == 2
+
+
+def test_an_unparseable_window_edge_is_left_to_the_ingest_gate_too(tmp_path):
+    loaded = registry(
+        tmp_path,
+        site(
+            logger(serial="AAA", window=("2026-09-01 08:00", "2026-09-30 08:00")),
+            logger(serial="BBB", window=("whenever", "2026-10-15 08:00")),
+        ),
+    )
+
+    assert len(loaded.deployments) == 2
+
+
+def test_the_overlap_is_judged_in_utc_across_two_timezones(tmp_path):
+    """Two records written in different zones are still one series, and the
+    conversion is what decides it. 01:00 UTC is 18:00 the previous day in
+    Los Angeles, so these overlap by an hour despite reading as disjoint locally."""
+    message = refuses(
+        tmp_path,
+        site(
+            logger(
+                serial="AAA",
+                window=("2026-09-01 17:00", "2026-09-01 18:00"),
+                tz="America/Los_Angeles",
+            ),
+            logger(serial="BBB", window=("2026-09-02 00:00", "2026-09-02 01:00"), tz="UTC"),
+        ),
+    )
+
+    assert "overlap from 2026-09-02 00:00Z to 2026-09-02 01:00Z" in message
+
+
+def test_the_committed_registry_declares_no_merged_series():
+    """The gate is only worth having if the file it guards passes it."""
+    assert len(load_registry(COMMITTED).deployments) == 2

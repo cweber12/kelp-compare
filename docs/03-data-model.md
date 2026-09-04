@@ -332,6 +332,40 @@ inferred from its unit — `degC` is equally `sea_water_temperature` and
 Deployment metadata is mandatory before project-sensor data is accepted;
 this is enforced in the ingest CLI, not by convention.
 
+### Two deployments may not describe one series
+
+**Refused at load**, by `registry.refuse_merged_series`, so no command runs
+against a registry that declares it: two deployments at one `site_id` and one
+`depth_m` whose windows overlap and whose `series_map`s share a controlled
+parameter.
+
+An observation is keyed `(source, site_id, parameter, depth_m, timestamp)`, so
+such a pair does not produce two series. It produces **one** series holding both
+instruments' rows, and `_dedupe` then drops one of every pair that shares a
+timestamp — by newest `fetch_run_id`, which is a fact about ingest order and not
+about which logger was right. The result is indistinguishable downstream from one
+well-sampled instrument.
+
+This is refused rather than warned about because `site_id` and `depth_m` are
+immutable once rows land (above) and `rebuild` is unimplemented: by the time the
+merge shows up in a feature table, it cannot be undone.
+
+**One site and one depth is not the collision — a shared parameter is.** A depth
+may carry two instruments measuring different things, and is expected to: the
+vertical PAR string puts a PAR logger at a depth a TidbiT already occupies. Those
+are two series, and both land.
+
+**Windows are closed at both ends here too**, as they are everywhere a deployment
+window is read. Two that meet exactly at an instant overlap by one sample slot,
+and it is a slot both loggers claim; the fix is to move an edge, not to let
+storage choose.
+
+A deployment that cannot be placed in time — no `tz`, no `window_local`, or an
+edge that will not parse — is skipped by this check rather than refused by it.
+Those are the doc 06 §5 check-4 gate's business, which reports them against the
+file that needs them instead of failing every command that merely loads the
+registry.
+
 Public stations carry no `deployments[]`. What they need instead is the
 identifier their provider knows them by and the geometry of their sensors:
 `sensor_depths_m` is where a water-temperature intake depth is declared, and it
