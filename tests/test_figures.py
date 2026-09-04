@@ -682,3 +682,67 @@ def test_it_refuses_to_draw_no_bands():
     """A figure of record with no series on it is a caption over blank space."""
     with pytest.raises(ValueError, match="no bands"):
         figures.plot_bands([], title="t", caption="c", ylabel="degC")
+
+
+# --------------------------------------------------------------------------
+# The threshold span, which is drawn and never chosen
+# --------------------------------------------------------------------------
+
+
+def test_the_threshold_span_is_drawn_where_it_was_told_to_be():
+    """The pair comes from `features.json`, where the same two numbers name the
+    `frac_in_band` column the figure is about. A renderer choosing its own edges
+    would be inventing the threshold the figure claims to show."""
+    x = days("2026-07-11", "2026-07-12")
+
+    fig = figures.plot_bands(
+        [figures.Band("one", x, [15.0, 21.0])],
+        title="t",
+        caption="c",
+        ylabel="degC",
+        span=(14.0, 20.0),
+    )
+
+    edges = sorted(line.get_ydata()[0] for line in fig.axes[0].lines[1:])
+    assert edges == [14.0, 20.0]
+
+
+def test_the_span_sits_behind_the_series_it_is_read_against():
+    x = days("2026-07-11", "2026-07-12")
+
+    fig = figures.plot_bands(
+        [figures.Band("one", x, [15.0, 21.0])],
+        title="t",
+        caption="c",
+        ylabel="degC",
+        span=(14.0, 20.0),
+    )
+
+    (patch,) = [p for p in fig.axes[0].patches if p.get_zorder() < 0]
+    assert patch.get_zorder() < min(line.get_zorder() for line in fig.axes[0].lines[:1])
+
+
+def test_a_span_that_does_not_run_low_to_high_is_refused():
+    """The same refusal the registry makes, at the other end of the pipeline: a
+    reversed pair contains nothing, and shading it would show an empty region as
+    though it were the band."""
+    x = days("2026-07-11", "2026-07-12")
+
+    with pytest.raises(ValueError, match="low to high"):
+        figures.plot_bands(
+            [figures.Band("one", x, [15.0, 21.0])],
+            title="t",
+            caption="c",
+            ylabel="degC",
+            span=(20.0, 14.0),
+        )
+
+
+def test_no_span_draws_no_shaded_region():
+    x = days("2026-07-11", "2026-07-12")
+
+    fig = figures.plot_bands(
+        [figures.Band("one", x, [15.0, 21.0])], title="t", caption="c", ylabel="degC"
+    )
+
+    assert not [p for p in fig.axes[0].patches if p.get_zorder() < 0]

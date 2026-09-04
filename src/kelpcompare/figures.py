@@ -1075,6 +1075,8 @@ def plot_bands(
     gap: object | None = None,
     baseline: float | None = None,
     baseline_label: str = "",
+    span: tuple[float, float] | None = None,
+    span_label: str = "",
     dpi: int = 200,
 ) -> mpl.figure.Figure:
     """Series over a shared x axis, each inside its own band.
@@ -1093,6 +1095,13 @@ def plot_bands(
     reading `windowed._longest_spell` gives a gap, applied to a line. Left None,
     nothing is cut, which is right for a series with no notion of a regular step
     (an hour-of-day composite, for instance) and wrong for a dated one.
+
+    **`span` is a threshold band, and it is drawn rather than derived.** The pair
+    is the caller's -- read from `features.json`, where the same two numbers name
+    the `frac_in_band` column the figure is about -- so the shaded region and the
+    measured occupancy cannot disagree. A renderer that chose its own edges would
+    be inventing the threshold, which is the line hard rule 6 draws around this
+    module, and the same reason `low`/`high` above are drawn and never computed.
 
     Raises rather than drawing an empty axes: a figure of record with no series
     on it is a caption over blank space.
@@ -1122,6 +1131,28 @@ def plot_bands(
         if low is not None and high is not None:
             axes.fill_between(x, low, high, color=colour, alpha=0.16, linewidth=0)
         axes.plot(x, centre, color=colour, linewidth=1.4, label=band.label, solid_capstyle="round")
+
+    # Behind the grid as well as the series: the band is the ground a reading is
+    # taken against, not a mark competing with the lines for attention.
+    if span is not None:
+        low, high = span
+        if low >= high:
+            raise ValueError(f"span {span!r} does not run low to high")
+        axes.axhspan(low, high, color=MUTED, alpha=0.10, linewidth=0, zorder=-1)
+        for edge in (low, high):
+            axes.axhline(edge, color=MUTED, linewidth=0.8, alpha=0.55, zorder=0)
+        if span_label:
+            axes.annotate(
+                span_label,
+                xy=(0.0, high),
+                xycoords=("axes fraction", "data"),
+                xytext=(2, 3),
+                textcoords="offset points",
+                ha="left",
+                va="bottom",
+                fontsize=7.0,
+                color=MUTED,
+            )
 
     if baseline is not None:
         axes.axhline(baseline, color=MUTED, linewidth=0.9, linestyle=(0, (2.4, 2.0)), zorder=0)
