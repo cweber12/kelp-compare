@@ -261,3 +261,42 @@ contradicted it, and the reading it invited is the kind nothing downstream
 questions.
 
 **Status:** open
+
+### 2026-09-04 — the stop-and-ask gate's list carried two items that were not decisions
+
+**Rule:** `CLAUDE.md`, "Branching and finishing a task" — "**Stop and ask anyway**
+if the work turns out to touch the observation schema, a storage zone, a feature
+definition, or to need a new dependency … it is the one thing still worth an
+interruption. Nothing else is."
+
+**Mode:** misfire
+
+**Situation:** triaging PRD
+https://github.com/cweber12/kelp-compare/issues/162 produced a section headed
+"What still needs you, and why it cannot be delegated", carrying four items. Two
+of them touch a feature definition and stop correctly: whether docs/04 §5 ranks
+on Spearman, and whether the kelp anomaly takes a `sqrt` transform under
+docs/03 §3. Two touch no schema, zone, feature or dependency — what the §7
+control caution is worth, and an observation about the candidate gate's
+`rank_gap` threshold.
+
+**What it made me do:** put all four under one heading asserting that none could
+be delegated. The split-out pattern was available and had been used once in that
+same session, for the measurement half
+(https://github.com/cweber12/kelp-compare/issues/164), rather than applied per
+item.
+
+**What I would have done otherwise:** filed the two measurable items as work when
+they were found, leaving the PRD only the two that stop.
+
+**Cost:** it shipped, on a public issue, and stood for a day. The operator's
+response to the four was that he could not answer any of them and did not think
+he should be asked to — so the two questions that are legitimately his lost
+their credibility to the two that were not, and the PRD was read as asking for
+invented parameters. The `rank_gap` item is the sharper half: an underived
+constant withholding the strongest cell in the predictor pool is a defect, and it
+spent that day filed as an observation for the operator. Split out on 2026-09-04
+as https://github.com/cweber12/kelp-compare/issues/174 and
+https://github.com/cweber12/kelp-compare/issues/175.
+
+**Status:** open
