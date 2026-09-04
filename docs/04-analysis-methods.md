@@ -731,9 +731,26 @@ with the run manifest ID in the caption.
 
 "A handful" was a placeholder while nothing had been registered and the grid
 was 330 cells. It is now the gate on the whole 4.3 rung, and the pool grows
-whenever a reference series is added — one station took it from 330 to 990, and
-the satellite leg took it to 1,420 — so the rule is stated as a count of
-*signals* rather than of cells.
+whenever a reference series **or a feature** is added — one station took it from
+330 to 990, the satellite leg took it to 1,420, and `frac_in_band_14c_20c` took
+it to 1,545 — so the rule is stated as a count of *signals* rather than of cells.
+
+**A feature widens the pool the way a series does, and the first one to do so
+was measured before it was allowed in.** §2's band occupancy was built for the
+deployment tables (§1), where its whole point is a grain no quarterly table
+reaches; it reaches `quarterly_env` because a feature set applies to every window
+that reduces its parameter. Whether that made it a thirteenth view of twelve
+existing columns is the question §5 asks about *series*, asked on the other axis,
+and it gets the same answer: measure it. Over the 1,028 usable environmental
+series-quarters that carry it, the band anomaly's strongest correlation with any
+other screened feature is **−0.793**, against `days_above_20c` — and −0.485
+against `days_below_14c`, the threshold at its other edge.
+
+Correlating negatively with *both* tails is what a middle band should do, and it
+sits at −0.353 against the quarterly mean, so it is not re-measuring the centre
+either. Nothing approaches the near-identity that makes two *series* one signal.
+It enters the pool as its own feature, and the growth is recorded above rather
+than absorbed.
 
 **A signal is one (feature, lag, polygon).** Two screened cells that agree on
 all three are the same claim about the same bed measured by different
