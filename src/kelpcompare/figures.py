@@ -30,6 +30,7 @@ where a reader compares, and the label carries what the hatching used to say.
 
 from __future__ import annotations
 
+import textwrap
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -1038,6 +1039,8 @@ SERIES_W = 9.20
 SERIES_TOP_H = 0.86  #: title, and the subtitle under it
 SERIES_BOTTOM_H = 1.00  #: the axis label, the legend and the caption
 SERIES_LABEL_PT = 8.0
+SERIES_SUBTITLE_CHARS = 108  #: at 9 pt over SERIES_W, before the right margin
+SERIES_SUBTITLE_H = 0.19  #: added to the figure for each wrapped subtitle line
 
 
 @dataclass(frozen=True)
@@ -1097,7 +1100,11 @@ def plot_bands(
     if not bands:
         raise ValueError("no bands to draw")
 
-    fig_h = SERIES_TOP_H + SERIES_H + SERIES_BOTTOM_H
+    # Wrapped rather than trusted to fit. A subtitle is where a caller states the
+    # caveat that stops a figure being over-read, so it is exactly the string
+    # that must not run off the right edge unnoticed.
+    lines = textwrap.wrap(subtitle, width=SERIES_SUBTITLE_CHARS) if subtitle else []
+    fig_h = SERIES_TOP_H + max(len(lines) - 1, 0) * SERIES_SUBTITLE_H + SERIES_H + SERIES_BOTTOM_H
     fig = plt.figure(figsize=(SERIES_W, fig_h), dpi=dpi, facecolor=SURFACE)
     axes = fig.add_axes(
         (
@@ -1153,22 +1160,37 @@ def plot_bands(
     fig.suptitle(
         title, x=0.008, y=1 - 0.34 / fig_h, ha="left", fontsize=15, color=INK, weight="bold"
     )
-    if subtitle:
+    if lines:
         fig.text(
-            0.008, 1 - 0.62 / fig_h, subtitle, ha="left", va="top", fontsize=9, color=SECONDARY
+            0.008,
+            1 - 0.62 / fig_h,
+            "\n".join(lines),
+            ha="left",
+            va="top",
+            fontsize=9,
+            color=SECONDARY,
+            linespacing=1.45,
         )
     fig.text(0.008, 0.13 / fig_h, caption, ha="left", va="bottom", fontsize=7.5, color=SECONDARY)
     return fig
 
 
+#: The blue arm without its palest step. `BLUE_ARM[0]` is sized to fill a grid
+#: cell, where a large block of it reads clearly; it does not carry a 1.4 pt line
+#: or a 16% fill on `SURFACE`, which is what this figure asks of a colour.
+SERIES_RAMP = BLUE_ARM[1:]
+
+
 def _band_colour(index: int, total: int) -> str:
-    """Evenly spaced shades of the blue arm, light to dark, over however many
-    bands there are. Two bands take the ends rather than two adjacent steps, so
-    the commonest case is also the most legible one."""
+    """Evenly spaced shades, light to dark, over however many bands there are.
+
+    Two bands take the ends rather than two adjacent steps, so the commonest case
+    is also the most legible one.
+    """
     if total <= 1:
-        return BLUE_ARM[3]
-    step = (len(BLUE_ARM) - 1) / (total - 1)
-    return BLUE_ARM[round(index * step)]
+        return SERIES_RAMP[2]
+    step = (len(SERIES_RAMP) - 1) / (total - 1)
+    return SERIES_RAMP[round(index * step)]
 
 
 def _cut(band: Band, gap: object | None):

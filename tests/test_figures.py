@@ -645,14 +645,37 @@ def test_colour_encodes_the_callers_order_light_to_dark():
 
 def test_two_bands_take_the_ends_of_the_ramp():
     """The commonest case is also the one that most needs to be legible, so two
-    series do not come back as two adjacent steps of a six-step ramp."""
+    series do not come back as two adjacent steps of the ramp."""
     x = days("2026-07-11", "2026-07-12")
     bands = [figures.Band(name, x, [1.0, 2.0]) for name in ("shallow", "deep")]
 
     fig = figures.plot_bands(bands, title="t", caption="c", ylabel="degC")
 
     drawn = [mcolors.to_hex(line.get_color()) for line in fig.axes[0].lines]
-    assert drawn == [figures.BLUE_ARM[0], figures.BLUE_ARM[-1]]
+    assert drawn == [figures.SERIES_RAMP[0], figures.SERIES_RAMP[-1]]
+
+
+def test_the_palest_grid_step_is_not_used_for_a_line():
+    """`BLUE_ARM[0]` is sized to fill a grid cell. At 1.4 pt on `SURFACE` it is
+    not a line anyone can follow, and the first draw of the deployment profile
+    proved it."""
+    assert figures.SERIES_RAMP[0] != figures.BLUE_ARM[0]
+    assert set(figures.SERIES_RAMP) < set(figures.BLUE_ARM)
+
+
+def test_a_long_subtitle_wraps_instead_of_running_off_the_page():
+    """A subtitle is where a caller states the caveat that stops a figure being
+    over-read, so it is the one string that must not silently run off the edge."""
+    x = days("2026-07-11", "2026-07-12")
+    long = " ".join(["a caveat worth reading"] * 12)
+
+    fig = figures.plot_bands(
+        [figures.Band("one", x, [1.0, 2.0])], title="t", caption="c", ylabel="degC", subtitle=long
+    )
+
+    drawn = next(text for text in fig.texts if "caveat" in text.get_text())
+    assert len(drawn.get_text().splitlines()) > 1
+    assert max(len(line) for line in drawn.get_text().splitlines()) <= figures.SERIES_SUBTITLE_CHARS
 
 
 def test_it_refuses_to_draw_no_bands():
