@@ -121,6 +121,7 @@ FEATURE_TABLES = (
     "validation",
     "deployment",
     "deployment_daily",
+    "deployment_hourly",
 )
 
 

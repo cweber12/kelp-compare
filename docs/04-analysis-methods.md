@@ -260,6 +260,25 @@ last row. It carries no `usable` column: §2 considered a minimum per-day covera
 and rejected it, and a flag here would be that rejected threshold arriving
 through the back door.
 
+### And one row per hour, which is where the zone stops
+
+**Built** — `deployment_hourly.parquet` (docs/03), from the same run and the same
+builder. The daily table can say the warmest day of a deployment reached
+21.6 °C; it cannot say whether the water crossed 20 °C once that day or four
+times, and a band occupancy over a whole day cannot either. An hour can.
+
+**The floor is a rule, not a stopping point.** docs/03 "Deployment hours" states
+it: a grain is admitted when a figure or check of record needs it and nothing
+coarser will do, and a sample-grain table would be `observations/` under another
+name. One hour is the finest grain with a consumer.
+
+**What an hour buys, and what it costs.** At 600 s an hour holds six samples, so
+its `p05` and `p95` are its `min` and `max` and its variance is over six points —
+reported with `n_obs` beside them rather than dropped, for the reason §2 gives
+about reporting rather than filtering. What the hour is *for* is
+`frac_in_band_{low}_{high}`, which needs no distribution to mean something and is
+the one §2 feature defined over a window this short.
+
 **What it is not for.** It carries no anomalies, for the reason the table above
 carries none. And a daily range is not a stratification measurement — it is
 consistent with vertical displacement of the column past a fixed sensor, with

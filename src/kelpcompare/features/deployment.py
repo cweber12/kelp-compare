@@ -39,6 +39,8 @@ calendar artifact: it is the instrument stopping early, flooding, or failing QC.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pandas as pd
 
 from kelpcompare.features.config import FeatureConfig
@@ -253,43 +255,70 @@ def _typed(frame: pd.DataFrame, config: FeatureConfig) -> pd.DataFrame:
 
 
 #: docs/03 `deployment_daily.parquet`. The deployment's key plus the UTC day, so
-#: a daily row traces to exactly one row of `deployment.parquet`.
-DEPLOYMENT_DAILY_KEY = (*DEPLOYMENT_KEY, "day")
+#: a sub-deployment row traces to exactly one row of `deployment.parquet`.
+#:
+#: What a sub-deployment row takes from a windowed reduction besides its
+#: features. Deliberately narrower than `WINDOW_BOOKKEEPING`: `feature_set`
+#: belongs to the parent row, `n_days_observed` is 1 by construction on a day and
+#: meaningless on an hour, and `usable` is left off for a reason of its own --
+#: see `build_deployment_daily`.
+_SUB_WINDOW_FROM_REDUCTION = ("n_obs", "cadence_s", "expected_obs", "pct_coverage")
 
-#: One row per *observed* day. Deliberately narrower than `WINDOW_BOOKKEEPING`:
-#: `feature_set` belongs to the parent row, `n_days_observed` is 1 by
-#: construction, and `usable` is left off for a reason of its own -- see
-#: `build_deployment_daily`.
-#: The fixed prefix. The feature columns that follow come from the configuration
-#: (`deployment_daily_columns`) rather than from a list here, so a band declared
-#: in the registry reaches this table without a second list being edited.
-DEPLOYMENT_DAILY_COLUMNS = (
-    *DEPLOYMENT_DAILY_KEY,
-    "n_obs",
-    "cadence_s",
-    "expected_obs",
-    "pct_coverage",
-    "partial_day",
-)
 
-#: What a daily row takes from a windowed reduction besides its features.
-_DAILY_FROM_REDUCTION = ("n_obs", "cadence_s", "expected_obs", "pct_coverage")
+@dataclass(frozen=True)
+class _Grain:
+    """One sub-deployment table's grain: how long a row is, and what it is called.
 
-_ONE_DAY = pd.Timedelta(days=1)
+    The daily and hourly tables differ in a step and two column names and in
+    nothing else, so they share a builder rather than two shapes kept in step by
+    hand. Same reason `build_deployment` and the daily builder already share
+    `_resolved`: three tables describing the same deployments must not be able to
+    disagree about them.
+    """
 
-_DAILY_DTYPES = {
-    "site_id": "string",
-    "serial": "string",
-    "deployment_number": "Int64",
-    "parameter": "string",
-    "depth_m": "float64",
-    "day": "datetime64[us]",
-    "n_obs": "int64",
-    "cadence_s": "float64",
-    "expected_obs": "float64",
-    "pct_coverage": "float64",
-    "partial_day": "bool",
-}
+    step: pd.Timedelta
+    stamp: str
+    partial: str
+    stamp_format: str
+
+    @property
+    def key(self) -> tuple[str, ...]:
+        return (*DEPLOYMENT_KEY, self.stamp)
+
+    @property
+    def prefix(self) -> tuple[str, ...]:
+        """The fixed columns. The feature columns that follow come from the
+        configuration rather than from a list here, so a band declared in the
+        registry reaches both tables without a second list being edited."""
+        return (*self.key, *_SUB_WINDOW_FROM_REDUCTION, self.partial)
+
+    @property
+    def dtypes(self) -> dict[str, str]:
+        return {
+            "site_id": "string",
+            "serial": "string",
+            "deployment_number": "Int64",
+            "parameter": "string",
+            "depth_m": "float64",
+            self.stamp: "datetime64[us]",
+            "n_obs": "int64",
+            "cadence_s": "float64",
+            "expected_obs": "float64",
+            "pct_coverage": "float64",
+            self.partial: "bool",
+        }
+
+
+#: docs/03 `deployment_daily.parquet` and `deployment_hourly.parquet`. One hour is
+#: the floor the zone stops at, and docs/03 "Deployment hours" says why it is
+#: there rather than at the sample.
+DAY = _Grain(pd.Timedelta(days=1), "day", "partial_day", "%Y-%m-%d")
+HOUR = _Grain(pd.Timedelta(hours=1), "hour", "partial_hour", "%Y-%m-%d %H:%M")
+
+DEPLOYMENT_DAILY_KEY = DAY.key
+DEPLOYMENT_DAILY_COLUMNS = DAY.prefix
+DEPLOYMENT_HOURLY_KEY = HOUR.key
+DEPLOYMENT_HOURLY_COLUMNS = HOUR.prefix
 
 
 def deployment_daily_columns(config: FeatureConfig) -> tuple[str, ...]:
@@ -299,7 +328,16 @@ def deployment_daily_columns(config: FeatureConfig) -> tuple[str, ...]:
     `windowed.DAY_BASED_KINDS` for why that is a real distinction rather than a
     convenience, and `build_deployment_daily` for what it excludes.
     """
-    return (*DEPLOYMENT_DAILY_COLUMNS, *sub_window_columns(config))
+    return _columns_for(config, DAY)
+
+
+def deployment_hourly_columns(config: FeatureConfig) -> tuple[str, ...]:
+    """The hourly table's columns, under the same rule as the daily table's."""
+    return _columns_for(config, HOUR)
+
+
+def _columns_for(config: FeatureConfig, grain: _Grain) -> tuple[str, ...]:
+    return (*grain.prefix, *sub_window_columns(config))
 
 
 def build_deployment_daily(
@@ -348,19 +386,84 @@ def build_deployment_daily(
     deployments and reports them; repeating them here would double every such
     line in one run's manifest.
     """
+    return _build_sub_window(observations, registry, config, qc_max_flag=qc_max_flag, grain=DAY)
+
+
+def empty_deployment_daily(config: FeatureConfig) -> pd.DataFrame:
+    """The daily table's shape with no rows."""
+    return _sub_window_frame([], config, DAY)
+
+
+def build_deployment_hourly(
+    observations: pd.DataFrame,
+    registry: Registry,
+    config: FeatureConfig,
+    *,
+    qc_max_flag: int = FLAG_NOT_EVALUATED,
+) -> tuple[pd.DataFrame, tuple[str, ...]]:
+    """The same series again, an hour at a time. The floor the zone stops at.
+
+    The daily table can say a deployment's warmest day reached 21.6 degC. It
+    cannot say whether the water crossed 20 degC once that day or four times, and
+    a band occupancy over a whole day cannot either. An hour can, and one hour is
+    where this stops: docs/03 "Deployment hours" states the floor and its reason,
+    which is that a figure of record needs it and nothing finer has a consumer.
+
+    Every rule the daily table holds holds here, for the same reasons and through
+    the same code -- hours clipped to the deployment window so a logger that went
+    in at 15:00 does not read as 0.0 of the hour before, only the final hour
+    inheriting the closed upper edge, the cadence measured once over the whole
+    deployment and passed down, one row per observed hour and none for an hour
+    nobody measured, and no `usable` flag.
+
+    **What an hour cannot carry is a distribution.** At 600 s an hour holds six
+    samples: `p05` and `p95` collapse onto `min` and `max`, and `variance` is
+    over six points. They are reported rather than dropped, because dropping them
+    would fork the reduction and let this table and the daily one drift apart
+    about how a mean is computed -- and `n_obs` is on every row for a reader to
+    see what the six are. docs/03 says so in the table's own section.
+    """
+    return _build_sub_window(observations, registry, config, qc_max_flag=qc_max_flag, grain=HOUR)
+
+
+def empty_deployment_hourly(config: FeatureConfig) -> pd.DataFrame:
+    """The hourly table's shape with no rows."""
+    return _sub_window_frame([], config, HOUR)
+
+
+def _build_sub_window(
+    observations: pd.DataFrame,
+    registry: Registry,
+    config: FeatureConfig,
+    *,
+    qc_max_flag: int,
+    grain: _Grain,
+) -> tuple[pd.DataFrame, tuple[str, ...]]:
+    """One sub-deployment table, at whichever grain it was asked for.
+
+    Both tables through one implementation, so they cannot come to disagree about
+    clipping, about which deployments exist, or about how a mean is computed.
+
+    Registry problems are left to `build_deployment`, which walks the same
+    deployments and reports them; repeating them here would put every such line
+    in one run's manifest three times.
+    """
     validate_frame(observations)
     warnings: list[str] = []
     rows: list[dict] = []
     kept = observations[(observations["qc_flag"] <= qc_max_flag) & observations["value"].notna()]
+    features = sub_window_columns(config)
 
     for deployment, entry, window, own in _resolved(kept, registry, config):
         label = f"{deployment.site_id}/{entry.parameter} deployment {deployment.deployment_number}"
-        # Measured once over the whole deployment and passed down: a day holding
-        # two samples cannot measure its own cadence -- see `reduce_window`.
+        # Measured once over the whole deployment and passed down: a span holding
+        # two samples cannot measure its own cadence -- see `reduce_window`. The
+        # shorter the grain the more this matters, which is why the hourly table
+        # could not have been written without it.
         cadence = series_cadence(own["timestamp"], label=label, warnings=warnings)
-        observed = dict(tuple(own.groupby(own["timestamp"].dt.floor("D"))))
-        for day, span, partial in _day_windows(window):
-            frame = observed.get(day)
+        observed = dict(tuple(own.groupby(own["timestamp"].dt.floor(grain.step))))
+        for edge, span, partial in _sub_windows(window, grain.step):
+            frame = observed.get(edge)
             if frame is None or frame.empty:
                 continue
             reduced = reduce_window(
@@ -368,9 +471,9 @@ def build_deployment_daily(
                 window=span,
                 entry=without_day_based(entry),
                 coverage_floor=config.coverage_floor,
-                label=f"{label} {day:%Y-%m-%d}",
+                label=f"{label} {edge:{grain.stamp_format}}",
                 warnings=warnings,
-                noun="day",
+                noun=grain.stamp,
                 cadence=cadence,
             )
             rows.append(
@@ -382,47 +485,43 @@ def build_deployment_daily(
                     "depth_m": deployment.depth_m,
                     # Naive UTC on the way out, as `window_start` and every
                     # stored timestamp are (docs/03).
-                    "day": day.tz_localize(None) if day.tzinfo else day,
-                    "partial_day": partial,
-                    **{name: reduced[name] for name in _DAILY_FROM_REDUCTION},
-                    **{
-                        name: reduced[name]
-                        for name in sub_window_columns(config)
-                        if name in reduced
-                    },
+                    grain.stamp: edge.tz_localize(None) if edge.tzinfo else edge,
+                    grain.partial: partial,
+                    **{name: reduced[name] for name in _SUB_WINDOW_FROM_REDUCTION},
+                    **{name: reduced[name] for name in features if name in reduced},
                 }
             )
 
-    return _daily_frame(rows, config), tuple(warnings)
+    return _sub_window_frame(rows, config, grain), tuple(warnings)
 
 
-def empty_deployment_daily(config: FeatureConfig) -> pd.DataFrame:
-    """The daily table's shape with no rows."""
-    return _daily_frame([], config)
+def _sub_windows(window: Window, step: pd.Timedelta) -> list[tuple[pd.Timestamp, Window, bool]]:
+    """The window cut into `step`-long UTC spans, each clipped to it.
 
-
-def _day_windows(window: Window) -> list[tuple[pd.Timestamp, Window, bool]]:
-    """The window cut into UTC days, each clipped to it.
-
-    Only the final day inherits the closed upper edge. Giving it to every day
+    Only the final span inherits the closed upper edge. Giving it to every span
     whose upper edge happens to equal the window's would count the closing sample
-    twice where a deployment ends exactly at midnight, because `dt.floor("D")`
-    puts a midnight reading on its own day rather than on the one before it.
+    twice where a deployment ends exactly on a boundary, because `dt.floor` puts a
+    reading taken at midnight -- or on the hour -- on its own span rather than on
+    the one before it.
+
+    The third element says the span was cut by the deployment rather than by a
+    gap, which is what keeps a logger's first partial day or hour reading as fully
+    covered instead of as a hole.
     """
-    last = window.end.floor("D")
+    last = window.end.floor(step)
     spans: list[tuple[pd.Timestamp, Window, bool]] = []
-    day = window.start.floor("D")
-    while day <= last:
-        following = day + _ONE_DAY
-        low, high = max(day, window.start), min(following, window.end)
+    edge = window.start.floor(step)
+    while edge <= last:
+        following = edge + step
+        low, high = max(edge, window.start), min(following, window.end)
         spans.append(
             (
-                day,
-                Window(start=low, end=high, inclusive_end=window.inclusive_end and day == last),
-                bool(low > day or high < following),
+                edge,
+                Window(start=low, end=high, inclusive_end=window.inclusive_end and edge == last),
+                bool(low > edge or high < following),
             )
         )
-        day = following
+        edge = following
     return spans
 
 
@@ -470,13 +569,13 @@ def _resolved(
             yield deployment, entry, window, own
 
 
-def _daily_frame(rows: list[dict], config: FeatureConfig) -> pd.DataFrame:
+def _sub_window_frame(rows: list[dict], config: FeatureConfig, grain: _Grain) -> pd.DataFrame:
     """Fixed dtypes and a stable order, so two runs write the same bytes."""
-    columns = list(deployment_daily_columns(config))
-    types = {**_DAILY_DTYPES, **dict.fromkeys(sub_window_columns(config), "float64")}
+    columns = list(_columns_for(config, grain))
+    types = {**grain.dtypes, **dict.fromkeys(sub_window_columns(config), "float64")}
     if not rows:
         empty = pd.DataFrame({name: pd.Series(dtype="object") for name in columns})
         return empty.astype(types)
     frame = pd.DataFrame(rows).reindex(columns=columns)
-    ordered = frame.sort_values(list(DEPLOYMENT_DAILY_KEY), kind="stable", na_position="last")
+    ordered = frame.sort_values(list(grain.key), kind="stable", na_position="last")
     return ordered.reset_index(drop=True).astype(types)

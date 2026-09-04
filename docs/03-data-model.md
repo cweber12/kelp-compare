@@ -1265,8 +1265,65 @@ a sub-day window can carry. Declaring a band therefore adds a column here, to
 ADR-006 working as designed rather than three schemas kept in step by hand.
 
 **Regenerated wholesale**, with `deployment.parquet`, in one run and under one
-manifest — both walk the same registry deployments through one shared generator,
-so the two tables cannot describe different sets of deployments.
+manifest — all three tables walk the same registry deployments through one shared
+generator, so they cannot describe different sets of deployments.
+
+## Deployment hours: `deployment_hourly.parquet`
+
+**Implemented** — `src/kelpcompare/features/deployment.py`, written by the same
+`kelpcompare deployments` run. One row per **`site_id × serial ×
+deployment_number × parameter × depth_m × hour`**, and the same columns as the
+daily table with `partial_day` replaced by `partial_hour`.
+
+Every rule the daily table holds holds here, through the same code: hours clipped
+to the deployment window and tiling it exactly, only the final hour inheriting
+the closed upper edge, the series' cadence measured once and passed down, one row
+per observed hour and none for an hour nobody measured, and no `usable` column.
+The two tables differ in a step and two column names, which is why they share a
+builder rather than being kept in step by hand.
+
+### One hour is the floor, and this is the rule
+
+The zone stops here. It does not reach the 600 s sample, and the reason is a rule
+rather than an accident of what got built first
+(https://github.com/cweber12/kelp-compare/issues/158):
+
+> **A features table may reduce a series over a window; it must not become the
+> series.** A grain is admitted when a figure or a check of record needs it and
+> nothing coarser will do. One hour is the finest such consumer: a band occupancy
+> over a whole day cannot say whether the water crossed the band once or four
+> times, and an hour can. A sample-grain table would answer no question the
+> hourly table leaves open, and it would be `observations/` with a different name
+> — a copy of the zone that holds measurements, in the zone that holds
+> reductions.
+
+The companion rule, which governs the columns rather than the rows:
+
+> **A column may reduce the series over its own row's window. It may not name a
+> mechanism that window cannot resolve.**
+
+`frac_in_band_14c_20c` passes both clauses — occupancy is a reduction, and the
+name claims no mechanism. The hour-of-day composite this table's PRD rejected
+fails the second: on the current record it peaks at 20:00 and troughs at noon
+local, so a column named for a diel cycle would invite exactly the wrong reading.
+A band decomposition would pass both, provided its columns are labelled as bands
+rather than as tidal constituents — 21 days cannot separate M2 from S2.
+
+### What an hour cannot carry, and why it carries it anyway
+
+At a 600 s cadence an hour holds six samples. `p05` and `p95` collapse onto `min`
+and `max`, and `variance` is over six points. They are reported rather than
+dropped: dropping them would fork `reduce_window`, and the daily and hourly
+tables could then drift apart about how a mean is computed — the drift the shared
+builder exists to prevent. `n_obs` is on every row, so a reader can see what the
+six are. This is the same posture as the missing `usable` flag: report the number
+and disclose its limit, rather than withhold it.
+
+**Row count grows with deployment-hours**, so this is the first features table
+whose size is set by how long instruments were in the water rather than by how
+many quarters have elapsed. Still one file rewritten wholesale — the current
+record is ~1,500 rows, and the zone's rule below is about purity rather than
+about size.
 
 ## Run manifests
 
