@@ -254,9 +254,6 @@ def _typed(frame: pd.DataFrame, config: FeatureConfig) -> pd.DataFrame:
     return frame.astype({name: types[name] for name in frame.columns if name in types})
 
 
-#: docs/03 `deployment_daily.parquet`. The deployment's key plus the UTC day, so
-#: a sub-deployment row traces to exactly one row of `deployment.parquet`.
-#:
 #: What a sub-deployment row takes from a windowed reduction besides its
 #: features. Deliberately narrower than `WINDOW_BOOKKEEPING`: `feature_set`
 #: belongs to the parent row, `n_days_observed` is 1 by construction on a day and
@@ -283,6 +280,8 @@ class _Grain:
 
     @property
     def key(self) -> tuple[str, ...]:
+        """The deployment's key plus the span the row reduces, so a row in either
+        sub-deployment table traces to exactly one row of `deployment.parquet`."""
         return (*DEPLOYMENT_KEY, self.stamp)
 
     @property
