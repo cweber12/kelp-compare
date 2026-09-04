@@ -32,9 +32,11 @@ from kelpcompare.features.comparison import COMPARISON_KEY, build_comparison
 from kelpcompare.features.config import load_feature_config
 from kelpcompare.features.deployment import (
     DEPLOYMENT_DAILY_KEY,
+    DEPLOYMENT_HOURLY_KEY,
     DEPLOYMENT_KEY,
     build_deployment,
     build_deployment_daily,
+    build_deployment_hourly,
 )
 from kelpcompare.features.kelp import (
     CLIMATOLOGY_KELP_KEY,
@@ -1061,10 +1063,13 @@ def deployments(
             daily, daily_warnings = build_deployment_daily(
                 observations, registry, config, qc_max_flag=qc_max_flag
             )
-            warnings = (*warnings, *daily_warnings)
+            hourly, hourly_warnings = build_deployment_hourly(
+                observations, registry, config, qc_max_flag=qc_max_flag
+            )
+            warnings = (*warnings, *daily_warnings, *hourly_warnings)
         except Exception as error:  # noqa: BLE001 -- report it, keep the manifest
             run.note_warning(f"deployments: {type(error).__name__}: {error}")
-            frame, daily, warnings = None, None, ()
+            frame, daily, hourly, warnings = None, None, None, ()
 
         for warning in warnings:
             run.note_warning(warning)
@@ -1098,11 +1103,16 @@ def deployments(
             daily, zones, table="deployment_daily", key=DEPLOYMENT_DAILY_KEY
         )
         run.add_series(source="deployment_daily", rows=len(daily))
+        hourly_path = replace_features(
+            hourly, zones, table="deployment_hourly", key=DEPLOYMENT_HOURLY_KEY
+        )
+        run.add_series(source="deployment_hourly", rows=len(hourly))
         # Also tables in the features zone, and so also tables that could not
         # be traced to the run that wrote them (docs/03 run manifests).
-        _record_tables(run, (path, daily_path))
+        _record_tables(run, (path, daily_path, hourly_path))
         click.echo(f"wrote {path}")
         click.echo(f"wrote {daily_path}  ({len(daily)} days)")
+        click.echo(f"wrote {hourly_path}  ({len(hourly)} hours)")
         click.echo(f"manifest: {run.write(zones)}")
 
 

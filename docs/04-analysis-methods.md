@@ -260,6 +260,25 @@ last row. It carries no `usable` column: §2 considered a minimum per-day covera
 and rejected it, and a flag here would be that rejected threshold arriving
 through the back door.
 
+### And one row per hour, which is where the zone stops
+
+**Built** — `deployment_hourly.parquet` (docs/03), from the same run and the same
+builder. The daily table can say the warmest day of a deployment reached
+21.6 °C; it cannot say whether the water crossed 20 °C once that day or four
+times, and a band occupancy over a whole day cannot either. An hour can.
+
+**The floor is a rule, not a stopping point.** docs/03 "Deployment hours" states
+it: a grain is admitted when a figure or check of record needs it and nothing
+coarser will do, and a sample-grain table would be `observations/` under another
+name. One hour is the finest grain with a consumer.
+
+**What an hour buys, and what it costs.** At 600 s an hour holds six samples, so
+its `p05` and `p95` are its `min` and `max` and its variance is over six points —
+reported with `n_obs` beside them rather than dropped, for the reason §2 gives
+about reporting rather than filtering. What the hour is *for* is
+`frac_in_band_{low}_{high}`, which needs no distribution to mean something and is
+the one §2 feature defined over a window this short.
+
 **What it is not for.** It carries no anomalies, for the reason the table above
 carries none. And a daily range is not a stratification measurement — it is
 consistent with vertical displacement of the column past a fixed sensor, with
@@ -276,7 +295,8 @@ in cold water, so quarterly minimum temperature carries nutrient
 information), max, 5th/95th percentiles, variance, days above 20 °C and
 23 °C (giant kelp stress thresholds; exact values to be finalized against
 literature and treated as tunable), longest consecutive spell above 20 °C,
-degree-days above 18 °C, days below 14 °C. Wave family (CDIP): count of
+degree-days above 18 °C, days below 14 °C, and the fraction of the window spent
+inside a configured temperature band. Wave family (CDIP): count of
 events with significant height above thresholds, longest event duration,
 quarterly max height. Water level (CO-OPS): mean sea-level anomaly vs.
 predictions. Covariates: marine heatwave days in quarter (Hobday et al.
@@ -373,6 +393,34 @@ short-sampled.
   neither is one ended by the quarter boundary, which is a limitation of
   quarterly features rather than a hole in the record. Where several runs tie
   for longest, the marker is set if any of them touched a gap.
+
+**One feature is not day-based, and the departure is deliberate.** How much of
+a window the water spent between two temperatures is a question a count of days
+cannot answer — a day that crossed the band twice and a day that sat inside it
+are one day either way. It is also the only feature in this set that still means
+something over a window shorter than a day, which is what lets the deployment
+day and hour tables (§1) carry it when they carry none of the counts above.
+
+- **`frac_in_band_{low}_{high}`** — the fraction of the window's kept
+  observations whose value lies in **`[low, high]`**, closed at both ends.
+  Between 0 and 1; null, never 0, for a window whose every row failed QC, since
+  a zero would claim the water was never in the band.
+
+  **Closed at both ends so that the band and the two tails partition the value
+  axis exactly.** `days_above_{t}` tests `> t` and `days_below_{t}` tests
+  `< t`, both strict, so a half-open band would leave a reading of exactly
+  `high` belonging to neither the band nor the tail beyond it.
+
+  **It is a fraction of observations, not of the clock**, and the two agree only
+  at a regular cadence. This is the one place in §2 where irregular sampling
+  biases a feature directly rather than through a daily aggregate: a station
+  that sampled twice as often while the water was warm would report a band
+  occupancy weighted toward the warm half. `cadence_s` and `pct_coverage` sit on
+  every row that carries the feature so a reader can check the assumption rather
+  than take it. A time-weighted integral was rejected for the reason
+  `degree_days_above_{t}` rejects one: it makes the number depend on sample
+  spacing, so an hourly station and a 10-minute logger would disagree about
+  identical water.
 
 ### Coverage, and the biases to disclose
 

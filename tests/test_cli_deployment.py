@@ -148,11 +148,12 @@ def test_it_joins_to_the_validation_table_on_the_deployment(data_root):
     assert not set(shared) - set(deployment.columns)
 
 
-def test_the_run_manifest_records_both_tables_it_wrote(data_root):
+def test_the_run_manifest_records_every_table_it_wrote(data_root):
     """A features-zone table that could not be traced to the run that wrote it
     would be the gap docs/03 run manifests exist to close (hard rule 7). This
-    command writes two, and one traceable table beside one untraceable one is
-    the same gap."""
+    command writes three, and one traceable table beside two untraceable ones is
+    the same gap. Asserted as a set equality rather than a subset, so a fourth
+    table added later fails here rather than going unmanifested."""
     ingest_deployment(data_root)
 
     run(data_root, "deployments")
@@ -160,7 +161,11 @@ def test_the_run_manifest_records_both_tables_it_wrote(data_root):
     manifests = sorted((data_root / "raw" / "_manifests").glob("*-deployments.json"))
     entries = json.loads(manifests[-1].read_text(encoding="utf-8"))["tables"]
     zones = Zones.at(data_root)
-    assert {entry["table"] for entry in entries} == {"deployment", "deployment_daily"}
+    assert {entry["table"] for entry in entries} == {
+        "deployment",
+        "deployment_daily",
+        "deployment_hourly",
+    }
     for entry in entries:
         path = zones.feature_table(entry["table"])
         assert entry["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()

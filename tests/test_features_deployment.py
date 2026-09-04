@@ -11,6 +11,7 @@ The end-to-end run against the real registry is in `test_cli_deployment.py`.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -18,12 +19,15 @@ import pytest
 
 from kelpcompare.features.config import Baseline, FeatureConfig, ParameterFeatures
 from kelpcompare.features.deployment import (
-    DEPLOYMENT_DAILY_COLUMNS,
     build_deployment,
     build_deployment_daily,
+    build_deployment_hourly,
     deployment_columns,
+    deployment_daily_columns,
+    deployment_hourly_columns,
     deployment_window,
     empty_deployment_daily,
+    empty_deployment_hourly,
 )
 from kelpcompare.features.quarterly import build_quarterly
 from kelpcompare.registry import load_registry
@@ -480,7 +484,7 @@ def test_the_daily_table_offers_no_usable_flag(tmp_path):
 
     assert "usable" not in daily.columns
     assert "n_days_observed" not in daily.columns
-    assert list(daily.columns) == list(DEPLOYMENT_DAILY_COLUMNS)
+    assert list(daily.columns) == list(deployment_daily_columns(config()))
 
 
 def test_a_build_with_nothing_to_do_still_has_the_table_shape(tmp_path):
@@ -494,8 +498,8 @@ def test_a_build_with_nothing_to_do_still_has_the_table_shape(tmp_path):
     )
 
     assert daily.empty
-    assert list(daily.columns) == list(DEPLOYMENT_DAILY_COLUMNS)
-    assert list(daily.columns) == list(empty_deployment_daily().columns)
+    assert list(daily.columns) == list(deployment_daily_columns(config()))
+    assert list(daily.columns) == list(empty_deployment_daily(config()).columns)
 
 
 def test_the_daily_walk_leaves_the_registry_warnings_to_the_parent_build(tmp_path):
@@ -510,3 +514,196 @@ def test_the_daily_walk_leaves_the_registry_warnings_to_the_parent_build(tmp_pat
     assert parent.empty and daily.empty
     assert any("produces no deployment row" in warning for warning in parent_warnings)
     assert daily_warnings == ()
+
+
+# --------------------------------------------------------------------------
+# What a day may carry, once a band is declared
+# --------------------------------------------------------------------------
+
+
+def banded_config() -> FeatureConfig:
+    """The committed shape plus a band, which is the only non-day-based kind."""
+    return replace(
+        config(),
+        parameters={
+            "sea_water_temperature": replace(
+                TEMPERATURE,
+                thresholds={**TEMPERATURE.thresholds, "time_in_band": ((14.0, 20.0),)},
+            )
+        },
+    )
+
+
+def test_a_day_carries_the_band_and_none_of_the_day_based_counts(tmp_path):
+    """`days_above_20c` over one day is 0 or 1 and a spell is at most a day long,
+    so the daily table leaves those to the parent row. Band occupancy is defined
+    over any window, so the day keeps it -- that distinction is the table's whole
+    claim to a sub-day grain."""
+    stamps = pd.date_range("2026-07-11T00:00Z", "2026-07-11T23:50Z", freq="10min")
+    daily, _ = build_daily(
+        tmp_path,
+        observations(stamps, [15.0] * len(stamps)),
+        project_site(window=("2026-07-11 00:00", "2026-07-11 23:50")),
+        cfg=banded_config(),
+    )
+
+    assert "frac_in_band_14c_20c" in daily.columns
+    assert daily["frac_in_band_14c_20c"].tolist() == [1.0]
+    assert not [name for name in daily.columns if name.startswith(("days_", "max_spell_"))]
+    assert not [name for name in daily.columns if name.startswith("degree_days_")]
+
+
+def test_the_deployment_scalar_is_re_derivable_from_the_days_that_carry_it(tmp_path):
+    """The point of the daily table, applied to the band: the parent row's
+    occupancy is the observation-weighted mean of its days', so the scalar is
+    checkable against the record it summarises rather than taken on trust."""
+    stamps = pd.date_range("2026-07-11T00:00Z", "2026-07-12T23:50Z", freq="10min")
+    # Day one entirely inside the band, day two entirely above it.
+    values = [15.0] * 144 + [25.0] * 144
+    site = project_site(window=("2026-07-11 00:00", "2026-07-12 23:50"))
+    cfg = banded_config()
+
+    parent, _ = build(tmp_path, observations(stamps, values), site, cfg=cfg)
+    daily, _ = build_daily(tmp_path, observations(stamps, values), site, cfg=cfg)
+
+    assert daily["frac_in_band_14c_20c"].tolist() == [1.0, 0.0]
+    weighted = (daily["frac_in_band_14c_20c"] * daily["n_obs"]).sum() / daily["n_obs"].sum()
+    assert weighted == pytest.approx(parent["frac_in_band_14c_20c"].iloc[0])
+
+
+# --------------------------------------------------------------------------
+# The hourly table: the same rules one grain further down
+# --------------------------------------------------------------------------
+
+
+def build_hourly(tmp_path, frame, *sites, qc_max_flag=2, cfg=None):
+    return build_deployment_hourly(
+        frame, registry(tmp_path, *sites), cfg or config(), qc_max_flag=qc_max_flag
+    )
+
+
+def test_the_clipped_hours_tile_the_deployment_window_exactly(tmp_path):
+    """The identity the daily table rests on, one grain down. A logger in at
+    15:20 and out at 17:00 holds 4 samples in its first hour, 6 in the next and 1
+    in the last -- 11, which is the parent row's `expected_obs` to the sample."""
+    stamps = pd.date_range("2026-07-11T15:20Z", "2026-07-11T17:00Z", freq="10min")
+    values = [15.0] * len(stamps)
+    site = project_site(window=("2026-07-11 15:20", "2026-07-11 17:00"))
+
+    parent, _ = build(tmp_path, observations(stamps, values), site)
+    hourly, _ = build_hourly(tmp_path, observations(stamps, values), site)
+
+    assert list(hourly["expected_obs"]) == [4.0, 6.0, 1.0]
+    assert hourly["expected_obs"].sum() == parent["expected_obs"].iloc[0]
+    assert hourly["n_obs"].sum() == parent["n_obs"].iloc[0]
+
+
+def test_an_hour_cut_by_the_deployment_reads_as_fully_covered(tmp_path):
+    """The mistake the daily table exists to avoid, avoided again: a logger that
+    went in at 15:20 observed forty minutes of that hour and every one of them."""
+    stamps = pd.date_range("2026-07-11T15:20Z", "2026-07-11T17:00Z", freq="10min")
+    hourly, _ = build_hourly(
+        tmp_path,
+        observations(stamps, [15.0] * len(stamps)),
+        project_site(window=("2026-07-11 15:20", "2026-07-11 17:00")),
+    )
+
+    assert hourly["pct_coverage"].tolist() == [1.0, 1.0, 1.0]
+    assert hourly["partial_hour"].tolist() == [True, False, True]
+
+
+def test_only_the_final_hour_inherits_the_closed_upper_edge(tmp_path):
+    """`dt.floor` puts a reading taken on the hour on its own hour. Giving the
+    closed edge to every hour whose end matched the window's would tile seven
+    slots into a six-slot hour wherever a deployment ends exactly on the hour."""
+    stamps = pd.date_range("2026-07-11T15:00Z", "2026-07-11T17:00Z", freq="10min")
+    hourly, _ = build_hourly(
+        tmp_path,
+        observations(stamps, [15.0] * len(stamps)),
+        project_site(window=("2026-07-11 15:00", "2026-07-11 17:00")),
+    )
+
+    assert hourly["expected_obs"].tolist() == [6.0, 6.0, 1.0]
+
+
+def test_an_hour_nobody_measured_gets_no_row_rather_than_a_row_of_nulls(tmp_path):
+    """An absent hour is a gap, read the way `_longest_spell` reads one. A row of
+    nulls would be an invitation to fill it."""
+    stamps = pd.to_datetime(
+        ["2026-07-11T15:00Z", "2026-07-11T15:30Z", "2026-07-11T17:10Z"], utc=True
+    )
+    hourly, _ = build_hourly(
+        tmp_path,
+        observations(stamps, [15.0, 15.0, 16.0]),
+        project_site(window=("2026-07-11 15:00", "2026-07-11 17:10")),
+    )
+
+    assert hourly["hour"].dt.hour.tolist() == [15, 17]
+
+
+def test_the_hourly_cadence_is_the_series_and_not_the_hours(tmp_path):
+    """With two observations the median interval *is* the gap. An hour holding two
+    samples thirty minutes apart would measure its own cadence as 1800 s and score
+    full coverage, when a 600 s logger observed a third of it."""
+    stamps = pd.to_datetime(
+        ["2026-07-11T15:00Z", "2026-07-11T15:10Z", "2026-07-11T15:20Z", "2026-07-11T16:00Z"],
+        utc=True,
+    )
+    hourly, _ = build_hourly(
+        tmp_path,
+        observations(stamps, [15.0] * 4),
+        project_site(window=("2026-07-11 15:00", "2026-07-11 16:00")),
+    )
+
+    assert hourly["cadence_s"].tolist() == [600.0, 600.0]
+    assert hourly["expected_obs"].tolist() == [6.0, 1.0]
+    assert hourly["pct_coverage"].tolist() == [0.5, 1.0]
+
+
+def test_the_hourly_rows_re_derive_each_daily_band_occupancy(tmp_path):
+    """The audit the table exists for, at the grain below the one #168 built: a
+    day's occupancy is the observation-weighted mean of its hours'."""
+    stamps = pd.date_range("2026-07-11T00:00Z", "2026-07-11T23:50Z", freq="10min")
+    # Inside the band for the first six hours, above it for the rest.
+    values = [15.0] * 36 + [25.0] * 108
+    site = project_site(window=("2026-07-11 00:00", "2026-07-11 23:50"))
+    cfg = banded_config()
+
+    daily, _ = build_daily(tmp_path, observations(stamps, values), site, cfg=cfg)
+    hourly, _ = build_hourly(tmp_path, observations(stamps, values), site, cfg=cfg)
+
+    assert len(hourly) == 24
+    weighted = (hourly["frac_in_band_14c_20c"] * hourly["n_obs"]).sum() / hourly["n_obs"].sum()
+    assert weighted == pytest.approx(daily["frac_in_band_14c_20c"].iloc[0])
+    assert daily["frac_in_band_14c_20c"].iloc[0] == pytest.approx(0.25)
+
+
+def test_the_hourly_table_carries_the_degenerate_statistics_rather_than_dropping_them(tmp_path):
+    """At 600 s an hour holds six samples, so p05 and p95 collapse onto min and
+    max. Reported rather than dropped: dropping them would fork the reduction and
+    let this table and the daily one drift about how a mean is computed, and
+    `n_obs` is on the row for a reader to see what the six are."""
+    stamps = pd.date_range("2026-07-11T15:00Z", "2026-07-11T15:50Z", freq="10min")
+    hourly, _ = build_hourly(
+        tmp_path,
+        observations(stamps, [14.0, 15.0, 16.0, 17.0, 18.0, 19.0]),
+        project_site(window=("2026-07-11 15:00", "2026-07-11 15:50")),
+    )
+
+    row = hourly.iloc[0]
+    assert row["n_obs"] == 6
+    assert row["p05"] == pytest.approx(14.25)
+    assert row["p95"] == pytest.approx(18.75)
+
+
+def test_the_hourly_table_keeps_its_shape_with_nothing_to_do(tmp_path):
+    stamps = pd.date_range("2026-07-11T15:00Z", "2026-07-11T15:50Z", freq="10min")
+    hourly, _ = build_hourly(
+        tmp_path,
+        observations(stamps, [15.0] * 6, site_id="PROJ:OTHER"),
+        project_site(window=("2026-07-11 15:00", "2026-07-11 15:50")),
+    )
+
+    assert hourly.empty
+    assert list(hourly.columns) == list(deployment_hourly_columns(config()))
+    assert list(hourly.columns) == list(empty_deployment_hourly(config()).columns)

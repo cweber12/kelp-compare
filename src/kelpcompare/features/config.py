@@ -38,14 +38,30 @@ from pathlib import Path
 
 DEFAULT_FEATURES_PATH = Path("data/registry/features.json")
 
+#: A declared threshold is one number -- or, for a band, the pair that bounds it.
+Threshold = float | tuple[float, float]
+
 #: Feature set -> the threshold kinds it takes. A set with no kinds must not be
 #: given a `thresholds` block; a set with kinds must be given a non-empty one.
 #: `statistics` is universal -- distribution only, applicable to any parameter --
 #: and `temperature` is it plus the docs/04 s2 ecological features.
 IMPLEMENTED_FEATURE_SETS: dict[str, tuple[str, ...]] = {
     "statistics": (),
-    "temperature": ("days_above", "max_spell_above", "degree_days_above", "days_below"),
+    "temperature": (
+        "days_above",
+        "max_spell_above",
+        "degree_days_above",
+        "days_below",
+        "time_in_band",
+    ),
 }
+
+#: The kinds declared as `[low, high]` pairs rather than as single numbers. A
+#: band needs both edges to mean anything and derives its column name from both,
+#: so the parser is told which shape a kind takes rather than inferring it from
+#: whatever the first entry happens to look like -- which would read `[14, 20]`
+#: as a band under one kind and as two thresholds under another.
+_PAIR_VALUED_KINDS = frozenset({"time_in_band"})
 
 #: Named by docs/04 s2 and refused until the fetchers that would feed them exist
 #: (docs/02). Listed so the refusal can say "not yet" rather than "no such thing".
@@ -123,10 +139,10 @@ class ParameterFeatures:
 
     parameter: str
     feature_set: str
-    thresholds: dict[str, tuple[float, ...]] = field(default_factory=dict)
+    thresholds: dict[str, tuple[Threshold, ...]] = field(default_factory=dict)
     role: str = DEFAULT_ANALYSIS_ROLE
 
-    def of(self, kind: str) -> tuple[float, ...]:
+    def of(self, kind: str) -> tuple[Threshold, ...]:
         """The thresholds declared for one kind, or none. Never a default."""
         return self.thresholds.get(kind, ())
 
@@ -440,16 +456,42 @@ def _thresholds(
     return {kind: _values(block[kind], kind=kind, name=name, path=path) for kind in block}
 
 
-def _values(values, *, kind: str, name: str, path: Path) -> tuple[float, ...]:
+def _values(values, *, kind: str, name: str, path: Path) -> tuple[Threshold, ...]:
+    shape = "[low, high] pairs" if kind in _PAIR_VALUED_KINDS else "threshold values"
     if not isinstance(values, list) or not values:
         raise ValueError(
             f"{name!r} in {path} declares {kind} as {values!r}; expected a non-empty list of "
-            "threshold values"
+            f"{shape}"
         )
-    numbers = tuple(_number(v, where=f"{name}.thresholds.{kind}", path=path) for v in values)
-    if len(set(numbers)) != len(numbers):
-        raise ValueError(f"{name!r} in {path} declares a {kind} threshold twice: {list(numbers)}")
-    return numbers
+    where = f"{name}.thresholds.{kind}"
+    if kind in _PAIR_VALUED_KINDS:
+        parsed: tuple[Threshold, ...] = tuple(
+            _pair(value, where=where, path=path) for value in values
+        )
+    else:
+        parsed = tuple(_number(value, where=where, path=path) for value in values)
+    if len(set(parsed)) != len(parsed):
+        raise ValueError(f"{name!r} in {path} declares a {kind} threshold twice: {list(parsed)}")
+    return parsed
+
+
+def _pair(value, *, where: str, path: Path) -> tuple[float, float]:
+    """One `[low, high]` band, refused unless it is two numbers in that order.
+
+    An equal pair is refused with the reversed one. A band of zero width tests
+    for one exact float, which a measured value meets by accident if ever, so it
+    would produce a column of zeros that reads as a real measurement of absence.
+    """
+    if not isinstance(value, list) or len(value) != 2:
+        raise ValueError(
+            f"{path} `{where}` declares {value!r}; expected a [low, high] pair of numbers"
+        )
+    low, high = (_number(edge, where=where, path=path) for edge in value)
+    if low >= high:
+        raise ValueError(
+            f"{path} `{where}` declares [{low:g}, {high:g}], whose low edge is not below its high"
+        )
+    return low, high
 
 
 def _reject_unknown(block: dict, allowed: set[str], *, what: str, path: Path) -> None:

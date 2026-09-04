@@ -15,7 +15,12 @@ import pandas as pd
 import pytest
 
 from kelpcompare.features.config import ParameterFeatures
-from kelpcompare.features.windowed import Window, reduce_window
+from kelpcompare.features.windowed import (
+    Window,
+    columns_for,
+    reduce_window,
+    without_day_based,
+)
 
 TEMPERATURE = ParameterFeatures(
     parameter="sea_water_temperature",
@@ -192,3 +197,84 @@ def test_only_a_closed_window_contains_its_final_instant(inclusive: bool, expect
     )
     window = Window(stamps[0], stamps[2], inclusive_end=inclusive)
     assert list(window.contains(stamps)) == expected
+
+
+# --------------------------------------------------------------------------
+# Band occupancy, the one feature here that is not day-based
+# --------------------------------------------------------------------------
+
+BANDED = ParameterFeatures(
+    parameter="sea_water_temperature",
+    feature_set="temperature",
+    thresholds={"days_above": (20.0,), "days_below": (14.0,), "time_in_band": ((14.0, 20.0),)},
+)
+
+
+def banded(values: list[float]) -> dict:
+    """One reading every ten minutes from the top of an hour, reduced over it."""
+    stamps = pd.date_range("2026-07-11T00:00Z", periods=len(values), freq="10min")
+    window = Window(stamps[0], stamps[-1], inclusive_end=True)
+    return reduce_window(
+        series(stamps, values),
+        window=window,
+        entry=BANDED,
+        coverage_floor=0.6,
+        label="test",
+        warnings=[],
+    )
+
+
+def test_the_band_column_is_named_from_both_of_its_edges():
+    """ADR-006's rename-on-retune rule has to hold when either edge moves."""
+    assert "frac_in_band_14c_20c" in banded([15.0, 16.0])
+
+
+def test_the_band_is_the_fraction_of_observations_inside_it():
+    assert banded([13.0, 15.0, 16.0, 21.0])["frac_in_band_14c_20c"] == 0.5
+
+
+def test_the_band_is_closed_at_both_edges():
+    """Exactly `low` and exactly `high` are inside, which is what makes the band
+    the exact complement of the two strict tail tests beside it."""
+    assert banded([14.0, 20.0])["frac_in_band_14c_20c"] == 1.0
+
+
+def test_the_band_and_the_two_tails_partition_the_value_axis():
+    """No reading belongs to none of them -- the reason the band is closed.
+
+    A single day holding one reading at each edge and one beyond each: the band
+    holds the two edge readings, and the two day-based counts each fire on the
+    day, so nothing in the day is unaccounted for.
+    """
+    reduced = banded([13.0, 14.0, 20.0, 21.0])
+    assert reduced["frac_in_band_14c_20c"] == 0.5
+    assert reduced["days_below_14c"] == 1.0
+    assert reduced["days_above_20c"] == 1.0
+
+
+def test_a_window_whose_every_row_failed_qc_gets_a_null_band_not_a_zero():
+    """A zero would read as "the water was never in the band", which is a claim."""
+    window = Window(pd.Timestamp("2026-07-11T00:00Z"), pd.Timestamp("2026-07-11T01:00Z"))
+    reduced = reduce_window(
+        series([], []),
+        window=window,
+        entry=BANDED,
+        coverage_floor=0.6,
+        label="test",
+        warnings=[],
+    )
+    assert reduced["frac_in_band_14c_20c"] is None
+
+
+def test_a_sub_day_window_keeps_the_band_and_drops_the_day_based_counts():
+    """`days_above_20c` over an hour is 0 or 1; occupancy over an hour is real."""
+    kept = without_day_based(BANDED)
+    assert kept.of("time_in_band") == ((14.0, 20.0),)
+    assert kept.of("days_above") == ()
+    assert kept.of("days_below") == ()
+
+
+def test_dropping_the_day_based_kinds_drops_their_columns_too():
+    names = [name for name, _ in columns_for(without_day_based(BANDED))]
+    assert "frac_in_band_14c_20c" in names
+    assert not [name for name in names if name.startswith(("days_", "max_spell_", "degree_days_"))]
