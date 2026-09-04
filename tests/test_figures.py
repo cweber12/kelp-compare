@@ -16,6 +16,7 @@ import pytest
 
 matplotlib.use("Agg")
 
+from matplotlib import colors as mcolors
 from matplotlib import pyplot as plt
 from matplotlib.colors import Normalize
 from matplotlib.patches import Rectangle
@@ -564,3 +565,97 @@ def test_a_control_pairing_is_drawn_in_a_different_ink():
 def test_the_diagnostics_refuse_to_draw_nothing():
     with pytest.raises(ValueError, match="no pairings"):
         signals([])
+
+
+# ---------------------------------------------------------------------------
+# The bands: a gap that is not bridged, and a spread that is not invented
+# ---------------------------------------------------------------------------
+
+
+def days(*stamps: str) -> pd.DatetimeIndex:
+    return pd.to_datetime(list(stamps))
+
+
+def test_a_gap_lifts_the_pen_rather_than_bridging_it():
+    """Drawing straight from the 12th to the 14th would assert a value for the
+    13th, which is a day nobody measured. `windowed._longest_spell` refuses to
+    bridge a gap for the same reason; a line has to refuse too."""
+    band = figures.Band("one", days("2026-07-11", "2026-07-12", "2026-07-14"), [1.0, 2.0, 3.0])
+
+    fig = figures.plot_bands(
+        [band], title="t", caption="c", ylabel="degC", gap=pd.Timedelta(days=1)
+    )
+
+    (line,) = fig.axes[0].lines
+    y = list(line.get_ydata())
+    assert len(y) == 4
+    assert np.isnan(y[2])
+    assert [y[0], y[1], y[3]] == [1.0, 2.0, 3.0]
+
+
+def test_a_series_with_no_declared_step_is_drawn_unbroken():
+    """An hour-of-day composite has no notion of a missing step, so cutting it
+    would invent gaps in a series that has none."""
+    band = figures.Band("one", days("2026-07-11", "2026-07-12", "2026-07-14"), [1.0, 2.0, 3.0])
+
+    fig = figures.plot_bands([band], title="t", caption="c", ylabel="degC")
+
+    (line,) = fig.axes[0].lines
+    assert not np.isnan(list(line.get_ydata())).any()
+
+
+def test_the_band_is_drawn_from_the_bounds_it_was_given():
+    """A renderer that derived a spread from the centre would be computing one,
+    which is the line hard rule 6 draws around this module."""
+    x = days("2026-07-11", "2026-07-12")
+    with_bounds = figures.Band("one", x, [1.0, 2.0], [0.0, 1.0], [4.0, 5.0])
+
+    fig = figures.plot_bands([with_bounds], title="t", caption="c", ylabel="degC")
+
+    (fill,) = fig.axes[0].collections
+    ys = fill.get_paths()[0].vertices[:, 1]
+    assert ys.min() == 0.0
+    assert ys.max() == 5.0
+
+
+def test_a_band_without_bounds_draws_no_span():
+    x = days("2026-07-11", "2026-07-12")
+
+    fig = figures.plot_bands(
+        [figures.Band("one", x, [1.0, 2.0])], title="t", caption="c", ylabel="degC"
+    )
+
+    assert len(fig.axes[0].collections) == 0
+
+
+def test_colour_encodes_the_callers_order_light_to_dark():
+    """The bands are one quantity at different places on an ordered axis -- a
+    caller sorting by depth should read shallow-to-deep as pale-to-dark. A
+    categorical palette would suggest they differ in kind."""
+    x = days("2026-07-11", "2026-07-12")
+    bands = [figures.Band(name, x, [1.0, 2.0]) for name in ("shallow", "middle", "deep")]
+
+    fig = figures.plot_bands(bands, title="t", caption="c", ylabel="degC")
+
+    lightness = [
+        figures._relative_luminance(mcolors.to_hex(line.get_color())) for line in fig.axes[0].lines
+    ]
+    assert lightness == sorted(lightness, reverse=True)
+
+
+def test_two_bands_take_the_ends_of_the_ramp():
+    """The commonest case is also the one that most needs to be legible, so two
+    series do not come back as two adjacent steps of a six-step ramp."""
+    x = days("2026-07-11", "2026-07-12")
+    bands = [figures.Band(name, x, [1.0, 2.0]) for name in ("shallow", "deep")]
+
+    fig = figures.plot_bands(bands, title="t", caption="c", ylabel="degC")
+
+    drawn = [mcolors.to_hex(line.get_color()) for line in fig.axes[0].lines]
+    assert drawn == [figures.BLUE_ARM[0], figures.BLUE_ARM[-1]]
+
+
+def test_it_refuses_to_draw_no_bands():
+    """A figure of record with no series on it is a caption over blank space."""
+    with pytest.raises(ValueError, match="no bands"):
+        figures.plot_bands([], title="t", caption="c", ylabel="degC")
