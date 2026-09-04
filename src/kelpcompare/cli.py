@@ -30,7 +30,12 @@ from kelpcompare.features.build import BuildOutcome, build_features
 from kelpcompare.features.climatology import CLIMATOLOGY_KEY, anomaly_columns
 from kelpcompare.features.comparison import COMPARISON_KEY, build_comparison
 from kelpcompare.features.config import load_feature_config
-from kelpcompare.features.deployment import DEPLOYMENT_KEY, build_deployment
+from kelpcompare.features.deployment import (
+    DEPLOYMENT_DAILY_KEY,
+    DEPLOYMENT_KEY,
+    build_deployment,
+    build_deployment_daily,
+)
 from kelpcompare.features.kelp import (
     CLIMATOLOGY_KELP_KEY,
     MEASURED,
@@ -1048,12 +1053,18 @@ def deployments(
     )
     with _manifested(run, zones, dry_run=dry_run):
         try:
-            frame = read_observations(zones)
-            frame["timestamp"] = frame["timestamp"].dt.tz_localize("UTC")
-            frame, warnings = build_deployment(frame, registry, config, qc_max_flag=qc_max_flag)
+            observations = read_observations(zones)
+            observations["timestamp"] = observations["timestamp"].dt.tz_localize("UTC")
+            frame, warnings = build_deployment(
+                observations, registry, config, qc_max_flag=qc_max_flag
+            )
+            daily, daily_warnings = build_deployment_daily(
+                observations, registry, config, qc_max_flag=qc_max_flag
+            )
+            warnings = (*warnings, *daily_warnings)
         except Exception as error:  # noqa: BLE001 -- report it, keep the manifest
             run.note_warning(f"deployments: {type(error).__name__}: {error}")
-            frame, warnings = None, ()
+            frame, daily, warnings = None, None, ()
 
         for warning in warnings:
             run.note_warning(warning)
@@ -1080,10 +1091,18 @@ def deployments(
 
         path = replace_features(frame, zones, table="deployment", key=DEPLOYMENT_KEY)
         run.add_series(source="deployment", rows=len(frame))
-        # Also a table in the features zone, and so also a table that could not
-        # be traced to the run that wrote it (docs/03 run manifests).
-        _record_tables(run, (path,))
+        # The daily table is written by this command rather than its own, so the
+        # two cannot describe different sets of deployments: one walk, one run,
+        # one manifest (https://github.com/cweber12/kelp-compare/issues/158).
+        daily_path = replace_features(
+            daily, zones, table="deployment_daily", key=DEPLOYMENT_DAILY_KEY
+        )
+        run.add_series(source="deployment_daily", rows=len(daily))
+        # Also tables in the features zone, and so also tables that could not
+        # be traced to the run that wrote them (docs/03 run manifests).
+        _record_tables(run, (path, daily_path))
         click.echo(f"wrote {path}")
+        click.echo(f"wrote {daily_path}  ({len(daily)} days)")
         click.echo(f"manifest: {run.write(zones)}")
 
 

@@ -169,6 +169,7 @@ def reduce_window(
     label: str,
     warnings: list[str],
     noun: str = "window",
+    cadence: float | None = None,
 ) -> dict:
     """The bookkeeping and features for one series over one window.
 
@@ -181,11 +182,21 @@ def reduce_window(
     warning. Generic here would be a small loss twice over: a manifest saying a
     cadence changed "mid-quarter" or "mid-deployment" says which table to go and
     look at, where "mid-window" would leave that to be worked out.
+
+    `cadence` lets a caller supply the interval it already knows, instead of
+    having it re-measured from this window's rows. The median is robust over a
+    quarter, where gaps are the tail of the interval distribution; over a window
+    holding a handful of rows it is not, because with two observations the
+    "median interval" *is* the gap. A day holding two samples three hours apart
+    would measure its own cadence as 10800 s and score 0.25 coverage, when what
+    is true is that a 600 s logger observed 1.4% of that day. A caller reducing
+    one series over many short windows therefore measures the cadence once, over
+    the whole series, and passes it down.
     """
     values = kept["value"].astype("float64")
     timestamps = kept["timestamp"]
 
-    cadence = _cadence(timestamps, label=label, warnings=warnings)
+    cadence = cadence or series_cadence(timestamps, label=label, warnings=warnings)
     expected = window.expected_obs(cadence) if cadence else None
     coverage, clamped = _coverage(len(kept), expected)
     if clamped:
@@ -213,7 +224,7 @@ def reduce_window(
     return row
 
 
-def _cadence(timestamps: pd.Series, *, label: str, warnings: list[str]) -> float | None:
+def series_cadence(timestamps: pd.Series, *, label: str, warnings: list[str]) -> float | None:
     """The median observed inter-sample interval, in seconds, or None.
 
     None means "no scale to judge this window on", which coverage reads as

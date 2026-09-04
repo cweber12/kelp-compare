@@ -18,9 +18,12 @@ import pytest
 
 from kelpcompare.features.config import Baseline, FeatureConfig, ParameterFeatures
 from kelpcompare.features.deployment import (
+    DEPLOYMENT_DAILY_COLUMNS,
     build_deployment,
+    build_deployment_daily,
     deployment_columns,
     deployment_window,
+    empty_deployment_daily,
 )
 from kelpcompare.features.quarterly import build_quarterly
 from kelpcompare.registry import load_registry
@@ -315,3 +318,192 @@ def test_qc_failed_rows_are_excluded_like_they_are_quarterly(tmp_path):
     )
     assert frame.iloc[0]["n_obs"] == 19
     assert frame.iloc[0]["pct_coverage"] < 1.0
+
+
+# --------------------------------------------------------------------------
+# The daily table (docs/03 `deployment_daily`)
+# --------------------------------------------------------------------------
+
+
+def build_daily(tmp_path, frame, *sites, qc_max_flag=2, cfg=None):
+    return build_deployment_daily(
+        frame, registry(tmp_path, *sites), cfg or config(), qc_max_flag=qc_max_flag
+    )
+
+
+def test_the_clipped_days_tile_the_deployment_window_exactly(tmp_path):
+    """The invariant the whole table rests on. A logger in at 15:00 on the 11th
+    and out at 14:30 on the 13th holds 54 samples that first day, 144 the next
+    and 88 the last -- 286, which is the parent row's `expected_obs` to the
+    sample. If the days did not tile, every daily coverage would be measuring a
+    different denominator than the deployment it belongs to.
+    """
+    stamps = pd.date_range("2026-07-11T15:00Z", "2026-07-13T14:30Z", freq="10min")
+    values = [15.0] * len(stamps)
+    site = project_site(window=("2026-07-11 15:00", "2026-07-13 14:30"))
+
+    parent, _ = build(tmp_path, observations(stamps, values), site)
+    daily, warnings = build_daily(tmp_path, observations(stamps, values), site)
+
+    assert list(daily["expected_obs"]) == [54.0, 144.0, 88.0]
+    assert daily["expected_obs"].sum() == parent.iloc[0]["expected_obs"] == 286.0
+    assert daily["n_obs"].sum() == parent.iloc[0]["n_obs"] == 286
+    assert len(daily) == parent.iloc[0]["n_days_observed"] == 3
+    assert warnings == ()
+
+
+def test_a_day_cut_by_the_deployment_boundary_reads_full_coverage(tmp_path):
+    """The mistake this table exists not to repeat. Nine hours observed out of
+    nine hours available is a complete day; judged against a full 24 it would
+    read 0.375 and look like a fault, which is exactly what the quarterly table
+    does to a three-week deployment."""
+    stamps = pd.date_range("2026-07-11T15:00Z", "2026-07-12T23:50Z", freq="10min")
+    daily, _ = build_daily(
+        tmp_path,
+        observations(stamps, [15.0] * len(stamps)),
+        project_site(window=("2026-07-11 15:00", "2026-07-12 23:50")),
+    )
+
+    first = daily.iloc[0]
+    assert first["n_obs"] == 54
+    assert first["expected_obs"] == 54.0
+    assert first["pct_coverage"] == 1.0
+    assert bool(first["partial_day"]) is True
+    # The interior-shaped day is whole, so it is not marked.
+    assert bool(daily.iloc[1]["partial_day"]) is True  # closed end at 23:50
+    assert daily.iloc[1]["expected_obs"] == 144.0
+
+
+def test_a_day_cut_by_a_gap_is_under_covered_and_is_not_marked_partial(tmp_path):
+    """`partial_day` says the deployment cut the day, never that the record did.
+    Collapsing the two would hide the only thing a reader wants the flag for."""
+    stamps = pd.date_range("2026-07-11T00:00Z", "2026-07-11T11:50Z", freq="10min")
+    daily, _ = build_daily(
+        tmp_path,
+        observations(stamps, [15.0] * len(stamps)),
+        project_site(window=("2026-07-11 00:00", "2026-07-12 23:50")),
+    )
+
+    row = daily.iloc[0]
+    assert row["n_obs"] == 72
+    assert row["expected_obs"] == 144.0
+    assert row["pct_coverage"] == 0.5
+    assert bool(row["partial_day"]) is False
+
+
+def test_a_day_nobody_observed_produces_no_row(tmp_path):
+    """An absent day is a gap, read the same way `_longest_spell` reads one. A
+    row of nulls would be an invitation to fill it."""
+    stamps = pd.DatetimeIndex(
+        [*pd.date_range("2026-07-11T00:00Z", "2026-07-11T23:50Z", freq="10min"),
+         *pd.date_range("2026-07-13T00:00Z", "2026-07-13T23:50Z", freq="10min")]
+    )
+    daily, _ = build_daily(
+        tmp_path,
+        observations(stamps, [15.0] * len(stamps)),
+        project_site(window=("2026-07-11 00:00", "2026-07-13 23:50")),
+    )
+
+    assert [str(day.date()) for day in daily["day"]] == ["2026-07-11", "2026-07-13"]
+
+
+def test_the_scalar_threshold_counts_re_derive_from_the_daily_rows(tmp_path):
+    """What the table is for: `deployment.parquet` says 2 days reached 20 degC,
+    and this says which two. A count that cannot be reproduced from the daily
+    maxima would mean the two tables disagree about the same record."""
+    stamps = pd.date_range("2026-07-11T00:00Z", "2026-07-13T23:50Z", freq="10min")
+    values = [
+        25.0 if stamp.day in (11, 13) and stamp.hour == 12 else 15.0 for stamp in stamps
+    ]
+    site = project_site(window=("2026-07-11 00:00", "2026-07-13 23:50"))
+
+    parent, _ = build(tmp_path, observations(stamps, values), site)
+    daily, _ = build_daily(tmp_path, observations(stamps, values), site)
+
+    assert parent.iloc[0]["days_above_20c"] == int((daily["max"] > 20.0).sum()) == 2
+    assert parent.iloc[0]["days_below_14c"] == int((daily["min"] < 14.0).sum()) == 0
+
+
+def test_a_day_is_judged_at_the_series_cadence_not_at_its_own(tmp_path):
+    """A day holding two samples three hours apart has no cadence of its own --
+    its "median interval" *is* the gap, which would score it 0.25 covered. The
+    series was sampled every ten minutes, so that day is 1.4% observed and the
+    row has to say so."""
+    stamps = pd.DatetimeIndex(
+        [*pd.date_range("2026-07-11T00:00Z", "2026-07-11T23:50Z", freq="10min"),
+         pd.Timestamp("2026-07-12T00:00Z"), pd.Timestamp("2026-07-12T03:00Z")]
+    )
+    daily, _ = build_daily(
+        tmp_path,
+        observations(stamps, [15.0] * len(stamps)),
+        project_site(window=("2026-07-11 00:00", "2026-07-12 23:50")),
+    )
+
+    sparse = daily.iloc[1]
+    assert sparse["n_obs"] == 2
+    assert sparse["cadence_s"] == 600.0
+    assert sparse["expected_obs"] == 144.0
+    assert sparse["pct_coverage"] == pytest.approx(2 / 144)
+
+
+def test_a_deployment_ending_at_midnight_does_not_count_the_closing_sample_twice(tmp_path):
+    """`dt.floor("D")` puts a midnight reading on its own day, so the closed
+    upper edge belongs to that day and not to the one before it. Giving the
+    closed edge to every day whose end matched the window's would tile 146
+    slots into a 145-slot window."""
+    stamps = pd.date_range("2026-07-11T00:00Z", "2026-07-12T00:00Z", freq="10min")
+    values = [15.0] * len(stamps)
+    site = project_site(window=("2026-07-11 00:00", "2026-07-12 00:00"))
+
+    parent, _ = build(tmp_path, observations(stamps, values), site)
+    daily, _ = build_daily(tmp_path, observations(stamps, values), site)
+
+    assert list(daily["expected_obs"]) == [144.0, 1.0]
+    assert daily["expected_obs"].sum() == parent.iloc[0]["expected_obs"] == 145.0
+    assert list(daily["n_obs"]) == [144, 1]
+
+
+def test_the_daily_table_offers_no_usable_flag(tmp_path):
+    """docs/04 s2 considered a minimum per-day coverage and rejected it: it
+    invents a second coverage threshold and would discard the hottest day of a
+    window if that day were short-sampled. A `usable` column here would be that
+    threshold arriving through the back door."""
+    stamps = pd.date_range("2026-07-11T00:00Z", "2026-07-11T23:50Z", freq="10min")
+    daily, _ = build_daily(
+        tmp_path,
+        observations(stamps, [15.0] * len(stamps)),
+        project_site(window=("2026-07-11 00:00", "2026-07-11 23:50")),
+    )
+
+    assert "usable" not in daily.columns
+    assert "n_days_observed" not in daily.columns
+    assert list(daily.columns) == list(DEPLOYMENT_DAILY_COLUMNS)
+
+
+def test_a_build_with_nothing_to_do_still_has_the_table_shape(tmp_path):
+    """A file whose columns depend on what the run happened to find is not a
+    table anyone can read against a schema."""
+    stamps = pd.date_range("2026-07-11T00:00Z", "2026-07-11T23:50Z", freq="10min")
+    daily, _ = build_daily(
+        tmp_path,
+        observations(stamps, [15.0] * len(stamps), site_id="PROJ:OTHER"),
+        project_site(window=("2026-07-11 00:00", "2026-07-11 23:50")),
+    )
+
+    assert daily.empty
+    assert list(daily.columns) == list(DEPLOYMENT_DAILY_COLUMNS)
+    assert list(daily.columns) == list(empty_deployment_daily().columns)
+
+
+def test_the_daily_walk_leaves_the_registry_warnings_to_the_parent_build(tmp_path):
+    """Both builders walk the same deployments. Reporting the same registry gap
+    from each would double every such line in one run's manifest."""
+    stamps = pd.date_range("2026-07-11T00:00Z", "2026-07-11T23:50Z", freq="10min")
+    site = project_site(window=("2026-07-11 00:00", "2026-07-11 23:50"), depth_m=99.0)
+
+    parent, parent_warnings = build(tmp_path, observations(stamps, [15.0] * len(stamps)), site)
+    daily, daily_warnings = build_daily(tmp_path, observations(stamps, [15.0] * len(stamps)), site)
+
+    assert parent.empty and daily.empty
+    assert any("produces no deployment row" in warning for warning in parent_warnings)
+    assert daily_warnings == ()
