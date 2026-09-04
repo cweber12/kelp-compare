@@ -20,7 +20,10 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from itertools import combinations
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 DEFAULT_REGISTRY_PATH = Path("data/registry/sites.json")
 
@@ -373,7 +376,118 @@ def load_registry(path: Path | str | None = None) -> Registry:
     resolved = Path(path) if path is not None else DEFAULT_REGISTRY_PATH
     with resolved.open(encoding="utf-8") as handle:
         payload = json.load(handle)
-    return Registry(path=resolved, sites=tuple(payload.get("sites", [])))
+    registry = Registry(path=resolved, sites=tuple(payload.get("sites", [])))
+    refuse_merged_series(registry)
+    return registry
+
+
+def refuse_merged_series(registry: Registry) -> None:
+    """Refuse two deployments that would write one series between them.
+
+    An observation is keyed `(source, site_id, parameter, depth_m, timestamp)`
+    (docs/03), so two instruments at one site and one depth recording the same
+    parameter over overlapping windows do not produce two series. They produce
+    **one** series holding both instruments' rows, and `storage._dedupe` then
+    drops one of every pair that shares a timestamp -- by newest `fetch_run_id`,
+    which is a statement about ingest order and not about which logger was right.
+    Nothing downstream can tell the result from one well-sampled instrument.
+
+    **Refused at load rather than warned about**, because `site_id` and `depth_m`
+    are immutable once rows land and `kelpcompare rebuild` is unimplemented
+    (https://github.com/cweber12/kelp-compare/issues/54). By the time the merge is
+    visible in a feature table it is not undoable -- the same argument
+    https://github.com/cweber12/kelp-compare/issues/45 and
+    https://github.com/cweber12/kelp-compare/issues/46 make about the QC key.
+
+    **One site and one depth is not itself the collision.** 55 fsw is expected to
+    carry a TidbiT and a PAR logger at once
+    (https://github.com/cweber12/kelp-compare/issues/71 Decision 2), and those are
+    two series because they carry different parameters. What collides is a shared
+    *parameter*, which is what makes two records one series.
+
+    A deployment that cannot be placed in time -- no timezone, no window, an
+    unparseable edge -- is skipped rather than refused here. Those are the docs/06
+    s5 check-4 gate's business, which reports them against the file that needs
+    them instead of failing every command that merely loads the registry.
+    """
+    placed = [(deployment, _utc_window(deployment)) for deployment in registry.deployments]
+    for (left, left_window), (right, right_window) in combinations(placed, 2):
+        if left_window is None or right_window is None:
+            continue
+        # `None == None` is the comparison wanted for depth: an unrecorded depth
+        # is one value of the storage key, so two of them collide like any other
+        # repeated value rather than being waved through as unknown.
+        if left.site_id != right.site_id or left.depth_m != right.depth_m:
+            continue
+        shared = _shared_parameters(left, right)
+        overlap = _overlap(left_window, right_window)
+        if not shared or overlap is None:
+            continue
+        raise ValueError(
+            f"{registry.path}: {left.site_id} at {_depth_phrase(left.depth_m)} declares two "
+            f"overlapping deployments carrying {', '.join(shared)} -- "
+            f"{_deployment_phrase(left)} and {_deployment_phrase(right)} overlap from "
+            f"{overlap[0]:%Y-%m-%d %H:%M}Z to {overlap[1]:%Y-%m-%d %H:%M}Z. Two instruments "
+            "recording one parameter at one site and depth are one series in storage, not two. "
+            "Give them different depth_m, different site_id, or windows that do not overlap."
+        )
+
+
+def _utc_window(deployment: Deployment) -> tuple[datetime, datetime] | None:
+    """The deployment's in-water window in UTC, or None if it cannot be placed.
+
+    Local time and a zone name, which `sites.json` is the one place docs/03 allows
+    them: it records what the operator wrote down, and the conversion happens here
+    rather than in whatever reads it.
+    """
+    if not deployment.tz or deployment.window_local is None:
+        return None
+    try:
+        zone = ZoneInfo(deployment.tz)
+        start, end = (
+            datetime.fromisoformat(edge).replace(tzinfo=zone) for edge in deployment.window_local
+        )
+    except (ValueError, ZoneInfoNotFoundError):
+        return None
+    return start.astimezone(UTC), end.astimezone(UTC)
+
+
+def _shared_parameters(left: Deployment, right: Deployment) -> tuple[str, ...]:
+    """The controlled parameters both deployments declare, in a stable order.
+
+    The series *names* are the vendor's and differ between loggers -- one of these
+    two records calls its channel `Tidbit 1` and the other calls it `Temperature`.
+    What decides whether they are one series is the controlled parameter each maps
+    to, which is the thing the storage key holds.
+    """
+    ours = set((left.series_map or {}).values())
+    theirs = set((right.series_map or {}).values())
+    return tuple(sorted(ours & theirs))
+
+
+def _overlap(
+    left: tuple[datetime, datetime], right: tuple[datetime, datetime]
+) -> tuple[datetime, datetime] | None:
+    """The shared span of two **closed** windows, or None.
+
+    Closed at both ends, as `features.windowed.Window` reads a deployment: both
+    edges are events that happened and the sample at each is a real reading. So
+    two windows that meet exactly at an instant do overlap, by one sample slot,
+    and that slot is one both loggers claim. Nudge an edge by a minute rather than
+    leaving storage to pick between them.
+    """
+    start, end = max(left[0], right[0]), min(left[1], right[1])
+    return (start, end) if start <= end else None
+
+
+def _depth_phrase(depth_m: float | None) -> str:
+    return "an unrecorded depth" if depth_m is None else f"{depth_m:g} m"
+
+
+def _deployment_phrase(deployment: Deployment) -> str:
+    number = deployment.deployment_number
+    numbered = "" if number is None else f" deployment {number}"
+    return f"serial {deployment.serial}{numbered}"
 
 
 def find_deployments(registry: Registry, serial: str) -> tuple[Deployment, ...]:
