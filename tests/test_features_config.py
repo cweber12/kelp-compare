@@ -241,6 +241,17 @@ def test_the_committed_configuration_declares_the_docs_04_thresholds():
     assert temperature.of("max_spell_above") == (20.0,)
     assert temperature.of("degree_days_above") == (18.0,)
     assert temperature.of("days_below") == (14.0,)
+    assert temperature.of("time_in_band") == ((14.0, 20.0),)
+
+
+def test_the_committed_band_reuses_the_thresholds_beside_it():
+    """The band edges are the declared tail thresholds, so the band and the two
+    counts partition the value axis and no new number enters the registry with
+    this feature. Retuning either edge is its own reviewable data change."""
+    temperature = load_feature_config(COMMITTED).get("sea_water_temperature")
+    ((low, high),) = temperature.of("time_in_band")
+    assert low in temperature.of("days_below")
+    assert high in temperature.of("days_above")
 
 
 def test_the_committed_configuration_uses_the_baseline_the_prd_settled():
