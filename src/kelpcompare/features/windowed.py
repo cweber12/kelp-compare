@@ -173,6 +173,25 @@ def without_day_based(entry: ParameterFeatures) -> ParameterFeatures:
     return replace(entry, thresholds=kept)
 
 
+def sub_window_columns(config: FeatureConfig) -> tuple[str, ...]:
+    """The measured feature columns a window shorter than a day may carry.
+
+    `feature_columns` over the same configuration with the day-based kinds
+    stripped, so a table reduced below a day takes its schema from the function
+    the whole-window tables use rather than from a hand-kept list a newly
+    declared threshold kind would silently not reach.
+
+    Markers cannot arise here and none are returned: the only marker column is
+    `max_spell_above`'s gap flag, and that kind is day-based by definition.
+    """
+    stripped = replace(
+        config,
+        parameters={name: without_day_based(entry) for name, entry in config.parameters.items()},
+    )
+    measured, _ = feature_columns(stripped)
+    return measured
+
+
 def columns_for(entry: ParameterFeatures) -> tuple[tuple[str, bool], ...]:
     """One parameter's feature columns, each with whether it is *measured*.
 

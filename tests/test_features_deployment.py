@@ -11,6 +11,7 @@ The end-to-end run against the real registry is in `test_cli_deployment.py`.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -18,10 +19,10 @@ import pytest
 
 from kelpcompare.features.config import Baseline, FeatureConfig, ParameterFeatures
 from kelpcompare.features.deployment import (
-    DEPLOYMENT_DAILY_COLUMNS,
     build_deployment,
     build_deployment_daily,
     deployment_columns,
+    deployment_daily_columns,
     deployment_window,
     empty_deployment_daily,
 )
@@ -480,7 +481,7 @@ def test_the_daily_table_offers_no_usable_flag(tmp_path):
 
     assert "usable" not in daily.columns
     assert "n_days_observed" not in daily.columns
-    assert list(daily.columns) == list(DEPLOYMENT_DAILY_COLUMNS)
+    assert list(daily.columns) == list(deployment_daily_columns(config()))
 
 
 def test_a_build_with_nothing_to_do_still_has_the_table_shape(tmp_path):
@@ -494,8 +495,8 @@ def test_a_build_with_nothing_to_do_still_has_the_table_shape(tmp_path):
     )
 
     assert daily.empty
-    assert list(daily.columns) == list(DEPLOYMENT_DAILY_COLUMNS)
-    assert list(daily.columns) == list(empty_deployment_daily().columns)
+    assert list(daily.columns) == list(deployment_daily_columns(config()))
+    assert list(daily.columns) == list(empty_deployment_daily(config()).columns)
 
 
 def test_the_daily_walk_leaves_the_registry_warnings_to_the_parent_build(tmp_path):
@@ -510,3 +511,58 @@ def test_the_daily_walk_leaves_the_registry_warnings_to_the_parent_build(tmp_pat
     assert parent.empty and daily.empty
     assert any("produces no deployment row" in warning for warning in parent_warnings)
     assert daily_warnings == ()
+
+
+# --------------------------------------------------------------------------
+# What a day may carry, once a band is declared
+# --------------------------------------------------------------------------
+
+
+def banded_config() -> FeatureConfig:
+    """The committed shape plus a band, which is the only non-day-based kind."""
+    return replace(
+        config(),
+        parameters={
+            "sea_water_temperature": replace(
+                TEMPERATURE,
+                thresholds={**TEMPERATURE.thresholds, "time_in_band": ((14.0, 20.0),)},
+            )
+        },
+    )
+
+
+def test_a_day_carries_the_band_and_none_of_the_day_based_counts(tmp_path):
+    """`days_above_20c` over one day is 0 or 1 and a spell is at most a day long,
+    so the daily table leaves those to the parent row. Band occupancy is defined
+    over any window, so the day keeps it -- that distinction is the table's whole
+    claim to a sub-day grain."""
+    stamps = pd.date_range("2026-07-11T00:00Z", "2026-07-11T23:50Z", freq="10min")
+    daily, _ = build_daily(
+        tmp_path,
+        observations(stamps, [15.0] * len(stamps)),
+        project_site(window=("2026-07-11 00:00", "2026-07-11 23:50")),
+        cfg=banded_config(),
+    )
+
+    assert "frac_in_band_14c_20c" in daily.columns
+    assert daily["frac_in_band_14c_20c"].tolist() == [1.0]
+    assert not [name for name in daily.columns if name.startswith(("days_", "max_spell_"))]
+    assert not [name for name in daily.columns if name.startswith("degree_days_")]
+
+
+def test_the_deployment_scalar_is_re_derivable_from_the_days_that_carry_it(tmp_path):
+    """The point of the daily table, applied to the band: the parent row's
+    occupancy is the observation-weighted mean of its days', so the scalar is
+    checkable against the record it summarises rather than taken on trust."""
+    stamps = pd.date_range("2026-07-11T00:00Z", "2026-07-12T23:50Z", freq="10min")
+    # Day one entirely inside the band, day two entirely above it.
+    values = [15.0] * 144 + [25.0] * 144
+    site = project_site(window=("2026-07-11 00:00", "2026-07-12 23:50"))
+    cfg = banded_config()
+
+    parent, _ = build(tmp_path, observations(stamps, values), site, cfg=cfg)
+    daily, _ = build_daily(tmp_path, observations(stamps, values), site, cfg=cfg)
+
+    assert daily["frac_in_band_14c_20c"].tolist() == [1.0, 0.0]
+    weighted = (daily["frac_in_band_14c_20c"] * daily["n_obs"]).sum() / daily["n_obs"].sum()
+    assert weighted == pytest.approx(parent["frac_in_band_14c_20c"].iloc[0])

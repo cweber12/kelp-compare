@@ -39,18 +39,17 @@ calendar artifact: it is the instrument stopping early, flooding, or failing QC.
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pandas as pd
 
-from kelpcompare.features.config import FeatureConfig, ParameterFeatures
+from kelpcompare.features.config import FeatureConfig
 from kelpcompare.features.windowed import (
-    STATISTICS,
     WINDOW_BOOKKEEPING,
     Window,
     feature_columns,
     reduce_window,
     series_cadence,
+    sub_window_columns,
+    without_day_based,
 )
 from kelpcompare.registry import Deployment, Registry
 from kelpcompare.storage import FLAG_NOT_EVALUATED, validate_frame
@@ -261,6 +260,9 @@ DEPLOYMENT_DAILY_KEY = (*DEPLOYMENT_KEY, "day")
 #: `feature_set` belongs to the parent row, `n_days_observed` is 1 by
 #: construction, and `usable` is left off for a reason of its own -- see
 #: `build_deployment_daily`.
+#: The fixed prefix. The feature columns that follow come from the configuration
+#: (`deployment_daily_columns`) rather than from a list here, so a band declared
+#: in the registry reaches this table without a second list being edited.
 DEPLOYMENT_DAILY_COLUMNS = (
     *DEPLOYMENT_DAILY_KEY,
     "n_obs",
@@ -268,11 +270,10 @@ DEPLOYMENT_DAILY_COLUMNS = (
     "expected_obs",
     "pct_coverage",
     "partial_day",
-    *STATISTICS,
 )
 
-#: What a daily row takes from a windowed reduction, and in which order.
-_DAILY_FROM_REDUCTION = ("n_obs", "cadence_s", "expected_obs", "pct_coverage", *STATISTICS)
+#: What a daily row takes from a windowed reduction besides its features.
+_DAILY_FROM_REDUCTION = ("n_obs", "cadence_s", "expected_obs", "pct_coverage")
 
 _ONE_DAY = pd.Timedelta(days=1)
 
@@ -288,8 +289,17 @@ _DAILY_DTYPES = {
     "expected_obs": "float64",
     "pct_coverage": "float64",
     "partial_day": "bool",
-    **dict.fromkeys(STATISTICS, "float64"),
 }
+
+
+def deployment_daily_columns(config: FeatureConfig) -> tuple[str, ...]:
+    """The daily table's columns: the fixed prefix, then what a day may carry.
+
+    A day carries the distribution and any feature that is not day-based -- see
+    `windowed.DAY_BASED_KINDS` for why that is a real distinction rather than a
+    convenience, and `build_deployment_daily` for what it excludes.
+    """
+    return (*DEPLOYMENT_DAILY_COLUMNS, *sub_window_columns(config))
 
 
 def build_deployment_daily(
@@ -356,7 +366,7 @@ def build_deployment_daily(
             reduced = reduce_window(
                 frame,
                 window=span,
-                entry=_statistics_only(entry),
+                entry=without_day_based(entry),
                 coverage_floor=config.coverage_floor,
                 label=f"{label} {day:%Y-%m-%d}",
                 warnings=warnings,
@@ -375,25 +385,20 @@ def build_deployment_daily(
                     "day": day.tz_localize(None) if day.tzinfo else day,
                     "partial_day": partial,
                     **{name: reduced[name] for name in _DAILY_FROM_REDUCTION},
+                    **{
+                        name: reduced[name]
+                        for name in sub_window_columns(config)
+                        if name in reduced
+                    },
                 }
             )
 
-    return _daily_frame(rows), tuple(warnings)
+    return _daily_frame(rows, config), tuple(warnings)
 
 
-def empty_deployment_daily() -> pd.DataFrame:
+def empty_deployment_daily(config: FeatureConfig) -> pd.DataFrame:
     """The daily table's shape with no rows."""
-    return _daily_frame([])
-
-
-def _statistics_only(entry: ParameterFeatures) -> ParameterFeatures:
-    """The same parameter with its thresholds dropped.
-
-    A threshold feature over a single day is degenerate -- `days_above_20c` is 0
-    or 1, and a spell is at most one day long -- so the daily table carries the
-    distribution and leaves the ecology to the parent row that is defined on it.
-    """
-    return replace(entry, thresholds={})
+    return _daily_frame([], config)
 
 
 def _day_windows(window: Window) -> list[tuple[pd.Timestamp, Window, bool]]:
@@ -465,12 +470,13 @@ def _resolved(
             yield deployment, entry, window, own
 
 
-def _daily_frame(rows: list[dict]) -> pd.DataFrame:
+def _daily_frame(rows: list[dict], config: FeatureConfig) -> pd.DataFrame:
     """Fixed dtypes and a stable order, so two runs write the same bytes."""
-    columns = list(DEPLOYMENT_DAILY_COLUMNS)
+    columns = list(deployment_daily_columns(config))
+    types = {**_DAILY_DTYPES, **dict.fromkeys(sub_window_columns(config), "float64")}
     if not rows:
         empty = pd.DataFrame({name: pd.Series(dtype="object") for name in columns})
-        return empty.astype(_DAILY_DTYPES)
+        return empty.astype(types)
     frame = pd.DataFrame(rows).reindex(columns=columns)
     ordered = frame.sort_values(list(DEPLOYMENT_DAILY_KEY), kind="stable", na_position="last")
-    return ordered.reset_index(drop=True).astype(_DAILY_DTYPES)
+    return ordered.reset_index(drop=True).astype(types)

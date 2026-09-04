@@ -1192,6 +1192,7 @@ what rule, is https://github.com/cweber12/kelp-compare/issues/158.
 | `pct_coverage` | DOUBLE | `n_obs / expected_obs`, clamped to 1.0 |
 | `partial_day` | BOOLEAN | The deployment cut this day, rather than a gap |
 | `mean`, `min`, `max`, `p05`, `p95`, `variance` | DOUBLE | The universal `statistics` set |
+| *band columns* | DOUBLE | `frac_in_band_{low}_{high}` per band declared in `features.json` — see below |
 
 **It computes nothing new.** `windowed._temperature_features` already forms a
 daily maximum, minimum and mean in order to build the doc 04 §2 day-based
@@ -1239,13 +1240,29 @@ threshold arriving through the back door, so coverage is reported and the
 filtering is not done. `feature_set` and `n_days_observed` are likewise absent —
 the first belongs to the parent row and the second is 1 by construction.
 
-**No threshold columns.** A `days_above_20c` over a single day is 0 or 1 and a
-spell is at most one day long. The distribution belongs here; the ecology
-belongs to the parent row that is defined over many days. The relationship runs
-the other way instead, and is the point of the table: `days_above_20c` on
-`deployment.parquet` is the count of rows here whose `max` exceeds 20, so the
-scalar becomes checkable against the record it summarises rather than taken on
-trust.
+**No *day-based* threshold columns.** A `days_above_20c` over a single day is 0
+or 1 and a spell is at most one day long. That ecology belongs to the parent row
+that is defined over many days. The relationship runs the other way instead, and
+is the point of the table: `days_above_20c` on `deployment.parquet` is the count
+of rows here whose `max` exceeds 20, so the scalar becomes checkable against the
+record it summarises rather than taken on trust.
+
+**`frac_in_band_{low}_{high}` is the exception, and the distinction is real
+rather than a convenience.** Band occupancy is defined over any window and means
+the same thing on a day as on a quarter (docs/04 §2), so a day carries it. The
+split is held in one place — `windowed.DAY_BASED_KINDS` — so a threshold kind
+added later has to be placed on one side of it rather than silently landing on
+one, and the daily and hourly tables cannot come to disagree about which
+features they may compute.
+
+That column, too, is checkable in both directions: the parent row's occupancy is
+the observation-weighted mean of its days', which is the identity the tests hold.
+
+**The feature columns are a function of the configuration, not a list.** The
+prefix above is fixed; what follows it is whatever `features.json` declares that
+a sub-day window can carry. Declaring a band therefore adds a column here, to
+`deployment.parquet` and to `quarterly_env` in one registry edit, which is
+ADR-006 working as designed rather than three schemas kept in step by hand.
 
 **Regenerated wholesale**, with `deployment.parquet`, in one run and under one
 manifest — both walk the same registry deployments through one shared generator,
