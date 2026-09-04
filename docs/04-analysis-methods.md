@@ -235,6 +235,38 @@ a deployment's own window it is no longer a calendar artifact: a figure below th
 floor is the instrument stopping early, flooding, or failing QC. `usable` reads
 as instrument health.
 
+### One row per day, beside one row per deployment
+
+**Built** — `deployment_daily.parquet` (docs/03), written by the same
+`kelpcompare deployments` run. The table above reduces a deployment to one row,
+which cannot say whether 78.93 °C·days above 18 °C accumulated steadily or
+arrived in one week; the finest grain the features zone reached was the
+deployment window, while the instrument samples every 600 s. Whether the zone
+should reach further down still, and on what rule, is
+https://github.com/cweber12/kelp-compare/issues/158.
+
+It computes nothing this section did not already define. The day-based features
+above are built on a daily maximum, minimum and mean that `windowed.py` forms and
+discards; this exposes that intermediate through the same `reduce_window`. The
+consequence is that **the counts become checkable rather than trusted**:
+`days_above_20c` is the number of daily rows whose `max` exceeds 20, and
+`02-deployment-profile.ipynb` §4 reproduces every threshold feature and every
+coverage figure from the daily table and raises if the two disagree.
+
+Days are clipped to the deployment window, so a logger that went in at 15:00
+reads a complete first day rather than 0.375 of one — the mistake this section
+opened by describing, which would otherwise land on every deployment's first and
+last row. It carries no `usable` column: §2 considered a minimum per-day coverage
+and rejected it, and a flag here would be that rejected threshold arriving
+through the back door.
+
+**What it is not for.** It carries no anomalies, for the reason the table above
+carries none. And a daily range is not a stratification measurement — it is
+consistent with vertical displacement of the column past a fixed sensor, with
+surface heating, and with other things. Separating them needs a covariate this
+project does not hold; the tide is the obvious one, and there is no CO-OPS
+fetcher.
+
 ## 2. Quarterly feature definitions
 
 Computed per QC series × quarter from QC-filtered observations, then

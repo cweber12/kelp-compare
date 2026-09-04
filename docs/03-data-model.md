@@ -1166,6 +1166,91 @@ zone and the registry as they stand, for the same reason as `comparison` and
 `validation`: a deployment the registry no longer declares must lose its row
 rather than keep it forever.
 
+## Deployment days: `deployment_daily.parquet`
+
+**Implemented** — `src/kelpcompare/features/deployment.py`, written by the same
+`kelpcompare deployments` run that writes `deployment.parquet`. One row per
+**`site_id × serial × deployment_number × parameter × depth_m × day`**: the
+deployment key plus the UTC day, so every daily row traces to exactly one row of
+the table above.
+
+The finest grain the features zone otherwise exposes is the deployment window —
+21 and 43 days on the current record — while the instrument samples every 600 s.
+`deployment.parquet` can say a logger accumulated 78.93 °C·days above 18 °C; it
+cannot say whether that arrived steadily or in one week, and until this table
+nothing in `features/` could. Whether the zone should reach further down, and on
+what rule, is https://github.com/cweber12/kelp-compare/issues/158.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `site_id`, `serial`, `deployment_number` | VARCHAR, VARCHAR, INT | The deployment |
+| `parameter`, `depth_m` | VARCHAR, DOUBLE | Its series |
+| `day` | TIMESTAMP | Midnight UTC of the day the row reduces |
+| `n_obs` | BIGINT | Observations kept on that day |
+| `cadence_s` | DOUBLE | The **series'** median interval, not the day's — see below |
+| `expected_obs` | DOUBLE | What the clipped day should have held at that cadence |
+| `pct_coverage` | DOUBLE | `n_obs / expected_obs`, clamped to 1.0 |
+| `partial_day` | BOOLEAN | The deployment cut this day, rather than a gap |
+| `mean`, `min`, `max`, `p05`, `p95`, `variance` | DOUBLE | The universal `statistics` set |
+
+**It computes nothing new.** `windowed._temperature_features` already forms a
+daily maximum, minimum and mean in order to build the doc 04 §2 day-based
+features on top of them. This exposes that intermediate rather than inventing
+one, through the same `reduce_window` both other windowed tables use — so the
+two tables cannot drift apart in how they compute a mean.
+
+**Days are clipped to the deployment window, and the clipped days tile it
+exactly.** A logger in the water at 15:00 observed nine hours of its first day
+and every one of them. Judged against a full 24 that day reads 0.375 covered,
+which is the identical mistake the quarterly calendar makes on a whole
+deployment and which the table above exists to correct — repeating it one level
+down would be worse, not better, because it would appear on every deployment's
+first and last row. Clipped, the day reads 1.000 and carries `partial_day` to
+say why it is short. On `PROJ:TIDBIT-1` the clipped days sum to
+`54 + 20×144 + 88 = 3022` expected observations, which is the parent row's
+`expected_obs` to the sample; the tests hold that identity rather than the
+number.
+
+**Only the final day inherits the closed upper edge.** A deployment window is
+closed at both ends, but `dt.floor("D")` puts a midnight reading on its own day
+rather than on the one before it. Giving the closed edge to every day whose
+upper edge happened to equal the window's would tile 146 slots into a 145-slot
+window wherever a deployment ends exactly at midnight.
+
+**The cadence is the series', measured once and passed down.** The median
+interval is robust over a quarter, where gaps are the tail of the interval
+distribution rather than its middle. Over a single day holding a handful of rows
+it is not: with two observations the median interval *is* the gap. A day holding
+two samples three hours apart would measure its own cadence as 10800 s and score
+0.25 coverage, when what is true is that a 600 s logger observed 1.4% of that
+day. `reduce_window` therefore takes an optional cadence, and this is the caller
+that supplies one.
+
+**One row per observed day, and no row at all for a day nobody measured.** An
+absent day is a gap, read the same way `_longest_spell` reads one; a row of
+nulls would be an invitation to fill it. So the row count equals the parent
+row's `n_days_observed`, which is the second identity the tests hold.
+
+**No `usable` column, and its absence is deliberate.** Doc 04 §2 considered
+requiring a minimum per-day coverage and rejected it: it invents a second
+coverage threshold, and it would discard the hottest day of a window if that day
+happened to be short-sampled. A `usable` flag here would be that rejected
+threshold arriving through the back door, so coverage is reported and the
+filtering is not done. `feature_set` and `n_days_observed` are likewise absent —
+the first belongs to the parent row and the second is 1 by construction.
+
+**No threshold columns.** A `days_above_20c` over a single day is 0 or 1 and a
+spell is at most one day long. The distribution belongs here; the ecology
+belongs to the parent row that is defined over many days. The relationship runs
+the other way instead, and is the point of the table: `days_above_20c` on
+`deployment.parquet` is the count of rows here whose `max` exceeds 20, so the
+scalar becomes checkable against the record it summarises rather than taken on
+trust.
+
+**Regenerated wholesale**, with `deployment.parquet`, in one run and under one
+manifest — both walk the same registry deployments through one shared generator,
+so the two tables cannot describe different sets of deployments.
+
 ## Run manifests
 
 Every ingest/QC/feature run writes

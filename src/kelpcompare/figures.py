@@ -30,6 +30,8 @@ where a reader compares, and the label carries what the hatching used to say.
 
 from __future__ import annotations
 
+import textwrap
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import matplotlib as mpl
@@ -1026,3 +1028,193 @@ def _draw_pair_key(fig, fig_h: float, shade_label: str) -> None:
             fontsize=7.5,
             color=SECONDARY,
         )
+
+
+# ---------------------------------------------------------------------------
+# Series over a window: the deployment profile (docs/03 `deployment_daily`)
+# ---------------------------------------------------------------------------
+
+SERIES_H = 2.40  #: the plotting area of one bands figure
+SERIES_W = 9.20
+SERIES_TOP_H = 0.86  #: title, and the subtitle under it
+SERIES_BOTTOM_H = 1.00  #: the axis label, the legend and the caption
+SERIES_LABEL_PT = 8.0
+SERIES_SUBTITLE_CHARS = 108  #: at 9 pt over SERIES_W, before the right margin
+SERIES_SUBTITLE_H = 0.19  #: added to the figure for each wrapped subtitle line
+
+
+@dataclass(frozen=True)
+class Band:
+    """One series drawn as a line, optionally inside a shaded span.
+
+    `centre` is the line and `low`/`high` the span around it -- a daily mean
+    inside its daily minimum and maximum, say. The span is the reason this exists
+    rather than a bare line plot: a deployment's daily mean alone hides the thing
+    the record is interesting for, which is how far the water moved within each
+    day.
+
+    `low` and `high` are drawn and never computed. A renderer that derived a band
+    from the centre would be inventing a spread, which is the line hard rule 6
+    draws around this module.
+    """
+
+    label: str
+    x: Sequence
+    centre: Sequence[float]
+    low: Sequence[float] | None = None
+    high: Sequence[float] | None = None
+
+
+def plot_bands(
+    bands: list[Band],
+    *,
+    title: str,
+    caption: str,
+    ylabel: str,
+    subtitle: str = "",
+    gap: object | None = None,
+    baseline: float | None = None,
+    baseline_label: str = "",
+    dpi: int = 200,
+) -> mpl.figure.Figure:
+    """Series over a shared x axis, each inside its own band.
+
+    **Colour encodes the caller's order, not identity.** The bands take evenly
+    spaced shades of `BLUE_ARM`, light to dark, so a caller that sorts by depth
+    gets shallow-to-deep reading as pale-to-dark down the legend. That is a
+    single-hue ramp rather than a categorical palette on purpose: the series this
+    draws are the same quantity at different places on one ordered axis, and a
+    categorical palette would suggest they are unlike each other in kind.
+
+    **`gap` breaks the line rather than bridging it.** Where two consecutive `x`
+    are further apart than `gap`, the line is cut. Drawing straight through would
+    assert a value for the interval between them, and for a daily series the
+    interval between two rows is exactly a day nobody measured -- the same
+    reading `windowed._longest_spell` gives a gap, applied to a line. Left None,
+    nothing is cut, which is right for a series with no notion of a regular step
+    (an hour-of-day composite, for instance) and wrong for a dated one.
+
+    Raises rather than drawing an empty axes: a figure of record with no series
+    on it is a caption over blank space.
+    """
+    if not bands:
+        raise ValueError("no bands to draw")
+
+    # Wrapped rather than trusted to fit. A subtitle is where a caller states the
+    # caveat that stops a figure being over-read, so it is exactly the string
+    # that must not run off the right edge unnoticed.
+    lines = textwrap.wrap(subtitle, width=SERIES_SUBTITLE_CHARS) if subtitle else []
+    fig_h = SERIES_TOP_H + max(len(lines) - 1, 0) * SERIES_SUBTITLE_H + SERIES_H + SERIES_BOTTOM_H
+    fig = plt.figure(figsize=(SERIES_W, fig_h), dpi=dpi, facecolor=SURFACE)
+    axes = fig.add_axes(
+        (
+            0.62 / SERIES_W,
+            SERIES_BOTTOM_H / fig_h,
+            1 - (0.62 + RIGHT_W) / SERIES_W,
+            SERIES_H / fig_h,
+        )
+    )
+    axes.set_facecolor(SURFACE)
+
+    for index, band in enumerate(bands):
+        colour = _band_colour(index, len(bands))
+        x, centre, low, high = _cut(band, gap)
+        if low is not None and high is not None:
+            axes.fill_between(x, low, high, color=colour, alpha=0.16, linewidth=0)
+        axes.plot(x, centre, color=colour, linewidth=1.4, label=band.label, solid_capstyle="round")
+
+    if baseline is not None:
+        axes.axhline(baseline, color=MUTED, linewidth=0.9, linestyle=(0, (2.4, 2.0)), zorder=0)
+        if baseline_label:
+            axes.annotate(
+                baseline_label,
+                xy=(1.0, baseline),
+                xycoords=("axes fraction", "data"),
+                xytext=(-2, 3),
+                textcoords="offset points",
+                ha="right",
+                va="bottom",
+                fontsize=7.0,
+                color=MUTED,
+            )
+
+    axes.set_ylabel(ylabel, fontsize=SERIES_LABEL_PT, color=SECONDARY)
+    axes.tick_params(length=0, labelsize=SERIES_LABEL_PT, colors=SECONDARY)
+    axes.grid(True, color=GRIDLINE, linewidth=0.7, alpha=0.9)
+    axes.set_axisbelow(True)
+    for spine in axes.spines.values():
+        spine.set_visible(False)
+
+    legend = axes.legend(
+        loc="upper left",
+        bbox_to_anchor=(0.0, -0.14),
+        ncols=min(len(bands), 4),
+        frameon=False,
+        fontsize=SERIES_LABEL_PT,
+        handlelength=1.6,
+        columnspacing=1.6,
+    )
+    for text in legend.get_texts():
+        text.set_color(SECONDARY)
+
+    fig.suptitle(
+        title, x=0.008, y=1 - 0.34 / fig_h, ha="left", fontsize=15, color=INK, weight="bold"
+    )
+    if lines:
+        fig.text(
+            0.008,
+            1 - 0.62 / fig_h,
+            "\n".join(lines),
+            ha="left",
+            va="top",
+            fontsize=9,
+            color=SECONDARY,
+            linespacing=1.45,
+        )
+    fig.text(0.008, 0.13 / fig_h, caption, ha="left", va="bottom", fontsize=7.5, color=SECONDARY)
+    return fig
+
+
+#: The blue arm without its palest step. `BLUE_ARM[0]` is sized to fill a grid
+#: cell, where a large block of it reads clearly; it does not carry a 1.4 pt line
+#: or a 16% fill on `SURFACE`, which is what this figure asks of a colour.
+SERIES_RAMP = BLUE_ARM[1:]
+
+
+def _band_colour(index: int, total: int) -> str:
+    """Evenly spaced shades, light to dark, over however many bands there are.
+
+    Two bands take the ends rather than two adjacent steps, so the commonest case
+    is also the most legible one.
+    """
+    if total <= 1:
+        return SERIES_RAMP[2]
+    step = (len(SERIES_RAMP) - 1) / (total - 1)
+    return SERIES_RAMP[round(index * step)]
+
+
+def _cut(band: Band, gap: object | None):
+    """The band's arrays with a null inserted wherever `x` jumps further than
+    `gap`, which is how matplotlib is asked to lift the pen."""
+    x = list(band.x)
+    centre = list(band.centre)
+    low = list(band.low) if band.low is not None else None
+    high = list(band.high) if band.high is not None else None
+    if gap is None or len(x) < 2:
+        return x, centre, low, high
+
+    out_x: list = []
+    out = ([], [] if low is not None else None, [] if high is not None else None)
+    for index, position in enumerate(x):
+        if index and position - x[index - 1] > gap:
+            out_x.append(position)
+            for series in out:
+                if series is not None:
+                    series.append(float("nan"))
+        out_x.append(position)
+        out[0].append(centre[index])
+        if low is not None:
+            out[1].append(low[index])
+        if high is not None:
+            out[2].append(high[index])
+    return out_x, out[0], out[1], out[2]
