@@ -75,8 +75,8 @@ record of what the screen did and the two figures for reading it:
 | Figure | Written by | Answers |
 |---|---|---|
 | `KELP-<bed>.png` (six) | `01` §4.1 | What did every cell come out at? The completeness record — dense on purpose, and not the place to start |
-| `SCREEN-RANKED.png` | `01` §8 | Which associations deserve a second look? Signals by \|r\|, sized by `n_eff`, merged cells as ticks, lag profile as a sparkline, controls interleaved, gate-withheld cells below a rule |
-| `SCREEN-SIGNALS.png` | `01` §8 | What are the coefficients made of? The paired quarters behind each registered signal and the strongest control, as a time series and a scatter |
+| `SCREEN-RANKED.png` | `01` §9 | Which associations deserve a second look? Signals by \|r\|, sized by `n_eff`, merged cells as ticks, lag profile as a sparkline, controls interleaved, gate-withheld cells below a rule |
+| `SCREEN-SIGNALS.png` | `01` §9 | What are the coefficients made of? The paired quarters behind each registered signal and the strongest control, as a time series and a scatter |
 
 **Read `SCREEN-RANKED.png` first.** The grids are an audit artifact: 2,145 cells at
 uniform visual weight answer "was everything screened" well and "what should I
