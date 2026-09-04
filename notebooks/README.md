@@ -131,7 +131,7 @@ not pick up the rebuilt table.
 | Notebook | docs/04 | What it does |
 |---|---|---|
 | `01-lag-screen.ipynb` | §4.1 | Kelp anomaly at *t* against every environmental feature anomaly at *t−0…4*, per polygon × series. Ranks candidates; claims nothing. Writes the six per-bed figures in `figures/` |
-| `02-deployment-profile.ipynb` | §1 | What each project-sensor deployment recorded over its own in-water window, day by day, and how it compared to its neighbour. Reproduces every scalar feature from the daily table and raises if they disagree. Writes the three `DEPLOYMENT-*` figures. Describes; tests nothing |
+| `02-deployment-profile.ipynb` | §1 | What each project-sensor deployment recorded over its own in-water window — day by day, hour by hour, and against its neighbour. Reproduces every scalar feature from the daily table, and the band occupancy from both the daily and the hourly table, raising if any disagree. Writes the five `DEPLOYMENT-*` figures. Describes; tests nothing |
 
 ## Pre-registration
 
