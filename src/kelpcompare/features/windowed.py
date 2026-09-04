@@ -28,7 +28,7 @@ discipline -- flags, never deletions -- applied to windows.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pandas as pd
 
@@ -51,6 +51,16 @@ WINDOW_BOOKKEEPING = (
 #: The universal distribution features, applicable to any parameter. Not just the
 #: centre: kelp responds to extremes that a mean erases (docs/01 s4).
 STATISTICS = ("mean", "min", "max", "p05", "p95", "variance")
+
+#: The threshold kinds whose arithmetic aggregates to whole days before it counts
+#: anything, so a window shorter than a day cannot carry them: `days_above_20c`
+#: over one day is 0 or 1, and a spell is at most one day long.
+#:
+#: `time_in_band` is deliberately absent. Occupancy is defined over any window and
+#: means the same thing on an hour as on a quarter, so it is the one ecological
+#: feature the sub-deployment tables can carry -- and the reason they take this
+#: list rather than dropping every threshold they have.
+DAY_BASED_KINDS = ("days_above", "days_below", "degree_days_above", "max_spell_above")
 
 _ONE_DAY = pd.Timedelta(days=1)
 
@@ -111,6 +121,16 @@ def threshold_label(threshold: float) -> str:
     return f"{threshold:g}".replace(".", "_").replace("-", "neg") + "c"
 
 
+def band_label(low: float, high: float) -> str:
+    """`(14.0, 20.0)` -> `14c_20c`. Both edges, for the reason one is not enough.
+
+    A band's meaning is its two edges, so both belong in the column name -- and
+    ADR-006's rule that retuning a threshold renames its column has to hold when
+    either edge moves, not only when the lower one does.
+    """
+    return f"{threshold_label(low)}_{threshold_label(high)}"
+
+
 def measured_columns(entry: ParameterFeatures) -> tuple[str, ...]:
     """The feature columns one parameter measures, in table order."""
     return tuple(name for name, measured in columns_for(entry) if measured)
@@ -139,6 +159,20 @@ def feature_columns(config: FeatureConfig) -> tuple[tuple[str, ...], tuple[str, 
     return tuple(measured), tuple(markers)
 
 
+def without_day_based(entry: ParameterFeatures) -> ParameterFeatures:
+    """The same parameter, carrying only thresholds a sub-day window can hold.
+
+    What a table reduced below a day may compute, in one place, so the daily and
+    hourly tables cannot come to disagree about it -- and so that adding a
+    threshold kind forces a decision about which side of `DAY_BASED_KINDS` it
+    falls on rather than silently landing on one.
+    """
+    kept = {
+        kind: values for kind, values in entry.thresholds.items() if kind not in DAY_BASED_KINDS
+    }
+    return replace(entry, thresholds=kept)
+
+
 def columns_for(entry: ParameterFeatures) -> tuple[tuple[str, bool], ...]:
     """One parameter's feature columns, each with whether it is *measured*.
 
@@ -157,6 +191,8 @@ def columns_for(entry: ParameterFeatures) -> tuple[tuple[str, bool], ...]:
         label = threshold_label(threshold)
         columns.append((f"max_spell_above_{label}_days", True))
         columns.append((f"max_spell_above_{label}_gap_interrupted", False))
+    for low, high in entry.of("time_in_band"):
+        columns.append((f"frac_in_band_{band_label(low, high)}", True))
     return tuple(columns)
 
 
@@ -289,15 +325,21 @@ def _temperature_features(
     entry: ParameterFeatures,
     window: Window,
 ) -> dict:
-    """The docs/04 s2 ecological features, all of them day-based.
+    """The docs/04 s2 ecological features: the threshold counts, and the band.
 
-    Day-based because the ecology is: a day that reached 24 degC is a day of
-    heat stress whether it did so for one hour or six, and because aggregating
-    to days first is what makes the features robust to irregular sampling. Every
-    day with at least one observation counts, and `n_days_observed` records how
-    many that was -- so a count reads as a floor rather than as a census. The
-    bias direction is documented (docs/04): a day observed only overnight cannot
-    show its daytime maximum, so these counts run low under partial coverage.
+    **The counts are day-based**, because the ecology is: a day that reached
+    24 degC is a day of heat stress whether it did so for one hour or six, and
+    because aggregating to days first is what makes them robust to irregular
+    sampling. Every day with at least one observation counts, and
+    `n_days_observed` records how many that was -- so a count reads as a floor
+    rather than as a census. The bias direction is documented (docs/04): a day
+    observed only overnight cannot show its daytime maximum, so these counts run
+    low under partial coverage.
+
+    **The band occupancy is not**, and that departure is the point of it. How
+    much of a window the water spent between two temperatures is a question a
+    day-based count cannot answer, and it is the one feature here that still
+    means something over a window shorter than a day (`DAY_BASED_KINDS`).
     """
     features: dict = {}
     if not entry.thresholds:
@@ -328,6 +370,18 @@ def _temperature_features(
         )
         features[f"max_spell_above_{label}_days"] = float(spell)
         features[f"max_spell_above_{label}_gap_interrupted"] = interrupted
+
+    # Closed at both edges, so that `< low`, `[low, high]` and `> high` partition
+    # the value axis exactly against the strict `days_below` and `days_above`
+    # tests above. Half-open would leave a reading of exactly `high` belonging to
+    # neither the band nor the tail beyond it.
+    #
+    # A fraction of the observations rather than of the clock: the two agree at a
+    # regular cadence, which is what `cadence_s` and `pct_coverage` are on the
+    # row to let a reader check (docs/04 s2).
+    for low, high in entry.of("time_in_band"):
+        inside = values.between(low, high, inclusive="both")
+        features[f"frac_in_band_{band_label(low, high)}"] = float(inside.mean())
     return features
 
 

@@ -575,3 +575,59 @@ def test_the_declared_window_ends_at_a_complete_year():
 
     assert window.end_year == 2025
     assert window.span >= window.min_years
+
+
+# --------------------------------------------------------------------------
+# Bands, which are declared as pairs rather than as single numbers
+# --------------------------------------------------------------------------
+
+
+def test_a_band_loads_as_an_ordered_pair(tmp_path):
+    entry = {"feature_set": "temperature", "thresholds": {"time_in_band": [[14.0, 20.0]]}}
+    loaded = config(tmp_path, parameters={"sea_water_temperature": entry})
+    assert loaded.get("sea_water_temperature").of("time_in_band") == ((14.0, 20.0),)
+
+
+def test_more_than_one_band_may_be_declared(tmp_path):
+    entry = {
+        "feature_set": "temperature",
+        "thresholds": {"time_in_band": [[14.0, 20.0], [20.0, 23.0]]},
+    }
+    loaded = config(tmp_path, parameters={"sea_water_temperature": entry})
+    assert loaded.get("sea_water_temperature").of("time_in_band") == ((14.0, 20.0), (20.0, 23.0))
+
+
+def test_a_band_that_is_a_bare_number_is_refused(tmp_path):
+    """The kind takes pairs, and a scalar would silently mean half a band."""
+    entry = {"feature_set": "temperature", "thresholds": {"time_in_band": [14.0]}}
+    assert "[low, high] pair" in refuses(tmp_path, parameters={"sea_water_temperature": entry})
+
+
+def test_a_band_of_three_edges_is_refused(tmp_path):
+    entry = {"feature_set": "temperature", "thresholds": {"time_in_band": [[14.0, 18.0, 20.0]]}}
+    assert "[low, high] pair" in refuses(tmp_path, parameters={"sea_water_temperature": entry})
+
+
+def test_a_reversed_band_is_refused(tmp_path):
+    """`[20, 14]` contains nothing, and would ship a column of zeros."""
+    entry = {"feature_set": "temperature", "thresholds": {"time_in_band": [[20.0, 14.0]]}}
+    assert "not below its high" in refuses(tmp_path, parameters={"sea_water_temperature": entry})
+
+
+def test_a_band_of_zero_width_is_refused(tmp_path):
+    entry = {"feature_set": "temperature", "thresholds": {"time_in_band": [[14.0, 14.0]]}}
+    assert "not below its high" in refuses(tmp_path, parameters={"sea_water_temperature": entry})
+
+
+def test_a_band_edge_that_is_not_a_number_is_refused(tmp_path):
+    entry = {"feature_set": "temperature", "thresholds": {"time_in_band": [[14.0, "20c"]]}}
+    assert "not a number" in refuses(tmp_path, parameters={"sea_water_temperature": entry})
+
+
+def test_a_band_declared_twice_is_refused(tmp_path):
+    """Two identical bands would name one column twice, as two thresholds would."""
+    entry = {
+        "feature_set": "temperature",
+        "thresholds": {"time_in_band": [[14.0, 20.0], [14.0, 20.0]]},
+    }
+    assert "twice" in refuses(tmp_path, parameters={"sea_water_temperature": entry})
