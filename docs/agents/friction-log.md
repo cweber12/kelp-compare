@@ -227,3 +227,37 @@ quarter and a heavily-thinned one should sit as far apart as the linear scale
 puts them.
 
 **Status:** open
+
+### 2026-09-03 — the plan-mode gate caught a table that would have mislabelled what it measured
+
+**Rule:** `CLAUDE.md` — "Any change that touches the observation schema, a
+storage zone, or a feature definition: propose in plan mode first and update the
+matching doc in the same PR."
+
+**Mode:** save
+
+**Situation:** designing how to get more out of a single logger deployment. The
+plan proposed three new tables in the features zone, one of them an hour-of-day
+"diel composite" over `deployment_daily`, on the reasoning that a 600 s logger
+must carry a solar signal the deployment mean erases.
+
+**What it made me do:** write the design down and hand it over before building
+any of it, which is what produced a verification step that read the ten-minute
+series once before the schema was fixed.
+
+**What I would have done otherwise:** built all three tables. I was ready to
+leave plan mode twice before that verification step existed; it came out of the
+operator asking what would strengthen the implementation, not out of my own
+discipline. That is the part worth recording — the gate held because it is a
+gate, not because I used it well.
+
+**Cost:** none, and it caught a real error. An hour-of-day table would have
+mislabelled its own contents in both directions: at 8.23 m the composite peaks at
+20:00 and troughs at noon local, which solar heating cannot do, and at 16.76 m
+the record is dominated by the semidiurnal band, so folding it onto a 24-hour
+axis is an aliasing artifact rather than a measurement. A column named for a diel
+cycle would have reached the features zone and `docs/03` before anything
+contradicted it, and the reading it invited is the kind nothing downstream
+questions.
+
+**Status:** open
