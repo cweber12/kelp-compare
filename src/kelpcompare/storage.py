@@ -120,6 +120,7 @@ FEATURE_TABLES = (
     "comparison",
     "validation",
     "deployment",
+    "deployment_daily",
 )
 
 

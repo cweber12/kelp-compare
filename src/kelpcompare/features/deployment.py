@@ -39,14 +39,18 @@ calendar artifact: it is the instrument stopping early, flooding, or failing QC.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pandas as pd
 
-from kelpcompare.features.config import FeatureConfig
+from kelpcompare.features.config import FeatureConfig, ParameterFeatures
 from kelpcompare.features.windowed import (
+    STATISTICS,
     WINDOW_BOOKKEEPING,
     Window,
     feature_columns,
     reduce_window,
+    series_cadence,
 )
 from kelpcompare.registry import Deployment, Registry
 from kelpcompare.storage import FLAG_NOT_EVALUATED, validate_frame
@@ -146,43 +150,19 @@ def build_deployment(
     rows: list[dict] = []
     kept = observations[(observations["qc_flag"] <= qc_max_flag) & observations["value"].notna()]
 
-    for deployment in registry.deployments:
-        if deployment.depth_m is None or not deployment.series_map:
-            continue
-        window = deployment_window(deployment)
-        if window is None:
-            warnings.append(
-                f"{deployment.site_id} serial {deployment.serial}: no deployment window or "
-                "timezone in the registry, so there is no window to measure coverage against"
+    for deployment, entry, window, own in _resolved(kept, registry, config, warnings):
+        rows.append(
+            _row(
+                own,
+                deployment=deployment,
+                entry=entry,
+                config=config,
+                window=window,
+                qc_max_flag=qc_max_flag,
+                now=stamp,
+                warnings=warnings,
             )
-            continue
-        for parameter in sorted(set(deployment.series_map.values())):
-            entry = config.get(parameter)
-            if entry is None:
-                warnings.append(
-                    f"{deployment.site_id} maps a series to {parameter!r}, which {config.path} "
-                    "does not configure; that deployment is left unbuilt"
-                )
-                continue
-            own = _deployment_rows(kept, deployment, parameter, window)
-            if own.empty:
-                warnings.append(
-                    f"{deployment.site_id}: no {parameter} rows at {deployment.depth_m} m "
-                    "within the deployment window, so it produces no deployment row"
-                )
-                continue
-            rows.append(
-                _row(
-                    own,
-                    deployment=deployment,
-                    entry=entry,
-                    config=config,
-                    window=window,
-                    qc_max_flag=qc_max_flag,
-                    now=stamp,
-                    warnings=warnings,
-                )
-            )
+        )
 
     return _frame(rows, columns, config), tuple(warnings)
 
@@ -271,3 +251,226 @@ def _typed(frame: pd.DataFrame, config: FeatureConfig) -> pd.DataFrame:
         **dict.fromkeys(markers, "boolean"),
     }
     return frame.astype({name: types[name] for name in frame.columns if name in types})
+
+
+#: docs/03 `deployment_daily.parquet`. The deployment's key plus the UTC day, so
+#: a daily row traces to exactly one row of `deployment.parquet`.
+DEPLOYMENT_DAILY_KEY = (*DEPLOYMENT_KEY, "day")
+
+#: One row per *observed* day. Deliberately narrower than `WINDOW_BOOKKEEPING`:
+#: `feature_set` belongs to the parent row, `n_days_observed` is 1 by
+#: construction, and `usable` is left off for a reason of its own -- see
+#: `build_deployment_daily`.
+DEPLOYMENT_DAILY_COLUMNS = (
+    *DEPLOYMENT_DAILY_KEY,
+    "n_obs",
+    "cadence_s",
+    "expected_obs",
+    "pct_coverage",
+    "partial_day",
+    *STATISTICS,
+)
+
+#: What a daily row takes from a windowed reduction, and in which order.
+_DAILY_FROM_REDUCTION = ("n_obs", "cadence_s", "expected_obs", "pct_coverage", *STATISTICS)
+
+_ONE_DAY = pd.Timedelta(days=1)
+
+_DAILY_DTYPES = {
+    "site_id": "string",
+    "serial": "string",
+    "deployment_number": "Int64",
+    "parameter": "string",
+    "depth_m": "float64",
+    "day": "datetime64[us]",
+    "n_obs": "int64",
+    "cadence_s": "float64",
+    "expected_obs": "float64",
+    "pct_coverage": "float64",
+    "partial_day": "bool",
+    **dict.fromkeys(STATISTICS, "float64"),
+}
+
+
+def build_deployment_daily(
+    observations: pd.DataFrame,
+    registry: Registry,
+    config: FeatureConfig,
+    *,
+    qc_max_flag: int = FLAG_NOT_EVALUATED,
+) -> tuple[pd.DataFrame, tuple[str, ...]]:
+    """The same series, reduced a day at a time instead of a deployment at a time.
+
+    `deployment.parquet` says a logger recorded 78.93 degC-days above 18 degC. It
+    cannot say whether that accumulated steadily or arrived in one week, and no
+    table in the zone can: the finest grain the features zone exposes is the
+    deployment window, while the instrument samples every 600 s. This is the
+    first step down (https://github.com/cweber12/kelp-compare/issues/158).
+
+    **It computes nothing new.** `windowed._temperature_features` already forms a
+    daily maximum, minimum and mean to build the docs/04 s2 day-based features on
+    top of; this exposes that intermediate rather than inventing one. So the
+    scalar table becomes checkable against it -- `days_above_20c` is the count of
+    rows here whose `max` exceeds 20 -- which is the "computed rather than
+    restated" posture `notebooks/README.md` already asks of a notebook.
+
+    **Days are clipped to the deployment window, and that is the whole trick.** A
+    logger that went in at 15:00 observed nine hours of its first day and every
+    one of them. Judged against a full 24 hours it reads 0.375 covered, which is
+    the identical mistake the quarterly table makes on a deployment and which
+    this module's own docstring exists to describe. Clipped, it reads 1.000 and
+    carries `partial_day` to say the day was cut by the deployment rather than by
+    a gap. The clipped days tile the window exactly: on `PROJ:TIDBIT-1` they sum
+    to 54 + 20*144 + 88 = 3022 expected observations, which is the parent row's
+    `expected_obs` to the sample.
+
+    **One row per observed day, and no row for a day nobody measured.** An absent
+    day is a gap, the same way `_longest_spell` reads one, and a row of nulls
+    would be an invitation to fill it.
+
+    **No `usable` column, deliberately.** docs/04 s2 considered a minimum per-day
+    coverage and rejected it: it invents a second coverage threshold, and it
+    would discard the hottest day of a window if that day happened to be
+    short-sampled. A `usable` flag here would be that threshold arriving through
+    the back door, so the coverage is reported and the filtering is not done.
+
+    Registry problems are left to `build_deployment`, which walks the same
+    deployments and reports them; repeating them here would double every such
+    line in one run's manifest.
+    """
+    validate_frame(observations)
+    warnings: list[str] = []
+    rows: list[dict] = []
+    kept = observations[(observations["qc_flag"] <= qc_max_flag) & observations["value"].notna()]
+
+    for deployment, entry, window, own in _resolved(kept, registry, config):
+        label = f"{deployment.site_id}/{entry.parameter} deployment {deployment.deployment_number}"
+        # Measured once over the whole deployment and passed down: a day holding
+        # two samples cannot measure its own cadence -- see `reduce_window`.
+        cadence = series_cadence(own["timestamp"], label=label, warnings=warnings)
+        observed = dict(tuple(own.groupby(own["timestamp"].dt.floor("D"))))
+        for day, span, partial in _day_windows(window):
+            frame = observed.get(day)
+            if frame is None or frame.empty:
+                continue
+            reduced = reduce_window(
+                frame,
+                window=span,
+                entry=_statistics_only(entry),
+                coverage_floor=config.coverage_floor,
+                label=f"{label} {day:%Y-%m-%d}",
+                warnings=warnings,
+                noun="day",
+                cadence=cadence,
+            )
+            rows.append(
+                {
+                    "site_id": deployment.site_id,
+                    "serial": deployment.serial,
+                    "deployment_number": deployment.deployment_number,
+                    "parameter": entry.parameter,
+                    "depth_m": deployment.depth_m,
+                    # Naive UTC on the way out, as `window_start` and every
+                    # stored timestamp are (docs/03).
+                    "day": day.tz_localize(None) if day.tzinfo else day,
+                    "partial_day": partial,
+                    **{name: reduced[name] for name in _DAILY_FROM_REDUCTION},
+                }
+            )
+
+    return _daily_frame(rows), tuple(warnings)
+
+
+def empty_deployment_daily() -> pd.DataFrame:
+    """The daily table's shape with no rows."""
+    return _daily_frame([])
+
+
+def _statistics_only(entry: ParameterFeatures) -> ParameterFeatures:
+    """The same parameter with its thresholds dropped.
+
+    A threshold feature over a single day is degenerate -- `days_above_20c` is 0
+    or 1, and a spell is at most one day long -- so the daily table carries the
+    distribution and leaves the ecology to the parent row that is defined on it.
+    """
+    return replace(entry, thresholds={})
+
+
+def _day_windows(window: Window) -> list[tuple[pd.Timestamp, Window, bool]]:
+    """The window cut into UTC days, each clipped to it.
+
+    Only the final day inherits the closed upper edge. Giving it to every day
+    whose upper edge happens to equal the window's would count the closing sample
+    twice where a deployment ends exactly at midnight, because `dt.floor("D")`
+    puts a midnight reading on its own day rather than on the one before it.
+    """
+    last = window.end.floor("D")
+    spans: list[tuple[pd.Timestamp, Window, bool]] = []
+    day = window.start.floor("D")
+    while day <= last:
+        following = day + _ONE_DAY
+        low, high = max(day, window.start), min(following, window.end)
+        spans.append(
+            (
+                day,
+                Window(start=low, end=high, inclusive_end=window.inclusive_end and day == last),
+                bool(low > day or high < following),
+            )
+        )
+        day = following
+    return spans
+
+
+def _resolved(
+    kept: pd.DataFrame,
+    registry: Registry,
+    config: FeatureConfig,
+    warnings: list[str] | None = None,
+):
+    """Every deployment that has rows, with its entry, its window and those rows.
+
+    Shared by both builders so the two tables cannot disagree about which
+    deployments exist. `warnings` is optional because only one of them reports
+    the registry gaps this walk finds; collecting them twice would double every
+    such line in a single run's manifest.
+    """
+    for deployment in registry.deployments:
+        if deployment.depth_m is None or not deployment.series_map:
+            continue
+        window = deployment_window(deployment)
+        if window is None:
+            if warnings is not None:
+                warnings.append(
+                    f"{deployment.site_id} serial {deployment.serial}: no deployment window or "
+                    "timezone in the registry, so there is no window to measure coverage against"
+                )
+            continue
+        for parameter in sorted(set(deployment.series_map.values())):
+            entry = config.get(parameter)
+            if entry is None:
+                if warnings is not None:
+                    warnings.append(
+                        f"{deployment.site_id} maps a series to {parameter!r}, which "
+                        f"{config.path} does not configure; that deployment is left unbuilt"
+                    )
+                continue
+            own = _deployment_rows(kept, deployment, parameter, window)
+            if own.empty:
+                if warnings is not None:
+                    warnings.append(
+                        f"{deployment.site_id}: no {parameter} rows at {deployment.depth_m} m "
+                        "within the deployment window, so it produces no deployment row"
+                    )
+                continue
+            yield deployment, entry, window, own
+
+
+def _daily_frame(rows: list[dict]) -> pd.DataFrame:
+    """Fixed dtypes and a stable order, so two runs write the same bytes."""
+    columns = list(DEPLOYMENT_DAILY_COLUMNS)
+    if not rows:
+        empty = pd.DataFrame({name: pd.Series(dtype="object") for name in columns})
+        return empty.astype(_DAILY_DTYPES)
+    frame = pd.DataFrame(rows).reindex(columns=columns)
+    ordered = frame.sort_values(list(DEPLOYMENT_DAILY_KEY), kind="stable", na_position="last")
+    return ordered.reset_index(drop=True).astype(_DAILY_DTYPES)
