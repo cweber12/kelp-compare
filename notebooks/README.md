@@ -358,6 +358,18 @@ What to weigh before registering any of them:
   The |r| line alone is not the pessimistic reading of this table — it is one of
   three, and the scale that is neither a raw effect size nor a significance
   ranking agrees with it.
+
+  **Which of the three explanations behind that caution holds is now measured**,
+  in `01-lag-screen.ipynb` §7.1, against the three registered signals rather than
+  about the control alone. Two are ruled out there: the margin does not move when
+  every eligible predictor signal is put on the control's own quarters, so the
+  unequal record length named above does not account for it, and it does not move
+  when both series have their quarter-of-year means removed, so neither does a
+  seasonal cycle surviving both climatologies. What does separate the control from
+  the predictors is single-quarter leverage — and on the tail §2.1 counts, which
+  is the statistic that concern is stated in, the control is not the most
+  sensitive of the four. The caution stands as written; §7.1 adds which of its
+  readings the screen can support.
 - **The satellite series enters the pool crippled on exactly the features it
   was wanted for.** All six `SST:*` beds are flagged `low_resolution` on
   `days_above_23c` and five of six on `days_below_14c`: over 470 bed-quarters
