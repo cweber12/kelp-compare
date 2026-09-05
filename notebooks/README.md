@@ -182,6 +182,17 @@ least 30 with Pearson and Spearman agreeing to within 0.05, collapse what
 survives into **signals** — one per (feature, lag, polygon), the strongest cell
 standing for each — and take the **three strongest by |r|**.
 
+**What the third of those conditions withholds is now printed.** The `n_eff`
+floor and the resolution flag each carry a derivation — the observation count
+docs/04 §4.3 can support, and the named failure §2 of the notebook argues
+against. The 0.05 agreement ceiling carries none, and it turns out to be the
+widest of the three: `01-lag-screen.ipynb` §6.3 prints how many cells it
+withholds, which of the three ways their two coefficients disagree, and how far
+this list depends on the number — against the digest of the table it read. It
+applies no ceiling but the one in force and settles nothing; which ceiling
+belongs in the rule is a docs/04 §5 change, made under that section's own
+procedure rather than read off that output.
+
 That last step is a cut, not a criterion. 634 eligible cells collapse to 253
 signals, and 250 of those are cut, so what makes these three the list is that
 they are the top of a ranking — which is exactly the kind of choice this section
